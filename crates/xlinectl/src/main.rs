@@ -126,7 +126,6 @@
     clippy::impl_trait_in_params,
     clippy::let_underscore_untyped,
     clippy::missing_assert_message,
-    clippy::multiple_unsafe_ops_per_block,
     clippy::semicolon_inside_block,
     // clippy::semicolon_outside_block, already used `semicolon_inside_block`
     clippy::tests_outside_test_module,
@@ -234,6 +233,11 @@ fn cli() -> Command {
             .help_heading(GLOBAL_HEADING)
             .value_parser(value_parser!(usize))
             .default_value("3"))
+        .arg(arg!(--keep_alive_interval <INTERVAL> "The interval used to keep client id alive")
+            .global(true)
+            .help_heading(GLOBAL_HEADING)
+            .value_parser(value_parser!(u64))
+            .default_value("1000"))
         .arg(arg!(--printer_type <TYPE> "The format of the result that will be printed")
             .global(true)
             .help_heading(GLOBAL_HEADING)
@@ -271,6 +275,7 @@ async fn main() -> Result<()> {
         Duration::from_millis(*matches.get_one("max_retry_timeout").expect("Required")),
         *matches.get_one("retry_count").expect("Required"),
         true,
+        Duration::from_millis(*matches.get_one("keep_alive_interval").expect("Required")),
     );
     let ca_path: Option<PathBuf> = matches.get_one("ca_cert_pem_path").cloned();
     let tls_config = match ca_path {

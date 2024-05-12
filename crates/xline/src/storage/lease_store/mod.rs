@@ -179,7 +179,7 @@ where
         };
 
         _ = self.unsynced_cache.write().remove(&lease_id);
-        self.sync_event.notify(usize::MAX);
+        let _ignore = self.sync_event.notify(usize::MAX);
     }
 
     /// Wait for the lease id to be removed from the cache
@@ -412,13 +412,17 @@ mod test {
         let _ignore4 = exe_and_sync_req(&lease_store, &req4, -1).await?;
         let resp_1 = exe_and_sync_req(&lease_store, &req6, -1).await?;
 
-        let ResponseWrapper::LeaseLeasesResponse(leases_1) = resp_1 else { panic!("wrong response type: {resp_1:?}"); };
+        let ResponseWrapper::LeaseLeasesResponse(leases_1) = resp_1 else {
+            panic!("wrong response type: {resp_1:?}");
+        };
         assert_eq!(leases_1.leases[0].id, 3);
         assert_eq!(leases_1.leases[1].id, 4);
 
         let _ignore5 = exe_and_sync_req(&lease_store, &req5, -1).await?;
         let resp_2 = exe_and_sync_req(&lease_store, &req6, -1).await?;
-        let ResponseWrapper::LeaseLeasesResponse(leases_2) = resp_2 else { panic!("wrong response type: {resp_2:?}"); };
+        let ResponseWrapper::LeaseLeasesResponse(leases_2) = resp_2 else {
+            panic!("wrong response type: {resp_2:?}");
+        };
         assert_eq!(leases_2.leases[0].id, 4);
 
         Ok(())

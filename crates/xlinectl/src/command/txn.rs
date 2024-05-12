@@ -190,11 +190,11 @@ mod tests {
             TxnOp::put(PutRequest::new("key1", "created-key1"))
         );
         assert_eq!(
-            parse_op_line(r#"get key1 key11"#).unwrap(),
+            parse_op_line(r"get key1 key11").unwrap(),
             TxnOp::range(RangeRequest::new("key1").with_range_end("key11"))
         );
         assert_eq!(
-            parse_op_line(r#"get key1 --from_key"#).unwrap(),
+            parse_op_line(r"get key1 --from_key").unwrap(),
             TxnOp::range(RangeRequest::new("key1").with_from_key())
         );
     }

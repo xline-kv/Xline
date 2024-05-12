@@ -48,12 +48,12 @@ impl<C: Command> CommandBoard<C> {
 
     /// Release notifiers
     pub(super) fn release_notifiers(&mut self) {
-        self.er_notifiers
-            .drain()
-            .for_each(|(_, event)| event.notify(usize::MAX));
-        self.asr_notifiers
-            .drain()
-            .for_each(|(_, event)| event.notify(usize::MAX));
+        self.er_notifiers.drain().for_each(|(_, event)| {
+            let _ignore = event.notify(usize::MAX);
+        });
+        self.asr_notifiers.drain().for_each(|(_, event)| {
+            let _ignore = event.notify(usize::MAX);
+        });
     }
 
     /// Clear
@@ -101,10 +101,10 @@ impl<C: Command> CommandBoard<C> {
 
     /// Get a listener for execution result
     fn er_listener(&mut self, id: ProposeId) -> EventListener {
-        let event = self.er_notifiers.entry(id).or_insert_with(Event::new);
+        let event = self.er_notifiers.entry(id).or_default();
         let listener = event.listen();
         if self.er_buffer.contains_key(&id) {
-            event.notify(usize::MAX);
+            let _ignore = event.notify(usize::MAX);
         }
         listener
     }
@@ -116,20 +116,20 @@ impl<C: Command> CommandBoard<C> {
 
     /// Get a listener for after sync result
     fn asr_listener(&mut self, id: ProposeId) -> EventListener {
-        let event = self.asr_notifiers.entry(id).or_insert_with(Event::new);
+        let event = self.asr_notifiers.entry(id).or_default();
         let listener = event.listen();
         if self.asr_buffer.contains_key(&id) {
-            event.notify(usize::MAX);
+            let _ignore = event.notify(usize::MAX);
         }
         listener
     }
 
     /// Get a listener for conf change result
     fn conf_listener(&mut self, id: ProposeId) -> EventListener {
-        let event = self.conf_notifier.entry(id).or_insert_with(Event::new);
+        let event = self.conf_notifier.entry(id).or_default();
         let listener = event.listen();
         if self.conf_buffer.contains(&id) {
-            event.notify(usize::MAX);
+            let _ignore = event.notify(usize::MAX);
         }
         listener
     }
@@ -137,26 +137,26 @@ impl<C: Command> CommandBoard<C> {
     /// Notify execution results
     fn notify_er(&mut self, id: &ProposeId) {
         if let Some(notifier) = self.er_notifiers.remove(id) {
-            notifier.notify(usize::MAX);
+            let _ignore = notifier.notify(usize::MAX);
         }
     }
 
     /// Notify `wait_synced` requests
     fn notify_asr(&mut self, id: &ProposeId) {
         if let Some(notifier) = self.asr_notifiers.remove(id) {
-            notifier.notify(usize::MAX);
+            let _ignore = notifier.notify(usize::MAX);
         }
     }
 
     /// Notify `shutdown` requests
     pub(super) fn notify_shutdown(&mut self) {
-        self.shutdown_notifier.notify(usize::MAX);
+        let _ignore = self.shutdown_notifier.notify(usize::MAX);
     }
 
     /// Notify `wait_synced` requests
     fn notify_conf(&mut self, id: &ProposeId) {
         if let Some(notifier) = self.conf_notifier.remove(id) {
-            notifier.notify(usize::MAX);
+            let _ignore = notifier.notify(usize::MAX);
         }
     }
 

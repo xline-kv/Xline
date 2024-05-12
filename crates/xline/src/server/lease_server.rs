@@ -1,7 +1,7 @@
 use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
-use clippy_utilities::Cast;
+use clippy_utilities::NumericCast;
 use curp::members::ClusterInfo;
 use futures::stream::Stream;
 use tokio::time;
@@ -20,7 +20,6 @@ use xlineapi::{
     execute_error::ExecuteError,
 };
 
-use super::auth_server::get_token;
 use crate::{
     id_gen::IdGenerator,
     metrics,
@@ -86,7 +85,7 @@ where
     }
 
     /// Task of revoke expired leases
-    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
+    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
     async fn revoke_expired_leases_task(
         lease_server: Arc<LeaseServer<S>>,
         shutdown_listener: Listener,
@@ -131,10 +130,7 @@ where
     where
         T: Into<RequestWrapper>,
     {
-        let auth_info = match get_token(request.metadata()) {
-            Some(token) => Some(self.auth_storage.verify(&token)?),
-            None => None,
-        };
+        let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let request = request.into_inner().into();
         let keys = {
             if let RequestWrapper::LeaseRevokeRequest(ref req) = request {
@@ -153,8 +149,8 @@ where
     }
 
     /// Handle keep alive at leader
-    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
-    async fn leader_keep_alive(
+    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
+    fn leader_keep_alive(
         &self,
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
     ) -> Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>> {
@@ -202,7 +198,7 @@ where
     }
 
     /// Handle keep alive at follower
-    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
+    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
     async fn follower_keep_alive(
         &self,
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
@@ -329,7 +325,7 @@ where
         let request_stream = request.into_inner();
         let stream = loop {
             if self.lease_storage.is_primary() {
-                break self.leader_keep_alive(request_stream).await;
+                break self.leader_keep_alive(request_stream);
             }
             let leader_id = self.client.fetch_leader_id(false).await?;
             // Given that a candidate server may become a leader when it won the election or
@@ -373,8 +369,8 @@ where
                 let res = LeaseTimeToLiveResponse {
                     header: Some(self.lease_storage.gen_header()),
                     id: time_to_live_req.id,
-                    ttl: lease.remaining().as_secs().cast(),
-                    granted_ttl: lease.ttl().as_secs().cast(),
+                    ttl: lease.remaining().as_secs().numeric_cast(),
+                    granted_ttl: lease.ttl().as_secs().numeric_cast(),
                     keys,
                 };
                 return Ok(tonic::Response::new(res));

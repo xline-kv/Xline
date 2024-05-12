@@ -1,3 +1,6 @@
+/// `RocksDB` transaction implementation
+mod transaction;
+
 use std::{
     cmp::Ordering,
     env::temp_dir,
@@ -5,25 +8,25 @@ use std::{
     io::{Cursor, Error as IoError, ErrorKind},
     iter::repeat,
     path::{Path, PathBuf},
-    sync::atomic::AtomicU64,
+    sync::{atomic::AtomicU64, Arc},
 };
 
 use bytes::{Buf, Bytes, BytesMut};
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use rocksdb::{
-    Error as RocksError, IteratorMode, Options, SstFileWriter, WriteBatchWithTransaction,
-    WriteOptions, DB,
+    Direction, Error as RocksError, ErrorKind as RocksErrorKind, IteratorMode,
+    OptimisticTransactionDB, Options, SstFileWriter,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{fs::File, io::AsyncWriteExt};
 use tokio_util::io::read_buf;
+use tracing::warn;
 
+pub(super) use self::transaction::RocksTransaction;
 use crate::{
-    api::{
-        engine_api::{StorageEngine, WriteOperation},
-        snapshot_api::SnapshotApi,
-    },
+    api::{engine_api::StorageEngine, snapshot_api::SnapshotApi},
     error::EngineError,
+    WriteOperation,
 };
 
 /// Install snapshot chunk size: 64KB
@@ -57,11 +60,11 @@ impl From<RocksError> for EngineError {
 #[derive(Debug)]
 pub struct RocksEngine {
     /// The inner storage engine of `RocksDB`
-    inner: DB,
+    inner: Arc<OptimisticTransactionDB>,
     /// The tables of current engine
     tables: Vec<String>,
     /// The size cache of the engine
-    size: AtomicU64,
+    size: Arc<AtomicU64>,
 }
 
 impl RocksEngine {
@@ -75,19 +78,24 @@ impl RocksEngine {
         let mut db_opts = Options::default();
         db_opts.create_missing_column_families(true);
         db_opts.create_if_missing(true);
-        let db = DB::open_cf(&db_opts, data_dir, tables)?;
+        let db = Arc::new(OptimisticTransactionDB::open_cf(
+            &db_opts, data_dir, tables,
+        )?);
         let size = Self::get_db_size(&db, tables)?;
         Ok(Self {
             inner: db,
             tables: tables.iter().map(|s| (*s).to_owned()).collect(),
-            size: AtomicU64::new(size),
+            size: Arc::new(AtomicU64::new(size)),
         })
     }
 
     /// Get the total sst file size of all tables
     /// # WARNING
     /// This method need to flush memtable to disk. it may be slow. do not call it frequently.
-    fn get_db_size<T: AsRef<str>, V: AsRef<[T]>>(db: &DB, tables: V) -> Result<u64, EngineError> {
+    fn get_db_size<T: AsRef<str>, V: AsRef<[T]>>(
+        db: &OptimisticTransactionDB,
+        tables: V,
+    ) -> Result<u64, EngineError> {
         let mut size = 0;
         for table in tables.as_ref() {
             let cf = db
@@ -102,6 +110,18 @@ impl RocksEngine {
                 .overflow_add(size);
         }
         Ok(size)
+    }
+
+    /// Gets the max write data size.
+    /// Max write data size = 2 * key + value + `cf_handle_size` + `ESTIMATE_WRITTEN_SIZE_OFFSET`
+    pub(super) fn max_write_size(table_len: usize, key_len: usize, value_len: usize) -> usize {
+        /// Estimate size offset for a write operation
+        const ESTIMATE_WRITTEN_SIZE_OFFSET: usize = 1008;
+        key_len
+            .overflow_mul(2)
+            .overflow_add(value_len)
+            .overflow_add(table_len)
+            .overflow_add(ESTIMATE_WRITTEN_SIZE_OFFSET)
     }
 
     /// Apply snapshot from file
@@ -131,6 +151,13 @@ impl RocksEngine {
 #[async_trait::async_trait]
 impl StorageEngine for RocksEngine {
     type Snapshot = RocksSnapshot;
+    type Transaction = RocksTransaction;
+
+    #[inline]
+    fn transaction(&self) -> RocksTransaction {
+        RocksTransaction {}
+    }
+
     #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
         if let Some(cf) = self.inner.cf_handle(table) {
@@ -173,49 +200,74 @@ impl StorageEngine for RocksEngine {
     }
 
     #[inline]
-    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError> {
-        let mut batch = WriteBatchWithTransaction::<false>::default();
-        let mut size = 0;
-        for op in wr_ops {
-            match op {
-                WriteOperation::Put { table, key, value } => {
-                    let cf = self
-                        .inner
-                        .cf_handle(table)
-                        .ok_or(EngineError::TableNotFound(table.to_owned()))?;
-                    // max write data size = 2 * key + value + cf_handle_size + 1008
-                    size = size
-                        .overflow_add(key.len().overflow_mul(2))
-                        .overflow_add(value.len())
-                        .overflow_add(table.len())
-                        .overflow_add(1008);
-                    batch.put_cf(&cf, key, value);
-                }
-                WriteOperation::Delete { table, key } => {
-                    let cf = self
-                        .inner
-                        .cf_handle(table)
-                        .ok_or(EngineError::TableNotFound(table.to_owned()))?;
-                    batch.delete_cf(&cf, key);
-                }
-                WriteOperation::DeleteRange { table, from, to } => {
-                    let cf = self
-                        .inner
-                        .cf_handle(table)
-                        .ok_or(EngineError::TableNotFound(table.to_owned()))?;
-                    batch.delete_range_cf(&cf, from, to);
+    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, _sync: bool) -> Result<(), EngineError> {
+        let mut retry_interval = 10;
+        let max_retry_count = 5;
+        let mut retry_count = 0;
+        loop {
+            let transaction = self.inner.transaction();
+            let mut size = 0;
+            #[allow(clippy::pattern_type_mismatch)] // can't be fixed
+            for op in &wr_ops {
+                match op {
+                    WriteOperation::Put { table, key, value } => {
+                        let cf = self
+                            .inner
+                            .cf_handle(table)
+                            .ok_or(EngineError::TableNotFound((*table).to_owned()))?;
+                        size = size.overflow_add(Self::max_write_size(
+                            table.len(),
+                            key.len(),
+                            value.len(),
+                        ));
+                        transaction.put_cf(&cf, key, value)?;
+                    }
+                    WriteOperation::Delete { table, key } => {
+                        let cf = self
+                            .inner
+                            .cf_handle(table)
+                            .ok_or(EngineError::TableNotFound((*table).to_owned()))?;
+                        transaction.delete_cf(&cf, key)?;
+                    }
+                    WriteOperation::DeleteRange { table, from, to } => {
+                        let cf = self
+                            .inner
+                            .cf_handle(table)
+                            .ok_or(EngineError::TableNotFound((*table).to_owned()))?;
+                        let mode = IteratorMode::From(from, Direction::Forward);
+                        let kvs: Vec<_> = transaction
+                            .iterator_cf(&cf, mode)
+                            .take_while(|res| res.as_ref().is_ok_and(|(key, _)| key.as_ref() < *to))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        for (key, _) in kvs {
+                            transaction.delete_cf(&cf, key)?;
+                        }
+                    }
                 }
             }
+            match transaction.commit() {
+                Ok(()) => {
+                    _ = self
+                        .size
+                        .fetch_add(size.numeric_cast(), std::sync::atomic::Ordering::Relaxed);
+                    return Ok(());
+                }
+                Err(err)
+                    if matches!(err.kind(), RocksErrorKind::Busy | RocksErrorKind::TryAgain) =>
+                {
+                    if retry_count > max_retry_count {
+                        warn!("Oops, txn commit retry count reach the max_retry_count: {max_retry_count}");
+                        return Err(EngineError::UnderlyingError(err.to_string()));
+                    }
+                    warn!("Rocksdb txn commit failed, retrying after {retry_interval}ms");
+                    std::thread::sleep(std::time::Duration::from_millis(retry_interval));
+                    retry_interval = retry_interval.overflow_mul(2);
+                    retry_count = retry_count.overflow_add(1);
+                    continue;
+                }
+                Err(err) => return Err(EngineError::UnderlyingError(err.to_string())),
+            }
         }
-        let mut opt = WriteOptions::default();
-        opt.set_sync(sync);
-        let res = self.inner.write_opt(batch, &opt).map_err(EngineError::from);
-        if res.is_ok() {
-            _ = self
-                .size
-                .fetch_add(size.numeric_cast(), std::sync::atomic::Ordering::Relaxed);
-        }
-        res
     }
 
     #[inline]
@@ -451,7 +503,11 @@ impl RocksSnapshot {
 
     /// path of current file
     fn current_file_path(&self, tmp: bool) -> PathBuf {
-        let Some(current_filename) = self.snap_files.get(self.snap_file_idx).map(|sf| &sf.filename) else {
+        let Some(current_filename) = self
+            .snap_files
+            .get(self.snap_file_idx)
+            .map(|sf| &sf.filename)
+        else {
             unreachable!("this method must be called when self.file_index < self.snap_files.len()")
         };
         let filename = if tmp {

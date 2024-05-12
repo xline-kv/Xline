@@ -1,10 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 
-use pbkdf2::{
-    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
-    Pbkdf2,
-};
 use tonic::transport::Channel;
+use utils::hash_password;
 use xlineapi::{
     command::Command, AuthDisableResponse, AuthEnableResponse, AuthRoleAddResponse,
     AuthRoleDeleteResponse, AuthRoleGetResponse, AuthRoleGrantPermissionResponse,
@@ -246,7 +243,9 @@ impl AuthClient {
                 "password is required but not provided",
             )));
         }
-        let hashed_password = Self::hash_password(request.inner.password.as_bytes());
+        let hashed_password = hash_password(request.inner.password.as_bytes()).map_err(|err| {
+            XlineClientError::InternalError(format!("Failed to hash password: {err}"))
+        })?;
         request.inner.hashed_password = hashed_password;
         request.inner.password = String::new();
         self.handle_req(request.inner, false).await
@@ -401,7 +400,9 @@ impl AuthClient {
                 "role name is empty",
             )));
         }
-        let hashed_password = Self::hash_password(request.inner.password.as_bytes());
+        let hashed_password = hash_password(request.inner.password.as_bytes()).map_err(|err| {
+            XlineClientError::InternalError(format!("Failed to hash password: {err}"))
+        })?;
         request.inner.hashed_password = hashed_password;
         request.inner.password = String::new();
         self.handle_req(request.inner, false).await
@@ -729,7 +730,11 @@ impl AuthClient {
                 .await??;
             cmd_res.into_inner()
         } else {
-            let (cmd_res, Some(sync_res)) = self.curp_client.propose(&cmd,self.token.as_ref(),false).await?? else {
+            let (cmd_res, Some(sync_res)) = self
+                .curp_client
+                .propose(&cmd, self.token.as_ref(), false)
+                .await??
+            else {
                 unreachable!("sync_res is always Some when use_fast_path is false");
             };
             let mut res_wrapper = cmd_res.into_inner();
@@ -738,15 +743,5 @@ impl AuthClient {
         };
 
         Ok(res_wrapper.into())
-    }
-
-    /// Generate hash of the password
-    fn hash_password(password: &[u8]) -> String {
-        let salt = SaltString::generate(&mut OsRng);
-        #[allow(clippy::panic)] // This doesn't seems to be fallible
-        let hashed_password = Pbkdf2
-            .hash_password(password, salt.as_ref())
-            .unwrap_or_else(|e| panic!("Failed to hash password: {e}"));
-        hashed_password.to_string()
     }
 }

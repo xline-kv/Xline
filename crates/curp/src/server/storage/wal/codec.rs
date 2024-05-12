@@ -5,10 +5,10 @@ use curp_external_api::LogIndex;
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-use tokio_util::codec::{Decoder, Encoder};
 
 use super::{
     error::{CorruptType, WALError},
+    framed::{Decoder, Encoder},
     util::{get_checksum, validate_data},
 };
 use crate::log_entry::LogEntry;
@@ -104,18 +104,13 @@ where
 {
     type Error = io::Error;
 
-    fn encode(
-        &mut self,
-        frames: Vec<DataFrame<C>>,
-        dst: &mut bytes::BytesMut,
-    ) -> Result<(), Self::Error> {
-        let frames_bytes: Vec<_> = frames.into_iter().flat_map(|f| f.encode()).collect();
-        let commit_frame = CommitFrame::new_from_data(&frames_bytes);
+    /// Encodes a frame
+    fn encode(&mut self, frames: Vec<DataFrame<C>>) -> Result<Vec<u8>, Self::Error> {
+        let mut frame_data: Vec<_> = frames.into_iter().flat_map(|f| f.encode()).collect();
+        let commit_frame = CommitFrame::new_from_data(&frame_data);
+        frame_data.extend_from_slice(&commit_frame.encode());
 
-        dst.extend(frames_bytes);
-        dst.extend(commit_frame.encode());
-
-        Ok(())
+        Ok(frame_data)
     }
 }
 
@@ -127,30 +122,32 @@ where
 
     type Error = WALError;
 
-    fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        loop {
-            if let Some((frame, len)) = WALFrame::<C>::decode(src)? {
-                let decoded_bytes = src.split_to(len);
-                match frame {
-                    WALFrame::Data(data) => {
-                        self.frames.push(data);
-                        self.hasher.update(decoded_bytes);
-                    }
-                    WALFrame::Commit(commit) => {
-                        let frames_bytes: Vec<_> =
-                            self.frames.iter().flat_map(DataFrame::encode).collect();
-                        let checksum = self.hasher.clone().finalize();
-                        self.hasher.reset();
-                        if commit.validate(&checksum) {
-                            return Ok(Some(self.frames.drain(..).collect()));
-                        }
-                        return Err(WALError::Corrupted(CorruptType::Checksum));
-                    }
+    #[allow(clippy::arithmetic_side_effects)] // the arithmetic only used as slice indices
+    fn decode(&mut self, src: &[u8]) -> Result<(Self::Item, usize), Self::Error> {
+        let mut cursor = 0;
+        while cursor < src.len() {
+            let next = src.get(cursor..).ok_or(WALError::MaybeEnded)?;
+            let Some((frame, len)) = WALFrame::<C>::decode(next)? else {
+                return Err(WALError::MaybeEnded);
+            };
+            let decoded_bytes = src.get(cursor..cursor + len).ok_or(WALError::MaybeEnded)?;
+            cursor += len;
+            match frame {
+                WALFrame::Data(data) => {
+                    self.frames.push(data);
+                    self.hasher.update(decoded_bytes);
                 }
-            } else {
-                return Ok(None);
+                WALFrame::Commit(commit) => {
+                    let checksum = self.hasher.clone().finalize();
+                    self.hasher.reset();
+                    if commit.validate(&checksum) {
+                        return Ok((self.frames.drain(..).collect(), cursor));
+                    }
+                    return Err(WALError::Corrupted(CorruptType::Checksum));
+                }
             }
         }
+        Err(WALError::MaybeEnded)
     }
 }
 
@@ -301,7 +298,7 @@ impl FrameType for CommitFrame {
 
 impl FrameEncoder for CommitFrame {
     fn encode(&self) -> Vec<u8> {
-        let header = std::iter::once(self.frame_type()).chain([0u8; 7].into_iter());
+        let header = std::iter::once(self.frame_type()).chain([0u8; 7]);
         header.chain(self.checksum.clone()).collect()
     }
 }
@@ -323,25 +320,19 @@ mod tests {
 
     #[tokio::test]
     async fn frame_encode_decode_is_ok() {
-        let file = TokioFile::from(tempfile().unwrap());
-        let mut framed = Framed::new(file, WAL::<TestCommand>::new());
+        let mut codec = WAL::<TestCommand>::new();
         let entry = LogEntry::<TestCommand>::new(1, 1, ProposeId(1, 2), EntryData::Empty);
         let data_frame = DataFrame::Entry(entry.clone());
         let seal_frame = DataFrame::<TestCommand>::SealIndex(1);
-        framed.send(vec![data_frame]).await.unwrap();
-        framed.send(vec![seal_frame]).await.unwrap();
-        framed.get_mut().flush().await;
+        let mut encoded = codec.encode(vec![data_frame]).unwrap();
+        encoded.extend_from_slice(&codec.encode(vec![seal_frame]).unwrap());
 
-        let mut file = framed.into_inner();
-        file.seek(io::SeekFrom::Start(0)).await.unwrap();
-        let mut framed = Framed::new(file, WAL::<TestCommand>::new());
-
-        let data_frame_get = &framed.next().await.unwrap().unwrap()[0];
-        let seal_frame_get = &framed.next().await.unwrap().unwrap()[0];
-        let DataFrame::Entry(ref entry_get) = *data_frame_get else {
+        let (data_frame_get, len) = codec.decode(&encoded).unwrap();
+        let (seal_frame_get, _) = codec.decode(&encoded[len..]).unwrap();
+        let DataFrame::Entry(ref entry_get) = data_frame_get[0] else {
             panic!("frame should be type: DataFrame::Entry");
         };
-        let DataFrame::SealIndex(ref index) = *seal_frame_get else {
+        let DataFrame::SealIndex(ref index) = seal_frame_get[0] else {
             panic!("frame should be type: DataFrame::Entry");
         };
 
@@ -351,46 +342,27 @@ mod tests {
 
     #[tokio::test]
     async fn frame_zero_write_will_be_detected() {
-        let file = TokioFile::from(tempfile().unwrap());
-        let mut framed = Framed::new(file, WAL::<TestCommand>::new());
+        let mut codec = WAL::<TestCommand>::new();
         let entry = LogEntry::<TestCommand>::new(1, 1, ProposeId(1, 2), EntryData::Empty);
         let data_frame = DataFrame::Entry(entry.clone());
-        framed.send(vec![data_frame]).await.unwrap();
-        framed.get_mut().flush().await;
+        let seal_frame = DataFrame::<TestCommand>::SealIndex(1);
+        let mut encoded = codec.encode(vec![data_frame]).unwrap();
+        encoded[0] = 0;
 
-        let mut file = framed.into_inner();
-        /// zero the first byte, it will reach a success state,
-        /// all following data will be truncated
-        file.seek(io::SeekFrom::Start(0)).await.unwrap();
-        file.write_u8(0).await;
-
-        file.seek(io::SeekFrom::Start(0)).await.unwrap();
-
-        let mut framed = Framed::new(file, WAL::<TestCommand>::new());
-
-        let err = framed.next().await.unwrap().unwrap_err();
+        let err = codec.decode(&encoded).unwrap_err();
         assert!(matches!(err, WALError::MaybeEnded), "error {err} not match");
     }
 
     #[tokio::test]
     async fn frame_corrupt_will_be_detected() {
-        let file = TokioFile::from(tempfile().unwrap());
-        let mut framed = Framed::new(file, WAL::<TestCommand>::new());
+        let mut codec = WAL::<TestCommand>::new();
         let entry = LogEntry::<TestCommand>::new(1, 1, ProposeId(1, 2), EntryData::Empty);
         let data_frame = DataFrame::Entry(entry.clone());
-        framed.send(vec![data_frame]).await.unwrap();
-        framed.get_mut().flush().await;
+        let seal_frame = DataFrame::<TestCommand>::SealIndex(1);
+        let mut encoded = codec.encode(vec![data_frame]).unwrap();
+        encoded[1] = 0;
 
-        let mut file = framed.into_inner();
-        /// This will cause a failure state
-        file.seek(io::SeekFrom::Start(1)).await.unwrap();
-        file.write_u8(0).await;
-
-        file.seek(io::SeekFrom::Start(0)).await.unwrap();
-
-        let mut framed = Framed::new(file, WAL::<TestCommand>::new());
-
-        let err = framed.next().await.unwrap().unwrap_err();
+        let err = codec.decode(&encoded).unwrap_err();
         assert!(
             matches!(err, WALError::Corrupted(_)),
             "error {err} not match"

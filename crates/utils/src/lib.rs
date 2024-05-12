@@ -44,6 +44,7 @@
     clippy::pedantic,
     clippy::cargo,
 
+
     // The followings are selected restriction lints for rust 1.57
     clippy::as_conversions,
     clippy::clone_on_ref_ptr,
@@ -126,17 +127,24 @@
     clippy::impl_trait_in_params,
     clippy::let_underscore_untyped,
     clippy::missing_assert_message,
-    clippy::multiple_unsafe_ops_per_block,
     clippy::semicolon_inside_block,
     // clippy::semicolon_outside_block, already used `semicolon_inside_block`
     clippy::tests_outside_test_module,
-    // 1.71.0
-    clippy::default_constructed_unit_structs,
-    clippy::items_after_test_module,
-    clippy::manual_next_back,
-    clippy::manual_while_let_some,
-    clippy::needless_bool_assign,
-    clippy::non_minimal_cfg,
+
+    // The followings are selected lints from 1.71.0 to 1.74.0
+    clippy::large_stack_frames,
+    clippy::tuple_array_conversions,
+    clippy::pub_without_shorthand,
+    clippy::needless_raw_strings,
+    clippy::redundant_type_annotations,
+    clippy::host_endian_bytes,
+    clippy::big_endian_bytes,
+    clippy::error_impl_error,
+    clippy::string_lit_chars_any,
+    clippy::needless_pass_by_ref_mut,
+    clippy::redundant_as_str,
+    clippy::missing_asserts_for_indexing,
+
 )]
 #![allow(
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
@@ -178,6 +186,8 @@ pub struct ServerTlsConfig;
 
 /// configuration
 pub mod config;
+/// Interval tree implementation
+pub mod interval_map;
 /// utils for metrics
 pub mod metrics;
 /// utils of `parking_lot` lock
@@ -198,7 +208,32 @@ pub mod tokio_lock;
 /// utils for pass span context
 pub mod tracing;
 
+use ::tracing::debug;
 pub use parser::*;
+use pbkdf2::{
+    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
+    Params, Pbkdf2,
+};
+
+/// display all elements for the given vector
+#[macro_export]
+macro_rules! write_vec {
+    ($f:expr, $name:expr, $vector:expr) => {
+        write!($f, "{}: [ ", { $name })?;
+        let last_idx = if $vector.is_empty() {
+            0
+        } else {
+            $vector.len() - 1
+        };
+        for (idx, element) in $vector.iter().enumerate() {
+            write!($f, "{}", element)?;
+            if idx != last_idx {
+                write!($f, ",")?;
+            }
+        }
+        write!($f, "]")?;
+    };
+}
 
 /// Get current timestamp in seconds
 #[must_use]
@@ -210,30 +245,6 @@ pub fn timestamp() -> u64 {
         .as_secs()
 }
 
-/// Certs for tests
-pub mod certs {
-    /// Server certificate
-    #[inline]
-    #[must_use]
-    pub fn server_cert() -> &'static [u8] {
-        include_bytes!("../../../fixtures/server.crt")
-    }
-
-    /// Server private key
-    #[inline]
-    #[must_use]
-    pub fn server_key() -> &'static [u8] {
-        include_bytes!("../../../fixtures/server.key")
-    }
-
-    /// CA certificate
-    #[inline]
-    #[must_use]
-    pub fn ca_cert() -> &'static [u8] {
-        include_bytes!("../../../fixtures/ca.crt")
-    }
-}
-
 /// Create a new endpoint from addr
 /// # Errors
 /// Return error if addr or tls config is invalid
@@ -243,6 +254,14 @@ pub fn build_endpoint(
     addr: &str,
     tls_config: Option<&ClientTlsConfig>,
 ) -> Result<Endpoint, tonic::transport::Error> {
+    debug!(
+        "connect to {addr}{}",
+        if tls_config.is_some() {
+            " with tls_config"
+        } else {
+            ""
+        }
+    );
     let scheme_str = addr.split_once("://").map(|(scheme, _)| scheme);
     let endpoint = match scheme_str {
         Some(_scheme) => Endpoint::from_str(addr)?,
@@ -262,4 +281,23 @@ pub fn build_endpoint(
         }
     };
     Ok(endpoint)
+}
+
+/// Hash password
+///
+/// # Errors
+///
+/// return `Error` when hash password failed
+#[inline]
+pub fn hash_password(password: &[u8]) -> Result<String, pbkdf2::password_hash::errors::Error> {
+    let salt = SaltString::generate(&mut OsRng);
+    let simple_para = Params {
+        // The recommended rounds is 600,000 or more
+        // [OWASP cheat sheet]: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+        rounds: 200_000,
+        output_length: 32,
+    };
+    let hashed_password =
+        Pbkdf2.hash_password_customized(password, None, None, simple_para, &salt)?;
+    Ok(hashed_password.to_string())
 }

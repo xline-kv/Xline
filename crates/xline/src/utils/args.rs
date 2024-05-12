@@ -6,18 +6,19 @@ use tokio::fs;
 use utils::{
     config::{
         default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
-        default_client_wait_synced_timeout, default_cmd_workers, default_compact_batch_size,
-        default_compact_sleep_interval, default_compact_timeout, default_follower_timeout_ticks,
-        default_gc_interval, default_heartbeat_interval, default_initial_retry_timeout,
-        default_log_entries_cap, default_log_level, default_max_retry_timeout,
-        default_metrics_enable, default_metrics_path, default_metrics_port,
-        default_metrics_push_endpoint, default_metrics_push_protocol, default_propose_timeout,
-        default_quota, default_range_retry_timeout, default_retry_count, default_rotation,
-        default_rpc_timeout, default_server_wait_synced_timeout, default_sync_victims_interval,
-        default_watch_progress_notify_interval, AuthConfig, AutoCompactConfig, ClientConfig,
-        ClusterConfig, CompactConfig, CurpConfigBuilder, EngineConfig, InitialClusterState,
-        LevelConfig, LogConfig, MetricsConfig, MetricsPushProtocol, RotationConfig, ServerTimeout,
-        StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
+        default_client_id_keep_alive_interval, default_client_wait_synced_timeout,
+        default_cmd_workers, default_compact_batch_size, default_compact_sleep_interval,
+        default_compact_timeout, default_follower_timeout_ticks, default_gc_interval,
+        default_heartbeat_interval, default_initial_retry_timeout, default_log_entries_cap,
+        default_log_level, default_max_retry_timeout, default_metrics_enable, default_metrics_path,
+        default_metrics_port, default_metrics_push_endpoint, default_metrics_push_protocol,
+        default_propose_timeout, default_quota, default_range_retry_timeout, default_retry_count,
+        default_rotation, default_rpc_timeout, default_server_wait_synced_timeout,
+        default_sync_victims_interval, default_watch_progress_notify_interval, AuthConfig,
+        AutoCompactConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder,
+        EngineConfig, InitialClusterState, LevelConfig, LogConfig, MetricsConfig,
+        MetricsPushProtocol, RotationConfig, ServerTimeout, StorageConfig, TlsConfig, TraceConfig,
+        XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_metrics_push_protocol,
     parse_rotation, parse_state, ConfigFileError,
@@ -37,13 +38,13 @@ pub struct ServerArgs {
     #[clap(long)]
     name: String,
     /// Node peer listen urls
-    #[clap(long, num_args = 1.., value_delimiter = ',')]
+    #[clap(long, required = true, num_args = 1.., value_delimiter = ',')]
     peer_listen_urls: Vec<String>,
     /// Node peer advertise urls
     #[clap(long, num_args = 1.., value_delimiter = ',')]
     peer_advertise_urls: Vec<String>,
     /// Node client listen urls
-    #[clap(long, num_args = 1.., value_delimiter = ',')]
+    #[clap(long, required = true, num_args = 1.., value_delimiter = ',')]
     client_listen_urls: Vec<String>,
     /// Node client advertise urls
     #[clap(long, num_args = 1.., value_delimiter = ',')]
@@ -144,6 +145,9 @@ pub struct ServerArgs {
     /// Curp client use fixed backoff
     #[clap(long)]
     client_fixed_backoff: bool,
+    /// Curp client id keep alive interval [default: 1s]
+    #[clap(long, value_parser = parse_duration)]
+    client_keep_alive_interval: Option<Duration>,
     /// How often should the gc task run [default: 20s]
     #[clap(long, value_parser = parse_duration)]
     gc_interval: Option<Duration>,
@@ -193,13 +197,13 @@ pub struct ServerArgs {
     quota: Option<u64>,
     /// Server ca certificate path, used to verify client certificate
     #[clap(long)]
-    server_ca_cert_path: Option<PathBuf>,
+    peer_ca_cert_path: Option<PathBuf>,
     /// Server certificate path
     #[clap(long)]
-    server_cert_path: Option<PathBuf>,
+    peer_cert_path: Option<PathBuf>,
     /// Server private key path
     #[clap(long)]
-    server_key_path: Option<PathBuf>,
+    peer_key_path: Option<PathBuf>,
     /// Client ca certificate path, used to verify server certificate
     #[clap(long)]
     client_ca_cert_path: Option<PathBuf>,
@@ -231,19 +235,26 @@ impl From<ServerArgs> for XlineServerConfig {
 
         let storage = StorageConfig::new(engine, args.quota.unwrap_or_else(default_quota));
         let Ok(curp_config) = CurpConfigBuilder::default()
-        .heartbeat_interval(args.heartbeat_interval
-            .unwrap_or_else(default_heartbeat_interval))
-        .wait_synced_timeout(args.server_wait_synced_timeout
-            .unwrap_or_else(default_server_wait_synced_timeout))
-        .rpc_timeout(args.rpc_timeout.unwrap_or_else(default_rpc_timeout))
-        .batch_timeout(args.batch_timeout.unwrap_or_else(default_batch_timeout))
-        .batch_max_size(args.batch_max_size.unwrap_or_else(default_batch_max_size))
-        .follower_timeout_ticks(args.follower_timeout_ticks)
-        .candidate_timeout_ticks(args.candidate_timeout_ticks)
-        .engine_cfg(curp_engine)
-        .gc_interval(args.gc_interval.unwrap_or_else(default_gc_interval))
-        .cmd_workers(args.cmd_workers)
-        .build() else { panic!("failed to create curp config") };
+            .heartbeat_interval(
+                args.heartbeat_interval
+                    .unwrap_or_else(default_heartbeat_interval),
+            )
+            .wait_synced_timeout(
+                args.server_wait_synced_timeout
+                    .unwrap_or_else(default_server_wait_synced_timeout),
+            )
+            .rpc_timeout(args.rpc_timeout.unwrap_or_else(default_rpc_timeout))
+            .batch_timeout(args.batch_timeout.unwrap_or_else(default_batch_timeout))
+            .batch_max_size(args.batch_max_size.unwrap_or_else(default_batch_max_size))
+            .follower_timeout_ticks(args.follower_timeout_ticks)
+            .candidate_timeout_ticks(args.candidate_timeout_ticks)
+            .engine_cfg(curp_engine)
+            .gc_interval(args.gc_interval.unwrap_or_else(default_gc_interval))
+            .cmd_workers(args.cmd_workers)
+            .build()
+        else {
+            panic!("failed to create curp config")
+        };
         let client_config = ClientConfig::new(
             args.client_wait_synced_timeout
                 .unwrap_or_else(default_client_wait_synced_timeout),
@@ -255,6 +266,8 @@ impl From<ServerArgs> for XlineServerConfig {
                 .unwrap_or_else(default_max_retry_timeout),
             args.retry_count.unwrap_or_else(default_retry_count),
             args.client_fixed_backoff,
+            args.client_keep_alive_interval
+                .unwrap_or_else(default_client_id_keep_alive_interval),
         );
         let server_timeout = ServerTimeout::new(
             args.range_retry_timeout
@@ -315,9 +328,9 @@ impl From<ServerArgs> for XlineServerConfig {
             auto_compactor_cfg,
         );
         let tls = TlsConfig::new(
-            args.server_ca_cert_path,
-            args.server_cert_path,
-            args.server_key_path,
+            args.peer_ca_cert_path,
+            args.peer_cert_path,
+            args.peer_key_path,
             args.client_ca_cert_path,
             args.client_cert_path,
             args.client_key_path,

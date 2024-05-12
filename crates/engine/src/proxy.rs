@@ -3,13 +3,13 @@ use std::path::{Path, PathBuf};
 use bytes::{Bytes, BytesMut};
 
 #[cfg(madsim)]
-use crate::mock_rocksdb_engine::{RocksEngine, RocksSnapshot};
+use crate::mock_rocksdb_engine::{RocksEngine, RocksSnapshot, RocksTransaction};
 #[cfg(not(madsim))]
-use crate::rocksdb_engine::{RocksEngine, RocksSnapshot};
+use crate::rocksdb_engine::{RocksEngine, RocksSnapshot, RocksTransaction};
 use crate::{
     error::EngineError,
-    memory_engine::{MemoryEngine, MemorySnapshot},
-    metrics, SnapshotApi, StorageEngine, WriteOperation,
+    memory_engine::{MemoryEngine, MemorySnapshot, MemoryTransaction},
+    metrics, SnapshotApi, StorageEngine, TransactionApi, WriteOperation,
 };
 
 #[derive(Debug)]
@@ -68,6 +68,15 @@ impl Engine {
 #[async_trait::async_trait]
 impl StorageEngine for Engine {
     type Snapshot = Snapshot;
+    type Transaction = Transaction;
+
+    #[inline]
+    fn transaction(&self) -> Transaction {
+        match *self {
+            Engine::Memory(ref e) => Transaction::Memory(e.transaction()),
+            Engine::Rocks(ref e) => Transaction::Rocks(e.transaction()),
+        }
+    }
 
     #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
@@ -148,6 +157,36 @@ impl StorageEngine for Engine {
         match *self {
             Engine::Memory(ref e) => e.file_size(),
             Engine::Rocks(ref e) => e.file_size(),
+        }
+    }
+}
+
+/// `Transaction` is designed to mask the different type of `MemoryTransaction` and `RocksTransaction`
+/// and provides an uniform type to the upper layer.
+/// NOTE: Currently multiple concurrent transactions is not supported
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Transaction {
+    /// Memory transaction
+    Memory(MemoryTransaction),
+    /// Rocks transaction
+    Rocks(metrics::Layer<RocksTransaction>),
+}
+
+impl TransactionApi for Transaction {
+    #[inline]
+    fn commit(self) -> Result<(), EngineError> {
+        match self {
+            Transaction::Memory(t) => t.commit(),
+            Transaction::Rocks(t) => t.commit(),
+        }
+    }
+
+    #[inline]
+    fn rollback(&self) -> Result<(), EngineError> {
+        match *self {
+            Transaction::Memory(ref t) => t.rollback(),
+            Transaction::Rocks(ref t) => t.rollback(),
         }
     }
 }
@@ -410,5 +449,21 @@ mod test {
         }
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn txn_operations_should_success() {
+        let dir = PathBuf::from("/tmp/txn_operations_should_success");
+        let rocks_engine_path = dir.join("rocks_engine");
+        let engines = vec![
+            Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
+            Engine::new(EngineType::Rocks(rocks_engine_path), &TESTTABLES).unwrap(),
+        ];
+        for engine in engines {
+            let txn = engine.transaction();
+            txn.rollback().unwrap();
+            txn.commit().unwrap();
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

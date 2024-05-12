@@ -1,15 +1,108 @@
 pull_request_rules:
   - name: Automatic merge on approval
     conditions:
-      - "#approved-reviews-by>=2"
-      - check-success=Validation
-      - check-success=Tests Normal
-      - check-success=Tests Madsim
-      - check-success=Commit Message Validation
-      - check-success=Spell Check
-      - check-success=DCO
-      - status-success="codecov/patch"
-      - status-success="codecov/project"
+      - -draft
+      - check-success = "Tests Normal"
+      - check-success = "Tests Madsim"
+      - check-success = "Commit Message Validation"
+      - check-success = "Spell Check"
+      - check-success = "Build"
+      - check-success = "E2E kube (v1.27.3)"
+      - check-success = "E2E kube (v1.28.7)"
+      - check-success = "E2E kube (v1.29.2)"
+      - check-success = "Validation"
+      - check-success = "DCO"
+      - check-success = "codecov/project"
+      - check-success = "codecov/patch"
+      - or:
+        - "#approved-reviews-by >= 2"
+        - and:
+          - author = dependabot[bot]
+          - "#approved-reviews-by >= 1"
     actions:
       merge:
         method: rebase
+
+  - name: convert to draft
+    conditions:
+      - -draft
+      - -label = "CI:fail"
+      - or:
+          - check-failure = "Tests Normal"
+          - check-failure = "Tests Madsim"
+          - check-failure = "Validation"
+          - check-failure = "Build"
+          - check-failure = "E2E kube (v1.27.3)"
+          - check-failure = "E2E kube (v1.28.7)"
+          - check-failure = "E2E kube (v1.29.2)"
+    actions:
+      comment:
+        message: "@{{author}} Convert your pr to draft since CI failed"
+      edit:
+        draft: true
+      label:
+        add:
+          - "CI:fail"
+
+  - name: convert to ready-to-review
+    conditions:
+      - label = "CI:fail"
+      - draft
+      - check-success = "Tests Normal"
+      - check-success = "Tests Madsim"
+      - check-success = "Build"
+      - check-success = "E2E kube (v1.27.3)"
+      - check-success = "E2E kube (v1.28.7)"
+      - check-success = "E2E kube (v1.29.2)"
+      - check-success = "Validation"
+    actions:
+      edit:
+        draft: false
+      label:
+        remove:
+          - "CI:fail"
+
+  - name: automatic approval for Dependabot pull requests
+    conditions:
+      - -draft
+      - author = dependabot[bot]
+      - check-success = "Tests Normal"
+      - check-success = "Tests Madsim"
+      - check-success = "Commit Message Validation"
+      - check-success = "Spell Check"
+      - check-success = "Build"
+      - check-success = "E2E kube (v1.27.3)"
+      - check-success = "E2E kube (v1.28.7)"
+      - check-success = "E2E kube (v1.29.2)"
+      - check-success = "Validation"
+      - check-success = "DCO"
+    actions:
+      review:
+        type: APPROVE
+        message: Automatically approving dependabot
+
+  - name: balanced review assignment
+    conditions:
+      - -draft
+      - author != dependabot[bot]
+    actions:
+      request_reviews:
+        teams:
+          - "@XlineTeam"
+        random_count: 2
+
+  - name: comment when a pull request cannot be merged
+    conditions:
+      - -draft
+      - conflict
+    actions:
+      comment:
+        message: "@{{author}} Your PR is in conflict and cannot be merged."
+
+  - name: comment when modify workflow
+    conditions:
+      - author != dependabot[bot]
+      - files ~= ^\.github/workflows/
+    actions:
+      comment:
+        message: "@{{author}} You've modified the workflows. Please don't forget to update the .mergify.yml."

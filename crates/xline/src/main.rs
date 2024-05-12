@@ -126,7 +126,6 @@
     clippy::impl_trait_in_params,
     clippy::let_underscore_untyped,
     clippy::missing_assert_message,
-    clippy::multiple_unsafe_ops_per_block,
     clippy::semicolon_inside_block,
     // clippy::semicolon_outside_block, already used `semicolon_inside_block`
     clippy::tests_outside_test_module,
@@ -144,7 +143,7 @@
 )]
 
 use anyhow::Result;
-use opentelemetry::global;
+use opentelemetry::{global, metrics::noop::NoopMeterProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use tracing::{debug, info};
 use xline::{
@@ -153,7 +152,7 @@ use xline::{
 };
 
 #[tokio::main]
-#[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
+#[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
 async fn main() -> Result<()> {
     global::set_text_map_propagator(TraceContextPropagator::new());
     let config = parse_config().await?;
@@ -186,6 +185,9 @@ async fn main() -> Result<()> {
     }
 
     global::shutdown_tracer_provider();
-    global::shutdown_meter_provider();
+    // TODO: Since the `shutdown_meter_provider` has removed in the latest version of opentelemetry, we use `NoopMeterProvider` to replace it.
+    // FYI: https://github.com/open-telemetry/opentelemetry-rust/pull/1623
+    // We will replace `set_meter_provider` with `shutdown_meter_provider` when the new version release
+    global::set_meter_provider(NoopMeterProvider::new());
     Ok(())
 }

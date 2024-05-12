@@ -197,7 +197,7 @@ where
 
     /// Sync alarm activate request
     fn sync_alarm_activate(&self, member_id: ServerId, alarm: AlarmType) -> Vec<WriteOp> {
-        let new_alarm: AlarmMember = AlarmMember::new(member_id, alarm);
+        let new_alarm = AlarmMember::new(member_id, alarm);
         let mut types_w = self.types.write();
         let e = types_w.entry(alarm).or_default();
         let mut ops = vec![];

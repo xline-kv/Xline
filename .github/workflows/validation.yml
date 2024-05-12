@@ -17,34 +17,24 @@ jobs:
           submodules: recursive
 
       - name: Configure sccache
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-      - name: Build xline
-        run: |
-          docker run -q --rm -v $(pwd):/xline \
-            -e SCCACHE_GHA_ENABLED=on \
-            -e ACTIONS_CACHE_URL=${ACTIONS_CACHE_URL} \
-            -e ACTIONS_RUNTIME_TOKEN=${ACTIONS_RUNTIME_TOKEN} \
-            ghcr.io/xline-kv/build-env:latest \
-            cargo build --release --bin xline --bin benchmark --bin validation_lock_client
-
-      - run: |
-          sudo apt-get install -y --force-yes expect
-          cd scripts
-          cp ../target/release/{xline,benchmark,validation_lock_client} .
-          ldd ./xline
-          ldd ./benchmark
-          cp ../fixtures/{private,public}.pem .
-          docker build . -t ghcr.io/xline-kv/xline:latest
-          docker pull gcr.io/etcd-development/etcd:v3.5.5
-          bash ./validation_test.sh
-      - name: upload logs
-        if: failure() || cancelled()
-        uses: actions/upload-artifact@v1
-        with:
-          name: Xline logs
-          path: scripts/logs
+  call_build_xline:
+    name: Build and Upload Artifacts
+    uses: ./.github/workflows/build_xline.yml
+    with:
+      docker_xline_image: 'ghcr.io/xline-kv/build-env:latest'
+      additional_setup_commands: |
+        sudo apt-get install -y --force-yes expect
+        ldd ./xline
+        ldd ./benchmark
+        cp ../fixtures/{private,public}.pem .
+        docker build . -t ghcr.io/xline-kv/xline:latest
+        docker pull gcr.io/etcd-development/etcd:v3.5.5
+      binaries: 'xline,benchmark,validation_lock_client'
+      script_name: 'validation_test.sh'
+      uploadLogs: true

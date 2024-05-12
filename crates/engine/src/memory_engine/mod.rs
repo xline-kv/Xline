@@ -1,3 +1,6 @@
+/// Memory storage transaction implementation
+mod transaction;
+
 use std::{
     cmp::Ordering,
     collections::HashMap,
@@ -12,19 +15,18 @@ use parking_lot::RwLock;
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::read_buf;
 
+pub(super) use self::transaction::MemoryTransaction;
 use crate::{
-    api::{
-        engine_api::{StorageEngine, WriteOperation},
-        snapshot_api::SnapshotApi,
-    },
+    api::{engine_api::StorageEngine, snapshot_api::SnapshotApi},
     error::EngineError,
+    WriteOperation,
 };
 
 /// A helper type to store the key-value pairs for the `MemoryEngine`
 type MemoryTable = HashMap<Vec<u8>, Vec<u8>>;
 
 /// Memory Storage Engine Implementation
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct MemoryEngine {
     /// The inner storage engine of `MemoryStorage`
     inner: Arc<RwLock<HashMap<String, MemoryTable>>>,
@@ -36,7 +38,7 @@ impl MemoryEngine {
     pub(crate) fn new(tables: &[&'static str]) -> Self {
         let mut inner: HashMap<String, HashMap<Vec<u8>, Vec<u8>>> = HashMap::new();
         for table in tables {
-            let _ignore = inner.entry((*table).to_owned()).or_insert(HashMap::new());
+            let _ignore = inner.entry((*table).to_owned()).or_default();
         }
         Self {
             inner: Arc::new(RwLock::new(inner)),
@@ -56,6 +58,20 @@ impl MemoryEngine {
 #[async_trait::async_trait]
 impl StorageEngine for MemoryEngine {
     type Snapshot = MemorySnapshot;
+    type Transaction = MemoryTransaction;
+
+    #[inline]
+    fn transaction(&self) -> MemoryTransaction {
+        let inner_r = self.inner.read();
+        let mut state = HashMap::new();
+        for table in inner_r.keys() {
+            let _ignore = state.insert(table.clone(), HashMap::new());
+        }
+        MemoryTransaction {
+            db: self.clone(),
+            state: RwLock::new(state),
+        }
+    }
 
     #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {

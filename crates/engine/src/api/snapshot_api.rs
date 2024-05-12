@@ -11,6 +11,9 @@ pub trait SnapshotApi: Send + Sync + std::fmt::Debug {
     fn size(&self) -> u64;
 
     /// Rewind the snapshot to the beginning
+    ///
+    /// # Errors
+    /// Return `IO::Error` when `rewind` went wrong
     fn rewind(&mut self) -> io::Result<()>;
 
     /// Pull some bytes of the snapshot to the given uninitialized buffer

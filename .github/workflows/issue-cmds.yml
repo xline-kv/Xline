@@ -1,0 +1,47 @@
+on:
+  issue_comment:
+    types:
+      - created
+
+jobs:
+  assignme:
+    name: /assignme
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.comment.body, '/assignme')
+
+    steps:
+      - uses: xt0rted/slash-command-action@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          command: assignme
+          reaction: "true"
+          reaction-type: "rocket"
+          permission-level: read
+
+      - uses: actions-ecosystem/action-add-assignees@v1
+        with:
+          github_token: ${{ secrets.github_token }}
+          assignees: ${{ github.actor }}
+
+  contributing-agreement:
+    name: /contributing-agreement
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.comment.body, '/contributing-agreement')
+
+    steps:
+      - uses: xt0rted/slash-command-action@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          command: contributing-agreement
+          reaction: "true"
+          reaction-type: "rocket"
+          permission-level: read
+
+      - uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            Contributing Agreements:
+
+            - [pull request](https://github.com/xline-kv/Xline/blob/master/CONTRIBUTING.md#pull-requests)
+            - [merge policy](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/about-pull-request-merges#rebase-and-merge-your-commits)

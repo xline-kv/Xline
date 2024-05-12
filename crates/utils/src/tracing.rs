@@ -89,8 +89,8 @@ mod test {
     };
 
     use super::*;
-    #[test]
-    fn test_inject_and_extract() -> Result<(), Box<dyn std::error::Error>> {
+    #[tokio::test]
+    async fn test_inject_and_extract() -> Result<(), Box<dyn std::error::Error>> {
         init()?;
         global::set_text_map_propagator(TraceContextPropagator::new());
         let span = info_span!("test span");
@@ -112,8 +112,10 @@ mod test {
 
     /// init tracing subscriber
     fn init() -> Result<(), Box<dyn std::error::Error>> {
-        let jaeger_online_layer = opentelemetry_jaeger::new_agent_pipeline()
-            .with_service_name("test")
+        let otlp_exporter = opentelemetry_otlp::new_exporter().tonic();
+        let jaeger_online_layer = opentelemetry_otlp::new_pipeline()
+            .tracing()
+            .with_exporter(otlp_exporter)
             .install_simple()
             .map(|tracer| tracing_opentelemetry::layer().with_tracer(tracer))?;
         tracing_subscriber::registry()

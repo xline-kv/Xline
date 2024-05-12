@@ -1,5 +1,4 @@
 use std::{
-    fmt::Debug,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -21,10 +20,7 @@ use xlineapi::{
     AuthInfo, ResponseWrapper,
 };
 
-use super::{
-    auth_server::get_token,
-    barriers::{IdBarrier, IndexBarrier},
-};
+use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
     metrics,
     revision_check::RevisionCheck,
@@ -115,7 +111,7 @@ where
         use_fast_path: bool,
     ) -> Result<(CommandResponse, Option<SyncResponse>), tonic::Status>
     where
-        T: Into<RequestWrapper> + Debug,
+        T: Into<RequestWrapper>,
     {
         let request = request.into();
         let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
@@ -210,15 +206,12 @@ where
     ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
         let range_req = request.get_ref();
         range_req.validation()?;
-        debug!("Receive grpc request: {:?}", range_req);
+        debug!("Receive grpc request: {}", range_req);
         range_req.check_revision(
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),
         )?;
-        let auth_info = match get_token(request.metadata()) {
-            Some(token) => Some(self.auth_storage.verify(&token)?),
-            None => None,
-        };
+        let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let range_required_revision = range_req.revision;
         let is_serializable = range_req.serializable;
         let request = RequestWrapper::from(request.into_inner());
@@ -254,11 +247,8 @@ where
     ) -> Result<tonic::Response<PutResponse>, tonic::Status> {
         let put_req: &PutRequest = request.get_ref();
         put_req.validation()?;
-        debug!("Receive grpc request: {:?}", put_req);
-        let auth_info = match get_token(request.metadata()) {
-            Some(token) => Some(self.auth_storage.verify(&token)?),
-            None => None,
-        };
+        debug!("Receive grpc request: {}", put_req);
+        let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let is_fast_path = true;
         let (cmd_res, sync_res) = self
             .propose(request.into_inner(), auth_info, is_fast_path)
@@ -267,7 +257,7 @@ where
         let mut res = Self::parse_response_op(cmd_res.into_inner().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
-            debug!("Get revision {:?} for PutRequest", revision);
+            debug!("Get revision {} for PutRequest", revision);
             Self::update_header_revision(&mut res, revision);
         }
         if let Response::ResponsePut(response) = res {
@@ -287,11 +277,8 @@ where
     ) -> Result<tonic::Response<DeleteRangeResponse>, tonic::Status> {
         let delete_range_req = request.get_ref();
         delete_range_req.validation()?;
-        debug!("Receive grpc request: {:?}", delete_range_req);
-        let auth_info = match get_token(request.metadata()) {
-            Some(token) => Some(self.auth_storage.verify(&token)?),
-            None => None,
-        };
+        debug!("Receive grpc request: {}", delete_range_req);
+        let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let is_fast_path = true;
         let (cmd_res, sync_res) = self
             .propose(request.into_inner(), auth_info, is_fast_path)
@@ -300,7 +287,7 @@ where
         let mut res = Self::parse_response_op(cmd_res.into_inner().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
-            debug!("Get revision {:?} for DeleteRangeRequest", revision);
+            debug!("Get revision {} for DeleteRangeRequest", revision);
             Self::update_header_revision(&mut res, revision);
         }
         if let Response::ResponseDeleteRange(response) = res {
@@ -321,15 +308,12 @@ where
     ) -> Result<tonic::Response<TxnResponse>, tonic::Status> {
         let txn_req = request.get_ref();
         txn_req.validation()?;
-        debug!("Receive grpc request: {:?}", txn_req);
+        debug!("Receive grpc request: {}", txn_req);
         txn_req.check_revision(
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),
         )?;
-        let auth_info = match get_token(request.metadata()) {
-            Some(token) => Some(self.auth_storage.verify(&token)?),
-            None => None,
-        };
+        let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let res = if txn_req.is_read_only() {
             debug!("TxnRequest is read only");
             let is_serializable = txn_req.is_serializable();
@@ -349,7 +333,7 @@ where
             let mut res = Self::parse_response_op(cmd_res.into_inner().into());
             if let Some(sync_res) = sync_res {
                 let revision = sync_res.revision();
-                debug!("Get revision {:?} for TxnRequest", revision);
+                debug!("Get revision {} for TxnRequest", revision);
                 Self::update_header_revision(&mut res, revision);
             }
             res
@@ -374,10 +358,7 @@ where
         let current_revision = self.kv_storage.revision();
         let req = request.get_ref();
         req.check_revision(compacted_revision, current_revision)?;
-        let auth_info = match get_token(request.metadata()) {
-            Some(token) => Some(self.auth_storage.verify(&token)?),
-            None => None,
-        };
+        let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let physical = req.physical;
         let request = RequestWrapper::from(request.into_inner());
         let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);

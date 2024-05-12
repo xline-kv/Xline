@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
-use clippy_utilities::{Cast, OverflowArithmetic};
+use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp::{
     client::ClientBuilder as CurpClientBuilder,
     members::{get_cluster_info_from_remote, ClusterInfo},
@@ -187,12 +187,12 @@ impl XlineServer {
         heartbeat_interval: Duration,
         candidate_timeout_ticks: u8,
     ) -> Arc<LeaseCollection> {
-        let min_ttl = 3 * heartbeat_interval * candidate_timeout_ticks.cast() / 2;
+        let min_ttl = 3 * heartbeat_interval * candidate_timeout_ticks.numeric_cast() / 2;
         // Safe ceiling
         let min_ttl_secs = min_ttl
             .as_secs()
-            .overflow_add((min_ttl.subsec_nanos() > 0).cast());
-        Arc::new(LeaseCollection::new(min_ttl_secs.cast()))
+            .overflow_add(u64::from(min_ttl.subsec_nanos() > 0));
+        Arc::new(LeaseCollection::new(min_ttl_secs.numeric_cast()))
     }
 
     /// Construct underlying storages, including `KvStore`, `LeaseStore`, `AuthStore`
@@ -523,6 +523,7 @@ impl XlineServer {
 
         let client = Arc::new(
             CurpClientBuilder::new(*self.cluster_config.client_config(), false)
+                .tls_config(self.client_tls_config.clone())
                 .cluster_version(self.cluster_info.cluster_version())
                 .all_members(self.cluster_info.all_members_peer_urls())
                 .bypass(self.cluster_info.self_id(), curp_server.clone())
@@ -634,28 +635,56 @@ impl XlineServer {
     async fn read_tls_config(
         tls_config: &TlsConfig,
     ) -> Result<(Option<ClientTlsConfig>, Option<ServerTlsConfig>)> {
-        let client_tls_config =
-            if let Some(ca_cert_path) = tls_config.client_ca_cert_path().as_ref() {
-                let ca = Certificate::from_pem(fs::read(ca_cert_path).await?);
-                Some(ClientTlsConfig::new().ca_certificate(ca))
-            } else {
-                None
-            };
-        let server_tls_config = match (
-            tls_config.server_cert_path().as_ref(),
-            tls_config.server_key_path().as_ref(),
+        let client_tls_config = match (
+            tls_config.client_ca_cert_path().as_ref(),
+            tls_config.client_cert_path().as_ref(),
+            tls_config.client_key_path().as_ref(),
         ) {
-            (Some(cert_path), Some(key_path)) => {
+            (Some(ca_path), Some(cert_path), Some(key_path)) => {
+                let ca = fs::read(ca_path).await?;
+                let cert = fs::read(cert_path).await?;
+                let key = fs::read(key_path).await?;
+                Some(
+                    ClientTlsConfig::new()
+                        .ca_certificate(Certificate::from_pem(ca))
+                        .identity(Identity::from_pem(cert, key)),
+                )
+            }
+            (Some(ca_path), None, None) => {
+                let ca = fs::read(ca_path).await?;
+                Some(ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca)))
+            }
+            (_, Some(_), None) | (_, None, Some(_)) => {
+                return Err(anyhow!(
+                    "client_cert_path and client_key_path must be both set"
+                ))
+            }
+            _ => None,
+        };
+        let server_tls_config = match (
+            tls_config.peer_ca_cert_path().as_ref(),
+            tls_config.peer_cert_path().as_ref(),
+            tls_config.peer_key_path().as_ref(),
+        ) {
+            (Some(ca_path), Some(cert_path), Some(key_path)) => {
+                let ca = fs::read(ca_path).await?;
+                let cert = fs::read_to_string(cert_path).await?;
+                let key = fs::read_to_string(key_path).await?;
+                Some(
+                    ServerTlsConfig::new()
+                        .client_ca_root(Certificate::from_pem(ca))
+                        .identity(Identity::from_pem(cert, key)),
+                )
+            }
+            (None, Some(cert_path), Some(key_path)) => {
                 let cert = fs::read_to_string(cert_path).await?;
                 let key = fs::read_to_string(key_path).await?;
                 Some(ServerTlsConfig::new().identity(Identity::from_pem(cert, key)))
             }
-            (None, None) => None,
-            _ => {
-                return Err(anyhow!(
-                    "server_cert_path and server_key_path must be both set"
-                ))
+            (_, Some(_), None) | (_, None, Some(_)) => {
+                return Err(anyhow!("peer_cert_path and peer_key_path must be both set"))
             }
+            _ => None,
         };
         Ok((client_tls_config, server_tls_config))
     }
@@ -687,5 +716,5 @@ fn bind_addrs(
                 .map_err(|e| anyhow::anyhow!("Failed to bind to {}, err: {e}", addr))
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok(futures::stream::select_all(incoming.into_iter()))
+    Ok(futures::stream::select_all(incoming))
 }

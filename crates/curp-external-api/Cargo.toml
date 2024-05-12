@@ -11,10 +11,10 @@ categories = ["API"]
 keywords = ["API", "Curp"]
 
 [dependencies]
-async-trait = "0.1.53"
+async-trait = "0.1.80"
 engine = { path = "../engine" }
 mockall = "0.12.1"
 prost = "0.12.3"
-serde = { version = "1.0.130", features = ["derive", "rc"] }
-thiserror = "1.0.31"
+serde = { version = "1.0.199", features = ["derive", "rc"] }
+thiserror = "1.0.58"
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }

@@ -30,11 +30,7 @@ impl IndexBarrier {
             if inner_l.last_trigger_index >= index {
                 return;
             }
-            inner_l
-                .barriers
-                .entry(index)
-                .or_insert_with(Event::new)
-                .listen()
+            inner_l.barriers.entry(index).or_default().listen()
         };
         listener.await;
     }
@@ -48,7 +44,7 @@ impl IndexBarrier {
         let mut split_barriers = inner_l.barriers.split_off(&(index.overflow_add(1)));
         std::mem::swap(&mut inner_l.barriers, &mut split_barriers);
         for (_, barrier) in split_barriers {
-            barrier.notify(usize::MAX);
+            let _ignore = barrier.notify(usize::MAX);
         }
     }
 }
@@ -79,19 +75,14 @@ impl IdBarrier {
 
     /// Wait for the id until it is triggered.
     pub(crate) async fn wait(&self, id: InflightId) {
-        let listener = self
-            .barriers
-            .lock()
-            .entry(id)
-            .or_insert_with(Event::new)
-            .listen();
+        let listener = self.barriers.lock().entry(id).or_default().listen();
         listener.await;
     }
 
     /// Trigger the barrier of the given inflight id.
     pub(crate) fn trigger(&self, id: InflightId) {
         if let Some(event) = self.barriers.lock().remove(&id) {
-            event.notify(usize::MAX);
+            let _ignore = event.notify(usize::MAX);
         }
     }
 }

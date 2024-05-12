@@ -102,8 +102,8 @@ async fn exec_interactive(client: &mut Client, matches: &ArgMatches) -> Result<(
         let mut line = String::new();
         let _n = io::stdin().read_line(&mut line)?;
         let Some(args) = shlex::split(&line) else {
-                failed!(line);
-            };
+            failed!(line);
+        };
 
         if args.len() < 2 {
             failed!(line);
@@ -115,8 +115,8 @@ async fn exec_interactive(client: &mut Client, matches: &ArgMatches) -> Result<(
         match args.next().unwrap() {
             "watch" => {
                 let Some(key) = args.next() else {
-                        failed!(line);
-                    };
+                    failed!(line);
+                };
                 let request = req_builder(key, args.next());
                 let (new_watcher, mut stream) = client.watch_client().watch(request).await?;
                 watcher = Some(new_watcher);
@@ -129,13 +129,13 @@ async fn exec_interactive(client: &mut Client, matches: &ArgMatches) -> Result<(
             }
             "cancel" => {
                 let Some(watcher) = watcher.as_mut() else {
-                        eprintln!("No currently active watch");
-                        continue;
-                    };
+                    eprintln!("No currently active watch");
+                    continue;
+                };
                 let cancel_result = if let Some(id_str) = args.next() {
                     let Ok(id) = id_str.parse() else {
-                            failed!(line);
-                        };
+                        failed!(line);
+                    };
                     watcher.cancel_by_id(id)
                 } else {
                     watcher.cancel()

@@ -6,12 +6,9 @@ use utils::config::{
     TraceConfig, XlineServerConfig,
 };
 use xline_test_utils::{
+    enable_auth, set_user,
     types::{
-        auth::{
-            AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest,
-            AuthUserAddRequest, AuthUserGetRequest, AuthUserGrantRoleRequest, Permission,
-            PermissionType,
-        },
+        auth::{AuthRoleDeleteRequest, AuthUserAddRequest, AuthUserGetRequest},
         kv::{PutRequest, RangeRequest},
     },
     Client, ClientOptions, Cluster,
@@ -54,7 +51,7 @@ async fn test_auth_token_with_disable() -> Result<(), Box<dyn Error>> {
 
     enable_auth(client).await?;
     let authed_client = Client::connect(
-        vec![cluster.get_client_urls(0)],
+        vec![cluster.get_client_url(0)],
         ClientOptions::default().with_user("root", "123"),
     )
     .await?;
@@ -117,13 +114,13 @@ async fn test_kv_authorization() -> Result<(), Box<dyn Error>> {
     enable_auth(client).await?;
 
     let u1_client = Client::connect(
-        vec![cluster.get_client_urls(0)],
+        vec![cluster.get_client_url(0)],
         ClientOptions::default().with_user("u1", "123"),
     )
     .await?
     .kv_client();
     let u2_client = Client::connect(
-        vec![cluster.get_client_urls(0)],
+        vec![cluster.get_client_url(0)],
         ClientOptions::default().with_user("u2", "123"),
     )
     .await?
@@ -175,13 +172,13 @@ async fn test_no_root_user_do_admin_ops() -> Result<(), Box<dyn Error>> {
     set_user(client, "u", "123", "r", &[], &[]).await?;
     enable_auth(client).await?;
     let user_client = Client::connect(
-        vec![cluster.get_client_urls(0)],
+        vec![cluster.get_client_url(0)],
         ClientOptions::default().with_user("u", "123"),
     )
     .await?
     .auth_client();
     let root_client = Client::connect(
-        vec![cluster.get_client_urls(0)],
+        vec![cluster.get_client_url(0)],
         ClientOptions::default().with_user("root", "123"),
     )
     .await?
@@ -212,52 +209,19 @@ async fn test_auth_wrong_password() -> Result<(), Box<dyn Error>> {
     enable_auth(client).await?;
 
     let result = Client::connect(
-        vec![cluster.get_client_urls(0)],
+        vec![cluster.get_client_url(0)],
         ClientOptions::default().with_user("root", "456"),
     )
     .await;
     assert!(result.is_err());
 
     let result = Client::connect(
-        vec![cluster.get_client_urls(0)],
+        vec![cluster.get_client_url(0)],
         ClientOptions::default().with_user("root", "123"),
     )
     .await;
     assert!(result.is_ok());
 
-    Ok(())
-}
-
-async fn set_user(
-    client: &Client,
-    name: &str,
-    password: &str,
-    role: &str,
-    key: &[u8],
-    range_end: &[u8],
-) -> Result<(), Box<dyn Error>> {
-    let client = client.auth_client();
-    client
-        .user_add(AuthUserAddRequest::new(name).with_pwd(password))
-        .await?;
-    client.role_add(AuthRoleAddRequest::new(role)).await?;
-    client
-        .user_grant_role(AuthUserGrantRoleRequest::new(name, role))
-        .await?;
-    if !key.is_empty() {
-        client
-            .role_grant_permission(AuthRoleGrantPermissionRequest::new(
-                role,
-                Permission::new(PermissionType::Readwrite, key).with_range_end(range_end),
-            ))
-            .await?;
-    }
-    Ok(())
-}
-
-async fn enable_auth(client: &Client) -> Result<(), Box<dyn Error>> {
-    set_user(client, "root", "123", "root", &[], &[]).await?;
-    client.auth_client().auth_enable().await?;
     Ok(())
 }
 

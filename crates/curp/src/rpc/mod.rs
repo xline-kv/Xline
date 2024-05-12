@@ -683,13 +683,13 @@ impl CurpError {
     pub(crate) fn should_abort_fast_round(&self) -> bool {
         matches!(
             *self,
-            CurpError::Duplicated(_)
-                | CurpError::ShuttingDown(_)
-                | CurpError::InvalidConfig(_)
-                | CurpError::NodeAlreadyExists(_)
-                | CurpError::NodeNotExists(_)
-                | CurpError::LearnerNotCatchUp(_)
-                | CurpError::ExpiredClientId(_)
+            CurpError::Duplicated(())
+                | CurpError::ShuttingDown(())
+                | CurpError::InvalidConfig(())
+                | CurpError::NodeAlreadyExists(())
+                | CurpError::NodeNotExists(())
+                | CurpError::LearnerNotCatchUp(())
+                | CurpError::ExpiredClientId(())
                 | CurpError::Redirect(_)
         )
     }
@@ -698,32 +698,32 @@ impl CurpError {
     pub(crate) fn should_abort_slow_round(&self) -> bool {
         matches!(
             *self,
-            CurpError::ShuttingDown(_)
-                | CurpError::InvalidConfig(_)
-                | CurpError::NodeAlreadyExists(_)
-                | CurpError::NodeNotExists(_)
-                | CurpError::LearnerNotCatchUp(_)
-                | CurpError::ExpiredClientId(_)
+            CurpError::ShuttingDown(())
+                | CurpError::InvalidConfig(())
+                | CurpError::NodeAlreadyExists(())
+                | CurpError::NodeNotExists(())
+                | CurpError::LearnerNotCatchUp(())
+                | CurpError::ExpiredClientId(())
                 | CurpError::Redirect(_)
-                | CurpError::WrongClusterVersion(_)
+                | CurpError::WrongClusterVersion(())
         )
     }
 
     /// Get the priority of the error
     pub(crate) fn priority(&self) -> CurpErrorPriority {
         match *self {
-            CurpError::Duplicated(_)
-            | CurpError::ShuttingDown(_)
-            | CurpError::InvalidConfig(_)
-            | CurpError::NodeAlreadyExists(_)
-            | CurpError::NodeNotExists(_)
-            | CurpError::LearnerNotCatchUp(_)
-            | CurpError::ExpiredClientId(_)
+            CurpError::Duplicated(())
+            | CurpError::ShuttingDown(())
+            | CurpError::InvalidConfig(())
+            | CurpError::NodeAlreadyExists(())
+            | CurpError::NodeNotExists(())
+            | CurpError::LearnerNotCatchUp(())
+            | CurpError::ExpiredClientId(())
             | CurpError::Redirect(_)
-            | CurpError::WrongClusterVersion(_) => CurpErrorPriority::High,
-            CurpError::RpcTransport(_)
+            | CurpError::WrongClusterVersion(()) => CurpErrorPriority::High,
+            CurpError::RpcTransport(())
             | CurpError::Internal(_)
-            | CurpError::KeyConflict(_)
+            | CurpError::KeyConflict(())
             | CurpError::LeaderTransfer(_) => CurpErrorPriority::Low,
         }
     }
@@ -774,39 +774,39 @@ impl From<CurpError> for tonic::Status {
     #[inline]
     fn from(err: CurpError) -> Self {
         let (code, msg) = match err {
-            CurpError::KeyConflict(_) => (
+            CurpError::KeyConflict(()) => (
                 tonic::Code::AlreadyExists,
                 "Key conflict error: A key conflict occurred.",
             ),
-            CurpError::Duplicated(_) => (
+            CurpError::Duplicated(()) => (
                 tonic::Code::AlreadyExists,
                 "Duplicated error: The request already sent.",
             ),
-            CurpError::ExpiredClientId(_) => (
+            CurpError::ExpiredClientId(()) => (
                 tonic::Code::FailedPrecondition,
                 "Expired client ID error: The client ID has expired, we cannot tell if this request is duplicated.",
             ),
-            CurpError::InvalidConfig(_) => (
+            CurpError::InvalidConfig(()) => (
                 tonic::Code::InvalidArgument,
                 "Invalid config error: The provided configuration is invalid.",
             ),
-            CurpError::NodeNotExists(_) => (
+            CurpError::NodeNotExists(()) => (
                 tonic::Code::NotFound,
                 "Node not found error: The specified node does not exist.",
             ),
-            CurpError::NodeAlreadyExists(_) => (
+            CurpError::NodeAlreadyExists(()) => (
                 tonic::Code::AlreadyExists,
                 "Node already exists error: The node already exists.",
             ),
-            CurpError::LearnerNotCatchUp(_) => (
+            CurpError::LearnerNotCatchUp(()) => (
                 tonic::Code::FailedPrecondition,
                 "Learner not caught up error: The learner has not caught up.",
             ),
-            CurpError::ShuttingDown(_) => (
+            CurpError::ShuttingDown(()) => (
                 tonic::Code::FailedPrecondition,
                 "Shutting down error: The service is currently shutting down.",
             ),
-            CurpError::WrongClusterVersion(_) => (
+            CurpError::WrongClusterVersion(()) => (
                 tonic::Code::FailedPrecondition,
                 "Wrong cluster version error: The cluster version is incorrect.",
             ),
@@ -818,7 +818,7 @@ impl From<CurpError> for tonic::Status {
                 tonic::Code::Internal,
                 "Internal error: An internal error occurred.",
             ),
-            CurpError::RpcTransport(_) => (tonic::Code::Cancelled, "Rpc error: Request cancelled"),
+            CurpError::RpcTransport(()) => (tonic::Code::Cancelled, "Rpc error: Request cancelled"),
             CurpError::LeaderTransfer(_) => (
                 tonic::Code::FailedPrecondition,
                 "Leader transfer error: A leader transfer error occurred.",
@@ -835,6 +835,7 @@ impl From<CurpError> for tonic::Status {
 
 /// Entry of speculative pool
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct PoolEntry<C> {
     /// Propose id
     pub(crate) id: ProposeId,
@@ -844,6 +845,7 @@ pub(crate) struct PoolEntry<C> {
 
 /// Inner entry of speculative pool
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) enum PoolEntryInner<C> {
     /// Command entry
     Command(Arc<C>),
@@ -851,10 +853,7 @@ pub(crate) enum PoolEntryInner<C> {
     ConfChange(Vec<ConfChange>),
 }
 
-impl<C> PoolEntry<C>
-where
-    C: Command,
-{
+impl<C> PoolEntry<C> {
     /// Create a new pool entry
     pub(crate) fn new(id: ProposeId, inner: impl Into<PoolEntryInner<C>>) -> Self {
         Self {
@@ -862,7 +861,12 @@ where
             inner: inner.into(),
         }
     }
+}
 
+impl<C> PoolEntry<C>
+where
+    C: Command,
+{
     /// Check if the entry is conflict with the command
     pub(crate) fn is_conflict_with_cmd(&self, c: &C) -> bool {
         match self.inner {
@@ -905,7 +909,7 @@ impl<C> From<Vec<ConfChange>> for PoolEntryInner<C> {
     Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Ord, PartialOrd, Default,
 )]
 #[allow(clippy::exhaustive_structs)] // It is exhaustive
-pub struct ProposeId(pub(crate) u64, pub(crate) u64);
+pub struct ProposeId(pub u64, pub u64);
 
 impl std::fmt::Display for ProposeId {
     #[inline]

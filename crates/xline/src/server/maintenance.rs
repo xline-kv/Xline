@@ -2,7 +2,7 @@ use std::{fmt::Debug, pin::Pin, sync::Arc};
 
 use async_stream::try_stream;
 use bytes::BytesMut;
-use clippy_utilities::{Cast, OverflowArithmetic};
+use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp::{cmd::CommandExecutor as _, members::ClusterInfo, server::RawCurp};
 use engine::SnapshotApi;
 use futures::stream::Stream;
@@ -13,7 +13,7 @@ use xlineapi::{
     RequestWrapper,
 };
 
-use super::{auth_server::get_token, command::CommandExecutor};
+use super::command::CommandExecutor;
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
@@ -95,10 +95,7 @@ where
     where
         T: Into<RequestWrapper> + Debug,
     {
-        let auth_info = match get_token(request.metadata()) {
-            Some(token) => Some(self.auth_store.verify(&token)?),
-            None => None,
-        };
+        let auth_info = self.auth_store.try_get_auth_info_from_request(&request)?;
         let request = request.into_inner().into();
         let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
         let res = self.client.propose(&cmd, None, use_fast_path).await??;
@@ -153,13 +150,13 @@ where
         let response = StatusResponse {
             header: Some(self.header_gen.gen_header()),
             version: env!("CARGO_PKG_VERSION").to_owned(),
-            db_size: size.cast(),
+            db_size: size.numeric_cast(),
             leader: leader.unwrap_or(0), // None means this member believes there is no leader
             raft_index: commit_index,
             raft_term: term,
             raft_applied_index: last_applied,
             errors,
-            db_size_in_use: size.cast(),
+            db_size_in_use: size.numeric_cast(),
             is_learner,
         };
         Ok(tonic::Response::new(response))
@@ -254,7 +251,7 @@ fn snapshot_stream<S: StorageApi>(
         let mut checksum_gen = Sha256::new();
         while remain_size > 0 {
             let buf_size = std::cmp::min(MAINTENANCE_SNAPSHOT_CHUNK_SIZE, remain_size);
-            let mut buf = BytesMut::with_capacity(buf_size.cast());
+            let mut buf = BytesMut::with_capacity(buf_size.numeric_cast());
             remain_size = remain_size.overflow_sub(buf_size);
             snapshot.read_buf_exact(&mut buf).await.map_err(|_e| {tonic::Status::internal("snapshot read failed")})?;
             // etcd client will use the size of the snapshot to determine whether checksum is included,
@@ -262,7 +259,7 @@ fn snapshot_stream<S: StorageApi>(
             // of 512 bytes
             let padding = MIN_PAGE_SIZE.overflow_sub(buf_size.overflow_rem(MIN_PAGE_SIZE));
             if padding != 0 {
-                buf.extend_from_slice(&vec![0; padding.cast()]);
+                buf.extend_from_slice(&vec![0; padding.numeric_cast()]);
             }
             checksum_gen.update(&buf);
             yield SnapshotResponse {
@@ -312,12 +309,12 @@ mod test {
             recv_data.append(&mut data?.blob);
         }
         assert_eq!(
-            recv_data.len() % MIN_PAGE_SIZE.cast::<usize>(),
+            recv_data.len() % MIN_PAGE_SIZE.numeric_cast::<usize>(),
             Sha256::output_size()
         );
 
         let mut snap2 = persistent.get_snapshot(snapshot_path).unwrap();
-        let size = snap2.size().cast();
+        let size = snap2.size().numeric_cast();
         let mut snap2_data = BytesMut::with_capacity(size);
         snap2.read_buf_exact(&mut snap2_data).await.unwrap();
         let snap1_data = recv_data[..size].to_vec();

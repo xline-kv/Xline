@@ -1,66 +1,17 @@
 use std::path::Path;
 
-use crate::{api::snapshot_api::SnapshotApi, error::EngineError};
-
-/// Write operation
-#[non_exhaustive]
-#[derive(Debug)]
-pub enum WriteOperation<'a> {
-    /// `Put` operation
-    Put {
-        /// The table name
-        table: &'a str,
-        /// Key
-        key: Vec<u8>,
-        /// Value
-        value: Vec<u8>,
-    },
-    /// `Delete` operation
-    Delete {
-        /// The table name
-        table: &'a str,
-        /// The target key
-        key: &'a [u8],
-    },
-    /// Delete range operation, it will remove the database entries in the range [from, to)
-    DeleteRange {
-        /// The table name
-        table: &'a str,
-        /// The `from` key
-        from: &'a [u8],
-        /// The `to` key
-        to: &'a [u8],
-    },
-}
-
-impl<'a> WriteOperation<'a> {
-    /// Create a new `Put` operation
-    #[inline]
-    #[must_use]
-    pub fn new_put(table: &'a str, key: Vec<u8>, value: Vec<u8>) -> Self {
-        Self::Put { table, key, value }
-    }
-
-    /// Create a new `Delete` operation
-    #[inline]
-    #[must_use]
-    pub fn new_delete(table: &'a str, key: &'a [u8]) -> Self {
-        Self::Delete { table, key }
-    }
-
-    /// Create a new `DeleteRange` operation
-    #[inline]
-    #[must_use]
-    pub fn new_delete_range(table: &'a str, from: &'a [u8], to: &'a [u8]) -> Self {
-        Self::DeleteRange { table, from, to }
-    }
-}
+use crate::{api::snapshot_api::SnapshotApi, error::EngineError, TransactionApi, WriteOperation};
 
 /// The `StorageEngine` trait
 #[async_trait::async_trait]
 pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// The snapshot type
     type Snapshot: SnapshotApi;
+    /// The transaction type
+    type Transaction: TransactionApi;
+
+    /// Creates a transaction
+    fn transaction(&self) -> Self::Transaction;
 
     /// Get the value associated with a key value and the given table
     ///
@@ -121,5 +72,8 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     fn estimated_file_size(&self) -> u64;
 
     /// Get the file size of the engine (Measured in bytes)
+    ///
+    /// # Errors
+    /// Return `EngineError` if met some errors when get file size
     fn file_size(&self) -> Result<u64, EngineError>;
 }

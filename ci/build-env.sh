@@ -13,7 +13,7 @@ export GHCR_ORG=xline-kv
 export BUILD_TAG="ghcr.io/${GHCR_ORG}/build-env:latest"
 
 # Change this version if rust-rocksdb updates in `engine`
-export LIB_ROCKS_SYS_VER="0.11.0+8.1.1"
+export LIB_ROCKS_SYS_VER="0.16.0+8.10.0"
 
 echo "=== Arch ==="
 arch

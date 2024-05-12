@@ -44,6 +44,7 @@
     clippy::pedantic,
     clippy::cargo,
 
+
     // The followings are selected restriction lints for rust 1.57
     clippy::as_conversions,
     clippy::clone_on_ref_ptr,
@@ -126,21 +127,27 @@
     clippy::impl_trait_in_params,
     clippy::let_underscore_untyped,
     clippy::missing_assert_message,
-    clippy::multiple_unsafe_ops_per_block,
     clippy::semicolon_inside_block,
     // clippy::semicolon_outside_block, already used `semicolon_inside_block`
     clippy::tests_outside_test_module,
-    // 1.71.0
-    clippy::default_constructed_unit_structs,
-    clippy::items_after_test_module,
-    clippy::manual_next_back,
-    clippy::manual_while_let_some,
-    clippy::needless_bool_assign,
-    clippy::non_minimal_cfg,
+    // The followings are selected lints from 1.71.0 to 1.74.0
+    clippy::large_stack_frames,
+    clippy::tuple_array_conversions,
+    clippy::pub_without_shorthand,
+    clippy::needless_raw_strings,
+    clippy::redundant_type_annotations,
+    clippy::host_endian_bytes,
+    clippy::big_endian_bytes,
+    clippy::error_impl_error,
+    clippy::string_lit_chars_any,
+    clippy::needless_pass_by_ref_mut,
+    clippy::redundant_as_str,
+    clippy::missing_asserts_for_indexing,
 )]
 #![allow(
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
     clippy::module_name_repetitions, // It will be more easy to use for the type name prefixed by module name
+    clippy::missing_fields_in_debug,
 )]
 #![cfg_attr(
     test,
@@ -234,6 +241,7 @@ impl Client {
         let channel = Self::build_channel(addrs.clone(), options.tls_config.as_ref()).await?;
         let curp_client = Arc::new(
             CurpClientBuilder::new(options.client_config, false)
+                .tls_config(options.tls_config)
                 .discover_from(addrs)
                 .await?
                 .build::<Command>()

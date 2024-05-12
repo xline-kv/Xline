@@ -11,19 +11,20 @@ categories = ["RPC"]
 keywords = ["RPC", "Interfaces"]
 
 [dependencies]
-async-trait = "0.1.53"
+async-trait = "0.1.80"
 curp = { path = "../curp" }
 curp-external-api = { path = "../curp-external-api" }
-itertools = "0.11"
+itertools = "0.12"
 prost = "0.12.3"
-serde = { version = "1.0.137", features = ["derive"] }
-thiserror = "1.0.37"
-tonic = { version = "0.4.1", package = "madsim-tonic" }
+serde = { version = "1.0.199", features = ["derive"] }
+thiserror = "1.0.58"
+tonic = { version = "0.4.2", package = "madsim-tonic" }
+utils = { path = "../utils", features = ["parking_lot"] }
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [build-dependencies]
-tonic-build = { version = "0.4.2", package = "madsim-tonic-build" }
+tonic-build = { version = "0.4.3", package = "madsim-tonic-build" }
 
 [dev-dependencies]
-strum = "0.25"
-strum_macros = "0.25"
+strum = "0.26"
+strum_macros = "0.26"

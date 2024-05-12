@@ -28,7 +28,7 @@ impl<C: Command> SpeculativePool<C> {
     }
 
     /// Push a new command into spec pool if it has no conflict. Return Some if it conflicts with spec pool or the cmd is already in the pool.
-    pub(super) fn insert(&mut self, entry: PoolEntry<C>) -> Option<PoolEntry<C>> {
+    pub(super) fn insert_if_not_conflict(&mut self, entry: PoolEntry<C>) -> Option<PoolEntry<C>> {
         if self.has_conflict_with(&entry) {
             Some(entry)
         } else {

@@ -8,6 +8,9 @@ mod metrics;
 /// Unary rpc client
 mod unary;
 
+/// Stream rpc client
+mod stream;
+
 /// Retry layer
 mod retry;
 
@@ -23,6 +26,7 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, StreamExt};
+use tokio::task::JoinHandle;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::debug;
@@ -119,7 +123,7 @@ pub trait ClientApi {
 #[async_trait]
 trait RepeatableClientApi: ClientApi {
     /// Generate a unique propose id during the retry process.
-    async fn gen_propose_id(&self) -> Result<ProposeId, Self::Error>;
+    fn gen_propose_id(&self) -> Result<ProposeId, Self::Error>;
 
     /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
     /// requests (event the requests are commutative).
@@ -338,6 +342,16 @@ impl ClientBuilder {
         )
     }
 
+    /// Spawn background tasks for the client
+    fn spawn_bg_tasks(&self, state: Arc<state::State>) -> JoinHandle<()> {
+        let interval = *self.config.keep_alive_interval();
+        tokio::spawn(async move {
+            let stream = stream::Streaming::new(state, stream::StreamingConfig::new(interval));
+            stream.keep_heartbeat().await;
+            debug!("keep heartbeat task shutdown");
+        })
+    }
+
     /// Build the client
     ///
     /// # Errors
@@ -350,10 +364,11 @@ impl ClientBuilder {
         impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static,
         tonic::transport::Error,
     > {
-        let state = self.init_state_builder().build().await?;
+        let state = Arc::new(self.init_state_builder().build().await?);
         let client = Retry::new(
-            Unary::new(Arc::new(state), self.init_unary_config()),
+            Unary::new(Arc::clone(&state), self.init_unary_config()),
             self.init_retry_config(),
+            Some(self.spawn_bg_tasks(state)),
         );
         Ok(client)
     }
@@ -374,9 +389,11 @@ impl<P: Protocol> ClientBuilderWithBypass<P> {
             .init_state_builder()
             .build_bypassed::<P>(self.local_server_id, self.local_server)
             .await?;
+        let state = Arc::new(state);
         let client = Retry::new(
-            Unary::new(Arc::new(state), self.inner.init_unary_config()),
+            Unary::new(Arc::clone(&state), self.inner.init_unary_config()),
             self.inner.init_retry_config(),
+            Some(self.inner.spawn_bg_tasks(state)),
         );
         Ok(client)
     }

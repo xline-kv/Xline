@@ -153,7 +153,7 @@ fn sample_config(period: Duration) -> (Duration, usize) {
 
 #[async_trait::async_trait]
 impl<C: Compactable> Compactor<C> for PeriodicCompactor<C> {
-    #[allow(clippy::arithmetic_side_effects)]
+    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)]
     async fn run(&self, shutdown_listener: Listener) {
         let mut last_revision: Option<i64> = None;
         let (sample_frequency, sample_total) = sample_config(self.period);

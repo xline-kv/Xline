@@ -2,10 +2,10 @@
 DIR="$(dirname $0)"
 QUICK_START="${DIR}/quick_start.sh"
 ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2379"
-LOCK_CLIENT="docker exec -i client /mnt/validation_lock_client --endpoints=http://172.20.0.3:2379"
+LOCK_CLIENT="docker exec -i client /mnt/validation_lock_client --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2379,http://172.20.0.5:2379"
 
 
-LOG_PATH=/mnt/logs bash ${QUICK_START}
+LOG_PATH=${DIR}/logs LOG_LEVEL=debug bash ${QUICK_START}
 source $DIR/log.sh
 
 stop() {
@@ -18,16 +18,6 @@ trap stop TERM
 
 res=""
 
-function parse_result() {
-    local tmp_res=""
-    while read -r line; do
-        log::debug $line
-        tmp_res="${tmp_res}${line}\n"
-    done
-    res="${tmp_res}"
-}
-
-
 function check() {
     local pattern=$1
     if [[ $(echo -e $res) =~ $pattern ]]; then
@@ -37,10 +27,20 @@ function check() {
     fi
 }
 
+function parse_result() {
+    local tmp_res=""
+    while read -r line; do
+        log::info $line
+        tmp_res="${tmp_res}${line}\n"
+    done
+    res="${tmp_res}"
+}
+
 function run() {
     command=$@
     log::info "running: $command"
-    parse_result <<< "$(eval $command 2>&1)"
+    local run_res="$(eval $command 2>&1)"
+    parse_result <<< $run_res
 }
 
 # validate compact requests

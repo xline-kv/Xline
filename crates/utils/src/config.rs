@@ -46,7 +46,7 @@ pub type LevelConfig = tracing::metadata::LevelFilter;
 pub mod duration_format {
     use std::time::Duration;
 
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use crate::parse_duration;
 
@@ -63,7 +63,7 @@ pub mod duration_format {
 
 /// batch size deserialization formatter
 pub mod bytes_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use crate::parse_batch_bytes;
 
@@ -156,7 +156,7 @@ pub enum InitialClusterState {
 
 /// `InitialClusterState` deserialization formatter
 pub mod state_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use super::InitialClusterState;
     use crate::parse_state;
@@ -183,7 +183,7 @@ impl ClusterConfig {
         peer_advertise_urls: Vec<String>,
         client_listen_urls: Vec<String>,
         client_advertise_urls: Vec<String>,
-        members: HashMap<String, Vec<String>>,
+        peers: HashMap<String, Vec<String>>,
         is_leader: bool,
         curp: CurpConfig,
         client_config: ClientConfig,
@@ -196,7 +196,7 @@ impl ClusterConfig {
             peer_advertise_urls,
             client_listen_urls,
             client_advertise_urls,
-            peers: members,
+            peers,
             is_leader,
             curp_config: curp,
             client_config,
@@ -407,7 +407,7 @@ pub const fn default_fixed_backoff() -> bool {
 #[must_use]
 #[inline]
 pub const fn default_rpc_timeout() -> Duration {
-    Duration::from_millis(50)
+    Duration::from_millis(150)
 }
 
 /// default candidate timeout ticks
@@ -428,6 +428,13 @@ pub const fn default_client_wait_synced_timeout() -> Duration {
 #[must_use]
 #[inline]
 pub const fn default_propose_timeout() -> Duration {
+    Duration::from_secs(1)
+}
+
+/// default client id keep alive interval
+#[must_use]
+#[inline]
+pub const fn default_client_id_keep_alive_interval() -> Duration {
     Duration::from_secs(1)
 }
 
@@ -543,6 +550,14 @@ pub struct ClientConfig {
     #[getset(get = "pub")]
     #[serde(default = "default_fixed_backoff")]
     fixed_backoff: bool,
+
+    /// Curp client keep client id alive interval
+    #[getset(get = "pub")]
+    #[serde(
+        with = "duration_format",
+        default = "default_client_id_keep_alive_interval"
+    )]
+    keep_alive_interval: Duration,
 }
 
 impl ClientConfig {
@@ -560,6 +575,7 @@ impl ClientConfig {
         max_retry_timeout: Duration,
         retry_count: usize,
         fixed_backoff: bool,
+        keep_alive_interval: Duration,
     ) -> Self {
         assert!(
             initial_retry_timeout <= max_retry_timeout,
@@ -572,6 +588,7 @@ impl ClientConfig {
             max_retry_timeout,
             retry_count,
             fixed_backoff,
+            keep_alive_interval,
         }
     }
 }
@@ -586,6 +603,7 @@ impl Default for ClientConfig {
             max_retry_timeout: default_max_retry_timeout(),
             retry_count: default_retry_count(),
             fixed_backoff: default_fixed_backoff(),
+            keep_alive_interval: default_client_id_keep_alive_interval(),
         }
     }
 }
@@ -756,7 +774,7 @@ impl Default for LogConfig {
 
 /// `LevelConfig` deserialization formatter
 pub mod level_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use super::LevelConfig;
     use crate::parse_log_level;
@@ -819,7 +837,7 @@ impl std::fmt::Display for RotationConfig {
 
 /// `RotationConfig` deserialization formatter
 pub mod rotation_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use super::RotationConfig;
     use crate::parse_rotation;
@@ -945,16 +963,16 @@ impl AuthConfig {
 #[non_exhaustive]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters, Default)]
 pub struct TlsConfig {
-    /// The CA certificate file used by server to verify client certificates
+    /// The CA certificate file used by peer to verify client certificates
     #[getset(get = "pub")]
-    pub server_ca_cert_path: Option<PathBuf>,
-    /// The public key file used by server
+    pub peer_ca_cert_path: Option<PathBuf>,
+    /// The public key file used by peer
     #[getset(get = "pub")]
-    pub server_cert_path: Option<PathBuf>,
-    /// The private key file used by server
+    pub peer_cert_path: Option<PathBuf>,
+    /// The private key file used by peer
     #[getset(get = "pub")]
-    pub server_key_path: Option<PathBuf>,
-    /// The CA certificate file used by client to verify server certificates
+    pub peer_key_path: Option<PathBuf>,
+    /// The CA certificate file used by client to verify peer certificates
     #[getset(get = "pub")]
     pub client_ca_cert_path: Option<PathBuf>,
     /// The public key file used by client
@@ -970,21 +988,28 @@ impl TlsConfig {
     #[must_use]
     #[inline]
     pub fn new(
-        server_ca_cert_path: Option<PathBuf>,
-        server_cert_path: Option<PathBuf>,
-        server_key_path: Option<PathBuf>,
+        peer_ca_cert_path: Option<PathBuf>,
+        peer_cert_path: Option<PathBuf>,
+        peer_key_path: Option<PathBuf>,
         client_ca_cert_path: Option<PathBuf>,
         client_cert_path: Option<PathBuf>,
         client_key_path: Option<PathBuf>,
     ) -> Self {
         Self {
-            server_ca_cert_path,
-            server_cert_path,
-            server_key_path,
+            peer_ca_cert_path,
+            peer_cert_path,
+            peer_key_path,
             client_ca_cert_path,
             client_cert_path,
             client_key_path,
         }
+    }
+
+    /// Whether the server tls is enabled
+    #[must_use]
+    #[inline]
+    pub fn server_tls_enabled(&self) -> bool {
+        self.peer_cert_path.is_some() && self.peer_key_path.is_some()
     }
 }
 
@@ -1012,7 +1037,7 @@ impl std::fmt::Display for MetricsPushProtocol {
 
 /// Metrics push protocol format
 pub mod protocol_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use super::MetricsPushProtocol;
     use crate::parse_metrics_push_protocol;
@@ -1230,8 +1255,8 @@ mod tests {
             auth_private_key = './private_key.pem'
 
             [tls]
-            server_cert_path = './cert.pem'
-            server_key_path = './key.pem'
+            peer_cert_path = './cert.pem'
+            peer_key_path = './key.pem'
             client_ca_cert_path = './ca.pem'
 
             [metrics]
@@ -1259,6 +1284,7 @@ mod tests {
             Duration::from_secs(50),
             default_retry_count(),
             default_fixed_backoff(),
+            default_client_id_keep_alive_interval(),
         );
 
         let server_timeout = ServerTimeout::new(
@@ -1337,8 +1363,8 @@ mod tests {
         assert_eq!(
             config.tls,
             TlsConfig {
-                server_cert_path: Some(PathBuf::from("./cert.pem")),
-                server_key_path: Some(PathBuf::from("./key.pem")),
+                peer_cert_path: Some(PathBuf::from("./cert.pem")),
+                peer_key_path: Some(PathBuf::from("./key.pem")),
                 client_ca_cert_path: Some(PathBuf::from("./ca.pem")),
                 ..Default::default()
             }
@@ -1360,7 +1386,7 @@ mod tests {
     #[test]
     fn test_xline_server_default_config_should_be_loaded() {
         let config: XlineServerConfig = toml::from_str(
-            r#"[cluster]
+            "[cluster]
                 name = 'node1'
                 is_leader = true
                 peer_listen_urls = ['127.0.0.1:2380']
@@ -1392,7 +1418,7 @@ mod tests {
                 [auth]
 
                 [tls]
-                "#,
+                ",
         )
         .unwrap();
 
@@ -1449,7 +1475,7 @@ mod tests {
     #[test]
     fn test_auto_revision_compactor_config_should_be_loaded() {
         let config: XlineServerConfig = toml::from_str(
-            r#"[cluster]
+            "[cluster]
                 name = 'node1'
                 is_leader = true
                 peer_listen_urls = ['127.0.0.1:2380']
@@ -1485,7 +1511,7 @@ mod tests {
                 [auth]
 
                 [tls]
-                "#,
+                ",
         )
         .unwrap();
 

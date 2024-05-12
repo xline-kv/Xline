@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{hash_map::Entry, HashMap, HashSet},
-    sync::Arc,
+    sync::{atomic::AtomicU64, Arc},
 };
 
 use event_listener::Event;
@@ -29,6 +29,8 @@ pub(super) struct State {
     mutable: RwLock<StateMut>,
     /// Immutable state
     immutable: StateStatic,
+    /// The client id. Separated from `mutable` because the client ID will be updated in the background.
+    client_id: Arc<AtomicU64>,
 }
 
 /// Immutable client state, could be cloned
@@ -91,13 +93,49 @@ impl State {
                 tls_config,
                 is_raw_curp: true,
             },
+            client_id: Arc::new(AtomicU64::new(0)),
         })
     }
 
-    /// Get the local connect
+    /// Get the leader notifier
+    pub(super) fn leader_notifier(&self) -> &Event {
+        &self.immutable.leader_notifier
+    }
+
+    /// Clone a reference to client id
+    pub(super) fn clone_client_id(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.client_id)
+    }
+
+    /// Get the client id
+    pub(super) fn client_id(&self) -> u64 {
+        self.client_id.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Generate client id if it does not exist when it is the leader
+    pub(crate) async fn check_gen_local_client_id(&self) {
+        let local_server_id = self.immutable.local_server;
+        let leader_id = self.leader_id().await;
+        if local_server_id != leader_id {
+            return;
+        }
+        if self.client_id.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            let id = rand::random();
+            self.client_id
+                .store(id, std::sync::atomic::Ordering::Relaxed);
+            info!("generate client id({id}) locally for bypassed client");
+        }
+    }
+
+    /// Get the local server connection
     pub(super) async fn local_connect(&self) -> Option<Arc<dyn ConnectApi>> {
         let id = self.immutable.local_server?;
         self.mutable.read().await.connects.get(&id).map(Arc::clone)
+    }
+
+    /// Get the local server id
+    pub(super) fn local_server_id(&self) -> Option<ServerId> {
+        self.immutable.local_server
     }
 
     /// Get the cluster version
@@ -160,10 +198,10 @@ impl State {
                 // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
                 // But if the client learns about the new term and updates its term to it, it will never get the true leader.
                 if let Some(new_leader_id) = leader_id {
-                    info!("client term updates to {term}\nclient leader id updates to {new_leader_id}");
+                    info!("client term updates to {term}, client leader id updates to {new_leader_id}");
                     state.term = term;
                     state.leader = Some(new_leader_id);
-                    self.immutable.leader_notifier.notify(usize::MAX);
+                    let _ignore = self.immutable.leader_notifier.notify(usize::MAX);
                 }
             }
             Ordering::Equal => {
@@ -171,7 +209,7 @@ impl State {
                     if state.leader.is_none() {
                         info!("client leader id updates to {new_leader_id}");
                         state.leader = Some(new_leader_id);
-                        self.immutable.leader_notifier.notify(usize::MAX);
+                        let _ignore = self.immutable.leader_notifier.notify(usize::MAX);
                     }
                     assert_eq!(
                         state.leader,
@@ -333,6 +371,7 @@ impl StateBuilder {
                 tls_config: self.tls_config.take(),
                 is_raw_curp: self.is_raw_curp,
             },
+            client_id: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -355,6 +394,7 @@ impl StateBuilder {
                 tls_config: self.tls_config,
                 is_raw_curp: self.is_raw_curp,
             },
+            client_id: Arc::new(AtomicU64::new(0)),
         })
     }
 }

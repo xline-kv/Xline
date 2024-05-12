@@ -43,6 +43,7 @@
     clippy::pedantic,
     clippy::cargo,
 
+
     // The followings are selected restriction lints for rust 1.57
     clippy::as_conversions,
     clippy::clone_on_ref_ptr,
@@ -125,17 +126,23 @@
     clippy::impl_trait_in_params,
     clippy::let_underscore_untyped,
     clippy::missing_assert_message,
-    clippy::multiple_unsafe_ops_per_block,
     clippy::semicolon_inside_block,
     // clippy::semicolon_outside_block, already used `semicolon_inside_block`
     clippy::tests_outside_test_module,
-    // 1.71.0
-    clippy::default_constructed_unit_structs,
-    clippy::items_after_test_module,
-    clippy::manual_next_back,
-    clippy::manual_while_let_some,
-    clippy::needless_bool_assign,
-    clippy::non_minimal_cfg,
+
+    // The followings are selected lints from 1.71.0 to 1.74.0
+    clippy::large_stack_frames,
+    clippy::tuple_array_conversions,
+    clippy::pub_without_shorthand,
+    clippy::needless_raw_strings,
+    clippy::redundant_type_annotations,
+    clippy::host_endian_bytes,
+    clippy::big_endian_bytes,
+    clippy::error_impl_error,
+    clippy::string_lit_chars_any,
+    clippy::needless_pass_by_ref_mut,
+    clippy::redundant_as_str,
+    clippy::missing_asserts_for_indexing,
 )]
 #![allow(
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
@@ -183,8 +190,10 @@ mod snapshot_allocator;
 
 pub use crate::{
     api::{
-        engine_api::{StorageEngine, WriteOperation},
+        engine_api::StorageEngine,
+        operation::{StorageOps, WriteOperation},
         snapshot_api::{SnapshotAllocator, SnapshotApi},
+        transaction_api::TransactionApi,
     },
     error::EngineError,
     proxy::{Engine, EngineType, Snapshot},

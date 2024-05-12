@@ -184,7 +184,7 @@ impl TaskManager {
         let mut queue = Self::root_tasks_queue(&tasks);
         state.store(1, Ordering::Release);
         while let Some(v) = queue.pop_front() {
-            let Some((_name,mut task)) = tasks.remove(&v) else {
+            let Some((_name, mut task)) = tasks.remove(&v) else {
                 continue;
             };
             task.notifier.notify_waiters();

@@ -154,7 +154,7 @@ Check the code format.
 cargo fmt --all -- --check
 ```
 
-**Note**: The current version of the Rust toolchain used for CI is **1.71.0** .
+**Note**: The current version of the Rust toolchain used for CI is **1.74.0** .
 Please use this version to run the above command, otherwise you may get
 different results with CI.
 

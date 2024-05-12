@@ -10,11 +10,7 @@ use std::{
 
 use clippy_utilities::OverflowArithmetic;
 use event_listener::Event;
-use flume::r#async::RecvStream;
-use futures::{FutureExt, StreamExt};
 use thiserror::Error;
-use tokio::task::JoinHandle;
-use tokio_stream::Stream;
 use tracing::error;
 
 use super::util::LockedFile;
@@ -28,8 +24,11 @@ pub(super) struct FilePipeline {
     dir: PathBuf,
     /// The size of the temp file
     file_size: u64,
-    /// The file receive stream
-    file_stream: RecvStream<'static, LockedFile>,
+    /// The file receive iterator
+    ///
+    /// As tokio::fs is generally slower than std::fs, we use synchronous file allocation.
+    /// Please also refer to the issue discussed on the tokio repo: https://github.com/tokio-rs/tokio/issues/3664
+    file_iter: flume::IntoIter<LockedFile>,
     /// Stopped flag
     stopped: Arc<AtomicBool>,
 }
@@ -97,7 +96,7 @@ impl FilePipeline {
         Ok(Self {
             dir,
             file_size,
-            file_stream: file_rx.into_stream(),
+            file_iter: file_rx.into_iter(),
             stopped,
         })
     }
@@ -136,18 +135,14 @@ impl Drop for FilePipeline {
     }
 }
 
-impl Stream for FilePipeline {
+impl Iterator for FilePipeline {
     type Item = io::Result<LockedFile>;
 
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn next(&mut self) -> Option<Self::Item> {
         if self.stopped.load(Ordering::Relaxed) {
-            return Poll::Ready(None);
+            return None;
         }
-
-        self.file_stream.poll_next_unpin(cx).map(|opt| opt.map(Ok))
+        self.file_iter.next().map(Ok)
     }
 }
 
@@ -162,9 +157,8 @@ impl std::fmt::Debug for FilePipeline {
 
 #[cfg(test)]
 mod tests {
-    use crate::server::storage::wal::util::get_file_paths_with_ext;
-
     use super::*;
+    use crate::server::storage::wal::util::get_file_paths_with_ext;
 
     #[tokio::test]
     async fn file_pipeline_is_ok() {
@@ -176,11 +170,11 @@ mod tests {
             let file = file.into_std();
             assert_eq!(file.metadata().unwrap().len(), file_size,);
         };
-        let file0 = pipeline.next().await.unwrap().unwrap();
+        let file0 = pipeline.next().unwrap().unwrap();
         check_size(file0);
-        let file1 = pipeline.next().await.unwrap().unwrap();
+        let file1 = pipeline.next().unwrap().unwrap();
         check_size(file1);
         pipeline.stop();
-        assert!(pipeline.next().await.is_none());
+        assert!(pipeline.next().is_none());
     }
 }

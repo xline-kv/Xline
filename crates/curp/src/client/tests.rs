@@ -1,12 +1,16 @@
 use std::{
     collections::HashMap,
     ops::AddAssign,
-    sync::{atomic::AtomicBool, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, AtomicU64},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
 use curp_external_api::LogIndex;
 use curp_test_utils::test_cmd::{LogIndexResult, TestCommand, TestCommandResult};
+use futures::future::BoxFuture;
 use tokio::time::Instant;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
@@ -17,6 +21,7 @@ use utils::ClientTlsConfig;
 use super::{
     retry::{Retry, RetryConfig},
     state::State,
+    stream::{Streaming, StreamingConfig},
     unary::{Unary, UnaryConfig},
 };
 use crate::{
@@ -24,7 +29,7 @@ use crate::{
     members::ServerId,
     rpc::{
         connect::{ConnectApi, MockConnectApi},
-        CurpError, FetchClusterResponse, Member, ProposeId, ProposeResponse, WaitSyncedResponse,
+        *,
     },
 };
 
@@ -348,7 +353,7 @@ async fn test_unary_fast_round_less_quorum() {
 /// TODO: fix in subsequence PR
 #[traced_test]
 #[tokio::test]
-#[should_panic]
+#[should_panic(expected = "should not set exe result twice")]
 async fn test_unary_fast_round_with_two_leader() {
     let connects = init_mocked_connects(5, |id, conn| {
         conn.expect_propose()
@@ -656,7 +661,11 @@ async fn test_retry_propose_return_no_retry_error() {
                 });
         });
         let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
-        let retry = Retry::new(unary, RetryConfig::new_fixed(Duration::from_millis(100), 5));
+        let retry = Retry::new(
+            unary,
+            RetryConfig::new_fixed(Duration::from_millis(100), 5),
+            None,
+        );
         let err = retry
             .propose(&TestCommand::default(), None, false)
             .await
@@ -704,11 +713,245 @@ async fn test_retry_propose_return_retry_error() {
             }
         });
         let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
-        let retry = Retry::new(unary, RetryConfig::new_fixed(Duration::from_millis(10), 5));
+        let retry = Retry::new(
+            unary,
+            RetryConfig::new_fixed(Duration::from_millis(10), 5),
+            None,
+        );
         let err = retry
             .propose(&TestCommand::default(), None, false)
             .await
             .unwrap_err();
         assert!(err.message().contains("request timeout"));
     }
+}
+
+// Tests for stream client
+
+struct MockedStreamConnectApi {
+    id: ServerId,
+    lease_keep_alive_handle:
+        Box<dyn Fn(Arc<AtomicU64>) -> BoxFuture<'static, CurpError> + Send + Sync + 'static>,
+}
+
+#[async_trait::async_trait]
+impl ConnectApi for MockedStreamConnectApi {
+    /// Get server id
+    fn id(&self) -> ServerId {
+        self.id
+    }
+
+    /// Update server addresses, the new addresses will override the old ones
+    async fn update_addrs(&self, _addrs: Vec<String>) -> Result<(), tonic::transport::Error> {
+        Ok(())
+    }
+
+    /// Send `ProposeRequest`
+    async fn propose(
+        &self,
+        _request: ProposeRequest,
+        _token: Option<String>,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<ProposeResponse>, CurpError> {
+        unreachable!("please use MockedConnectApi")
+    }
+
+    /// Send `ProposeConfChange`
+    async fn propose_conf_change(
+        &self,
+        _request: ProposeConfChangeRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<ProposeConfChangeResponse>, CurpError> {
+        unreachable!("please use MockedConnectApi")
+    }
+
+    /// Send `PublishRequest`
+    async fn publish(
+        &self,
+        _request: PublishRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<PublishResponse>, CurpError> {
+        unreachable!("please use MockedConnectApi")
+    }
+
+    /// Send `WaitSyncedRequest`
+    async fn wait_synced(
+        &self,
+        _request: WaitSyncedRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<WaitSyncedResponse>, CurpError> {
+        unreachable!("please use MockedConnectApi")
+    }
+
+    /// Send `ShutdownRequest`
+    async fn shutdown(
+        &self,
+        _request: ShutdownRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<ShutdownResponse>, CurpError> {
+        unreachable!("please use MockedConnectApi")
+    }
+
+    /// Send `FetchClusterRequest`
+    async fn fetch_cluster(
+        &self,
+        _request: FetchClusterRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<FetchClusterResponse>, CurpError> {
+        unreachable!("please use MockedConnectApi")
+    }
+
+    /// Send `FetchReadStateRequest`
+    async fn fetch_read_state(
+        &self,
+        _request: FetchReadStateRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<FetchReadStateResponse>, CurpError> {
+        unreachable!("please use MockedConnectApi")
+    }
+
+    /// Send `MoveLeaderRequest`
+    async fn move_leader(
+        &self,
+        _request: MoveLeaderRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<MoveLeaderResponse>, CurpError> {
+        unreachable!("please use MockedConnectApi")
+    }
+
+    /// Keep send lease keep alive to server and mutate the client id
+    async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>, _interval: Duration) -> CurpError {
+        (self.lease_keep_alive_handle)(Arc::clone(&client_id)).await
+    }
+}
+
+/// Create mocked stream connects
+/// The leader is S0
+#[allow(trivial_casts)] // cannot be inferred
+fn init_mocked_stream_connects(
+    size: usize,
+    leader_idx: usize,
+    leader_term: u64,
+    keep_alive_handle: impl Fn(Arc<AtomicU64>) -> BoxFuture<'static, CurpError> + Send + Sync + 'static,
+) -> HashMap<ServerId, Arc<dyn ConnectApi>> {
+    let mut keep_alive_handle = Some(keep_alive_handle);
+    let redirect_handle = move |_id| {
+        Box::pin(async move { CurpError::redirect(Some(leader_idx as ServerId), leader_term) })
+            as BoxFuture<'static, CurpError>
+    };
+    (0..size)
+        .map(|id| MockedStreamConnectApi {
+            id: id as ServerId,
+            lease_keep_alive_handle: if id == leader_idx {
+                Box::new(keep_alive_handle.take().unwrap())
+            } else {
+                Box::new(redirect_handle)
+            },
+        })
+        .enumerate()
+        .map(|(id, api)| (id as ServerId, Arc::new(api) as Arc<dyn ConnectApi>))
+        .collect()
+}
+
+/// Create stream client for test
+fn init_stream_client(
+    connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
+    local_server: Option<ServerId>,
+    leader: Option<ServerId>,
+    term: u64,
+    cluster_version: u64,
+) -> Streaming {
+    let state = State::new_arc(connects, local_server, leader, term, cluster_version, None);
+    Streaming::new(state, StreamingConfig::new(Duration::from_secs(1)))
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_stream_client_keep_alive_works() {
+    let connects = init_mocked_stream_connects(5, 0, 1, move |client_id| {
+        Box::pin(async move {
+            client_id
+                .compare_exchange(
+                    0,
+                    10,
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                )
+                .unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            unreachable!("test timeout")
+        })
+    });
+    let stream = init_stream_client(connects, None, Some(0), 1, 1);
+    tokio::time::timeout(Duration::from_millis(100), stream.keep_heartbeat())
+        .await
+        .unwrap_err();
+    assert_eq!(stream.state.client_id(), 10);
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_stream_client_keep_alive_on_redirect() {
+    let connects = init_mocked_stream_connects(5, 0, 2, move |client_id| {
+        Box::pin(async move {
+            client_id
+                .compare_exchange(
+                    0,
+                    10,
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                )
+                .unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            unreachable!("test timeout")
+        })
+    });
+    let stream = init_stream_client(connects, None, Some(1), 1, 1);
+    tokio::time::timeout(Duration::from_millis(100), stream.keep_heartbeat())
+        .await
+        .unwrap_err();
+    assert_eq!(stream.state.client_id(), 10);
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_stream_client_keep_alive_hang_up_on_bypassed() {
+    let connects = init_mocked_stream_connects(5, 0, 1, |_client_id| {
+        Box::pin(async move { panic!("should not invoke lease_keep_alive in bypassed connection") })
+    });
+    let stream = init_stream_client(connects, Some(0), Some(0), 1, 1);
+    tokio::time::timeout(Duration::from_millis(100), stream.keep_heartbeat())
+        .await
+        .unwrap_err();
+    assert_ne!(stream.state.client_id(), 0);
+}
+
+#[traced_test]
+#[tokio::test]
+#[allow(clippy::ignored_unit_patterns)] // tokio select internal triggered
+async fn test_stream_client_keep_alive_resume_on_leadership_changed() {
+    let connects = init_mocked_stream_connects(5, 1, 2, move |client_id| {
+        Box::pin(async move {
+            // generated a client id for bypassed client
+            assert_ne!(client_id.load(std::sync::atomic::Ordering::Relaxed), 0);
+            client_id.store(10, std::sync::atomic::Ordering::Relaxed);
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            unreachable!("test timeout")
+        })
+    });
+    let stream = init_stream_client(connects, Some(0), Some(0), 1, 1);
+    let update_leader = async {
+        // wait for stream to hang up
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // check the local id
+        assert_ne!(stream.state.client_id(), 0);
+        stream.state.check_and_update_leader(Some(1), 2).await;
+        // wait for stream to resume
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    tokio::select! {
+        _ = stream.keep_heartbeat() => {},
+        _ = update_leader => {}
+    }
+    assert_eq!(stream.state.client_id(), 10);
 }

@@ -9,7 +9,7 @@ use utils::define_metrics;
 use crate::mock_rocksdb_engine::RocksEngine;
 #[cfg(not(madsim))]
 use crate::rocksdb_engine::RocksEngine;
-use crate::{EngineError, SnapshotApi, StorageEngine, WriteOperation};
+use crate::{EngineError, SnapshotApi, StorageEngine, TransactionApi, WriteOperation};
 
 define_metrics! {
     "engine",
@@ -60,6 +60,12 @@ where
 {
     /// The snapshot type
     type Snapshot = Layer<E::Snapshot>;
+    type Transaction = Layer<E::Transaction>;
+
+    /// Creates a transaction
+    fn transaction(&self) -> Self::Transaction {
+        Layer::new(self.engine.transaction())
+    }
 
     /// Get the value associated with a key value and the given table
     ///
@@ -182,5 +188,29 @@ where
     /// Clean files of current snapshot
     async fn clean(&mut self) -> io::Result<()> {
         self.engine.clean().await
+    }
+}
+
+#[async_trait]
+impl<E> TransactionApi for Layer<E>
+where
+    E: TransactionApi,
+{
+    /// Commits the changes
+    ///
+    /// # Errors
+    ///
+    /// if error occurs in storage, return `Err(error)`
+    fn commit(self) -> Result<(), EngineError> {
+        self.engine.commit()
+    }
+
+    /// Rollbacks the changes
+    ///
+    /// # Errors
+    ///
+    /// if error occurs in storage, return `Err(error)`
+    fn rollback(&self) -> Result<(), EngineError> {
+        self.engine.rollback()
     }
 }

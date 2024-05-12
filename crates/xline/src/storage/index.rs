@@ -334,7 +334,7 @@ impl IndexOperate for Index {
                         } else {
                             revisions.drain(..compacted_last_idx)
                         };
-                        revs.extend(compact_revs.into_iter());
+                        revs.extend(compact_revs);
 
                         if revisions.is_empty() {
                             del_keys.push(entry.key().clone());

@@ -899,6 +899,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Handle `vote` responses
     /// Return `Ok(election_ends)` if succeeds
     /// Return `Err(())` if self is no longer a candidate
+    #[allow(clippy::shadow_unrelated)] // allow reuse the `_ignore` variable name.
     pub(super) fn handle_vote_resp(
         &self,
         id: ServerId,
@@ -916,7 +917,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
 
         let mut cst_w = self.cst.lock();
-        let _ig = cst_w.votes_received.insert(id, vote_granted);
+        let _ignore = cst_w.votes_received.insert(id, vote_granted);
 
         if !vote_granted {
             return Ok(false);
@@ -942,8 +943,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         // TODO: Generate client id in the same way as client
         let propose_id = ProposeId(rand::random(), 0);
         let _ignore = log_w.push(st_w.term, propose_id, EntryData::Empty);
-        self.recover_from_spec_pools(&mut st_w, &mut log_w, spec_pools);
-        self.recover_ucp_from_log(&mut log_w);
+        self.recover_from_spec_pools(&st_w, &mut log_w, spec_pools);
+        self.recover_ucp_from_log(&log_w);
         let last_log_index = log_w.last_log_index();
 
         self.become_leader(&mut st_w);
@@ -954,10 +955,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
         if prev_last_log_index < last_log_index {
             // if some entries are recovered, sync with followers immediately
-            self.ctx
-                .sync_events
-                .iter()
-                .for_each(|event| event.notify(1));
+            self.ctx.sync_events.iter().for_each(|event| {
+                let _ignore = event.notify(1);
+            });
         }
 
         Ok(true)
@@ -1098,7 +1098,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         if match_index == self.log.read().last_log_index() {
             Ok(true)
         } else {
-            self.sync_event(target_id).notify(1);
+            let _ignore = self.sync_event(target_id).notify(1);
             Ok(false)
         }
     }
@@ -1165,7 +1165,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         };
 
         let Some(next_index) = self.lst.get_next_index(follower_id) else {
-            warn!("follower {} is not found, it maybe has been removed", follower_id);
+            warn!(
+                "follower {} is not found, it maybe has been removed",
+                follower_id
+            );
             return None;
         };
         let log_r = self.log.read();
@@ -1590,7 +1593,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let spec_pools = cst.sps.drain().collect();
             let mut log_w = RwLockUpgradableReadGuard::upgrade(log);
             self.recover_from_spec_pools(st, &mut log_w, spec_pools);
-            self.recover_ucp_from_log(&mut log_w);
+            self.recover_ucp_from_log(&log_w);
             self.become_leader(st);
             None
         } else {
@@ -1610,7 +1613,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         st.role = Role::Leader;
         st.leader_id = Some(self.id());
         let _ig = self.ctx.leader_tx.send(Some(self.id())).ok();
-        self.ctx.leader_event.notify(usize::MAX);
+        let _ignore = self.ctx.leader_event.notify(usize::MAX);
         self.ctx.role_change.on_election_win();
         debug!("{} becomes the leader", self.id());
     }
@@ -1670,7 +1673,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Recover from all voter's spec pools
     fn recover_from_spec_pools(
         &self,
-        st: &mut State,
+        st: &State,
         log: &mut Log<C>,
         spec_pools: HashMap<ServerId, Vec<PoolEntry<C>>>,
     ) {
@@ -1715,7 +1718,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let term = st.term;
         for entry in recovered_cmds {
             let _ig_sync = cb_w.sync.insert(entry.id); // may have been inserted before
-            let _ig_spec = sp_l.insert(entry.clone()); // may have been inserted before
+            let _ig_spec = sp_l.insert_if_not_conflict(entry.clone()); // may have been inserted before
             #[allow(clippy::expect_used)]
             let entry = log
                 .push(term, entry.id, entry.inner)
@@ -1730,7 +1733,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Recover the ucp from uncommitted log entries
-    fn recover_ucp_from_log(&self, log: &mut Log<C>) {
+    fn recover_ucp_from_log(&self, log: &Log<C>) {
         let mut ucp_l = self.ctx.ucp.lock();
 
         for i in log.commit_index + 1..=log.last_log_index() {
@@ -1879,7 +1882,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.ctx.sync_events.iter().for_each(|e| {
             if let Some(next) = self.lst.get_next_index(*e.key()) {
                 if next > log_w.base_index && log_w.has_next_batch(next) {
-                    e.notify(1);
+                    let _ignore = e.notify(1);
                 }
             }
         });
@@ -1898,9 +1901,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Insert entry to spec pool
     fn insert_sp(&self, propose_id: ProposeId, inner: impl Into<PoolEntryInner<C>>) -> bool {
-        self.ctx
-            .sp
-            .map_lock(|mut spec_l| spec_l.insert(PoolEntry::new(propose_id, inner)).is_some())
+        self.ctx.sp.map_lock(|mut spec_l| {
+            spec_l
+                .insert_if_not_conflict(PoolEntry::new(propose_id, inner))
+                .is_some()
+        })
     }
 
     /// Insert entry to uncommitted pool

@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use clippy_utilities::Cast;
+use clippy_utilities::NumericCast;
 use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use log::debug;
@@ -44,6 +44,7 @@ use crate::{
         AuthenticateResponse, DeleteRangeRequest, LeaseRevokeRequest, Permission, PutRequest,
         RangeRequest, Request, RequestOp, RequestWrapper, Role, TxnRequest, Type, User,
     },
+    server::get_token,
     storage::{
         auth_store::backend::AuthStoreBackend,
         db::WriteOp,
@@ -79,7 +80,7 @@ where
     S: StorageApi,
 {
     /// New `AuthStore`
-    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
+    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
     pub(crate) fn new(
         lease_collection: Arc<LeaseCollection>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
@@ -106,7 +107,7 @@ where
     }
 
     /// Get enabled of Auth store
-    pub(super) fn is_enabled(&self) -> bool {
+    pub(crate) fn is_enabled(&self) -> bool {
         self.enabled.load(AtomicOrdering::Relaxed)
     }
 
@@ -131,6 +132,28 @@ where
         }
     }
 
+    /// Try get auth info from tonic request
+    pub(crate) fn try_get_auth_info_from_request<T>(
+        &self,
+        request: &tonic::Request<T>,
+    ) -> Result<Option<AuthInfo>, tonic::Status> {
+        if !self.is_enabled() {
+            return Ok(None);
+        }
+        if let Some(token) = get_token(request.metadata()) {
+            let auth_info = self.verify(&token)?;
+            return Ok(Some(auth_info));
+        }
+        if let Some(cn) = get_cn(request) {
+            let auth_info = AuthInfo {
+                username: cn,
+                auth_revision: self.revision(),
+            };
+            return Ok(Some(auth_info));
+        }
+        Ok(None)
+    }
+
     /// create permission cache
     fn create_permission_cache(&self) -> Result<(), ExecuteError> {
         let mut permission_cache = PermissionCache::new();
@@ -141,7 +164,7 @@ where
                 permission_cache
                     .role_to_users_map
                     .entry(role)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(username.clone());
             }
             let _ignore = permission_cache
@@ -271,7 +294,7 @@ where
         debug!("handle_auth_status");
         AuthStatusResponse {
             header: Some(self.header_gen.gen_auth_header()),
-            auth_revision: self.revision().cast(),
+            auth_revision: self.revision().numeric_cast(),
             enabled: self.is_enabled(),
         }
     }
@@ -679,24 +702,24 @@ where
         if (req.role != ROOT_ROLE) && role.is_err() {
             return Err(ExecuteError::RoleNotFound(req.role.clone()));
         }
-        let Err(idx) =  user.roles.binary_search(&req.role) else {
-            return Err(ExecuteError::UserAlreadyHasRole(req.user.clone(), req.role.clone()));
+        let Err(idx) = user.roles.binary_search(&req.role) else {
+            return Err(ExecuteError::UserAlreadyHasRole(
+                req.user.clone(),
+                req.role.clone(),
+            ));
         };
         user.roles.insert(idx, req.role.clone());
         if let Ok(role) = role {
             let perms = role.key_permission;
             self.permission_cache.map_write(|mut cache| {
-                let entry = cache
-                    .user_permissions
-                    .entry(req.user.clone())
-                    .or_insert_with(UserPermissions::new);
+                let entry = cache.user_permissions.entry(req.user.clone()).or_default();
                 for perm in perms {
                     entry.insert(perm);
                 }
                 cache
                     .role_to_users_map
                     .entry(req.role.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(req.user.clone());
             });
         }
@@ -769,7 +792,7 @@ where
             }
         }
         self.permission_cache.map_write(|mut cache| {
-            cache.user_permissions.extend(new_perms.into_iter());
+            cache.user_permissions.extend(new_perms);
             let _ignore = cache.role_to_users_map.remove(&req.role);
         });
         Ok(ops)
@@ -807,10 +830,7 @@ where
                 .cloned()
                 .unwrap_or_default();
             for user in users {
-                let entry = cache
-                    .user_permissions
-                    .entry(user)
-                    .or_insert_with(UserPermissions::new);
+                let entry = cache.user_permissions.entry(user).or_default();
                 entry.insert(permission.clone());
             }
         });
@@ -967,7 +987,7 @@ where
                                 Err(e)
                             }
                         },
-                        |_| Ok(()),
+                        |()| Ok(()),
                     )?;
                 }
                 RequestWrapper::AuthRoleGetRequest(ref role_get_req) => {
@@ -980,7 +1000,7 @@ where
                                 Err(e)
                             }
                         },
-                        |_| Ok(()),
+                        |()| Ok(()),
                     )?;
                 }
                 _ => {}
@@ -1138,6 +1158,14 @@ where
         self.create_permission_cache()?;
         Ok(())
     }
+}
+
+/// Get common name from tonic request
+fn get_cn<T>(request: &tonic::Request<T>) -> Option<String> {
+    let chain = request.peer_certs()?;
+    let cert_der = chain.first()?;
+    let cert = x509_certificate::X509Certificate::from_der(cert_der.as_ref()).ok()?;
+    cert.subject_common_name()
 }
 
 #[cfg(test)]

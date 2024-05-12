@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use clippy_utilities::{Cast, OverflowArithmetic};
+use clippy_utilities::{NumericCast, OverflowArithmetic};
 use prost::Message;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -264,11 +264,8 @@ where
 
     /// Get compact revision from db
     fn get_compact_revision(&self, revision_key: &str) -> Result<Option<i64>, ExecuteError> {
-        let Some(revision_bytes)=  self.inner
-            .db
-            .get_value(META_TABLE, revision_key)?
-        else {
-            return  Ok(None);
+        let Some(revision_bytes) = self.inner.db.get_value(META_TABLE, revision_key)? else {
+            return Ok(None);
         };
         let bytes = revision_bytes.try_into().map_err(|e| {
             ExecuteError::DbError(format!(
@@ -585,12 +582,12 @@ where
             &req.key,
             &req.range_end,
             req.revision,
-            storage_fetch_limit.cast(),
+            storage_fetch_limit.numeric_cast(),
             req.count_only,
         )?;
         let mut response = RangeResponse {
             header: Some(self.header_gen.gen_header()),
-            count: total.cast(),
+            count: total.numeric_cast(),
             ..RangeResponse::default()
         };
         if kvs.is_empty() {
@@ -606,9 +603,9 @@ where
         );
         Self::sort_kvs(&mut kvs, req.sort_order(), req.sort_target());
 
-        if (req.limit > 0) && (kvs.len() > req.limit.cast()) {
+        if (req.limit > 0) && (kvs.len() > req.limit.numeric_cast()) {
             response.more = true;
-            kvs.truncate(req.limit.cast());
+            kvs.truncate(req.limit.numeric_cast());
         }
         if req.keys_only {
             kvs.iter_mut().for_each(|kv| kv.value.clear());
@@ -648,7 +645,7 @@ where
             header: Some(self.header_gen.gen_header()),
             ..DeleteRangeResponse::default()
         };
-        response.deleted = prev_kvs.len().cast();
+        response.deleted = prev_kvs.len().numeric_cast();
         if req.prev_kv {
             response.prev_kvs = prev_kvs;
         }
@@ -782,7 +779,7 @@ where
                     continue;
                 }
             };
-            sub_revision = sub_revision.overflow_add(events.len().cast());
+            sub_revision = sub_revision.overflow_add(events.len().numeric_cast());
             all_events.append(&mut events);
             all_ops.append(&mut ops);
         }

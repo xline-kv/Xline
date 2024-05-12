@@ -18,29 +18,38 @@ tokio = ["dep:async-trait"]
 parking_lot = ["dep:parking_lot"]
 
 [dependencies]
-async-trait = { version = "0.1.60", optional = true }
+async-trait = { version = "0.1.80", optional = true }
 clippy-utilities = "0.2.0"
 dashmap = "5.5.3"
-derive_builder = "0.13.0"
+derive_builder = "0.20.0"
 getset = "0.1"
-opentelemetry = { version = "0.21.0", features = ["trace"] }
-opentelemetry_sdk = { version = "0.21.0", features = ["trace"] }
-parking_lot = { version = "0.12.1", optional = true }
-serde = { version = "1.0.137", features = ["derive"] }
-thiserror = "1.0.31"
-tokio = { version = "0.2.23", package = "madsim-tokio", features = [
+opentelemetry = { version = "0.22.0", features = ["trace"] }
+opentelemetry_sdk = { version = "0.22.1", features = ["trace"] }
+parking_lot = { version = "0.12.2", optional = true }
+pbkdf2 = { version = "0.12.2", features = ["simple"] }
+petgraph = "0.6.4"
+rand = "0.8.5"
+serde = { version = "1.0.199", features = ["derive"] }
+thiserror = "1.0.58"
+tokio = { version = "0.2.25", package = "madsim-tokio", features = [
   "sync",
   "macros",
   "rt-multi-thread",
 ] }
 toml = "0.8.8"
-tonic = { version = "0.4.1", package = "madsim-tonic" }
+tonic = { version = "0.4.2", package = "madsim-tonic" }
 tracing = "0.1.37"
 tracing-appender = "0.2"
-tracing-opentelemetry = "0.22.0"
+tracing-opentelemetry = "0.23.0"
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
-opentelemetry-jaeger = "0.20.0"
+opentelemetry = { version = "0.22.0", features = ["trace"] }
+opentelemetry-jaeger = "0.21.0"
+opentelemetry-otlp = { version = "0.15.0", features = [
+  "metrics",
+  "http-proto",
+  "reqwest-client",
+] }
 test-macros = { path = "../test-macros" }
 tracing-subscriber = "0.3.16"
