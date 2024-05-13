@@ -20,7 +20,7 @@ opentelemetry = { version = "0.21.0", features = ["metrics"] }
 parking_lot = "0.12.2"
 rocksdb = { version = "0.22.0", features = ["multi-threaded-cf"] }
 serde = { version = "1.0.199", features = ["derive"] }
-thiserror = "1.0.58"
+thiserror = "1.0.60"
 tokio = { version = "0.2.25", package = "madsim-tokio", features = [
     "fs",
     "macros",
