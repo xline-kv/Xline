@@ -13,7 +13,7 @@ publish = false
 
 ### BEGIN HAKARI SECTION
 [dependencies]
-axum = { version = "0.6" }
+axum = { version = "0.7" }
 bytes = { version = "1" }
 clap = { version = "4", features = ["derive"] }
 crypto-common = { version = "0.1", default-features = false, features = ["std"] }
