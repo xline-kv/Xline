@@ -128,13 +128,15 @@ where
     type Error = WALError;
 
     fn decode(&mut self, src: &[u8]) -> Result<(Self::Item, usize), Self::Error> {
-        let mut current = 0;
-        loop {
-            let Some((frame, len)) = WALFrame::<C, H>::decode(&src[current..])? else {
-                return Err(WALError::UnexpectedEof);
+        let mut cursor = 0;
+        while cursor < src.len() {
+            let next = src.get(cursor..).ok_or(WALError::MaybeEnded)?;
+            let Some((frame, len)) = WALFrame::<C, H>::decode(next)? else {
+                return Err(WALError::MaybeEnded);
             };
-            let decoded_bytes = &src[current..current + len];
-            current += len;
+            let decoded_bytes = src.get(cursor..cursor + len).ok_or(WALError::MaybeEnded)?;
+            cursor += len;
+
             match frame {
                 WALFrame::Data(data) => {
                     self.frames.push(data);
@@ -144,12 +146,13 @@ where
                     let checksum = self.hasher.clone().finalize();
                     Digest::reset(&mut self.hasher);
                     if commit.validate(&checksum) {
-                        return Ok((self.frames.drain(..).collect(), current));
+                        return Ok((self.frames.drain(..).collect(), cursor));
                     }
                     return Err(WALError::Corrupted(CorruptType::Checksum));
                 }
             }
         }
+        Err(WALError::MaybeEnded)
     }
 }
 
@@ -188,7 +191,7 @@ where
     fn decode(src: &[u8]) -> Result<Option<(Self, usize)>, WALError> {
         let frame_type = src[0];
         match frame_type {
-            INVALID => Err(WALError::UnexpectedEof),
+            INVALID => Err(WALError::MaybeEnded),
             INSERT => Self::decode_insert(&src),
             REMOVE => Self::decode_remove(&src),
             COMMIT => Self::decode_commit(&src),

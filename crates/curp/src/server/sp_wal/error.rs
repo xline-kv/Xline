@@ -5,8 +5,12 @@ use thiserror::Error;
 /// Errors of the `WALStorage`
 #[derive(Debug, Error)]
 pub(crate) enum WALError {
+    /// The WAL segment might reach on end
+    ///
+    /// NOTE: This exists because we cannot tell the difference between a corrupted WAL
+    /// and a normally ended WAL, as the segment files are all preallocated with zeros
     #[error("WAL ended")]
-    UnexpectedEof,
+    MaybeEnded,
     /// The WAL corrupt error
     #[error("WAL corrupted: {0}")]
     Corrupted(CorruptType),
@@ -34,7 +38,7 @@ impl WALError {
         match self {
             WALError::Corrupted(e) => Ok(e),
             WALError::IO(e) => return Err(e),
-            WALError::UnexpectedEof => unreachable!("Should not call on WALError::MaybeEnded"),
+            WALError::MaybeEnded => unreachable!("Should not call on WALError::MaybeEnded"),
         }
     }
 }
@@ -42,9 +46,7 @@ impl WALError {
 impl From<WALError> for io::Error {
     fn from(err: WALError) -> Self {
         match err {
-            WALError::UnexpectedEof => {
-                io::Error::new(io::ErrorKind::UnexpectedEof, err.to_string())
-            }
+            WALError::MaybeEnded => unreachable!("Should not call on WALError::MaybeEnded"),
             WALError::Corrupted(_) => io::Error::new(io::ErrorKind::InvalidData, err.to_string()),
             WALError::IO(e) => e,
         }

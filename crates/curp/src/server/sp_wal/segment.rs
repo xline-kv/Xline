@@ -2,7 +2,7 @@ use std::{
     collections::HashSet,
     fs::File,
     io::{self, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use clippy_utilities::{NumericCast, OverflowArithmetic};
@@ -171,7 +171,7 @@ where
         let segment_id = parse_u64(next_field(8));
         let checksum = next_field(32);
 
-        if !validate_data::<Sha256>(&src[0..24], checksum) {
+        if !validate_data::<Sha256>(&src[0..16], checksum) {
             return parse_error;
         }
 
@@ -195,17 +195,27 @@ impl<T, Codec> Segment<T, Codec> {
     }
 
     /// Gets all items from the segment
-    pub(super) fn get_all<Item, Err>(&mut self) -> Result<Vec<Item>, Err>
+    pub(super) fn get_all<Item>(&mut self) -> Result<Vec<Item>, WALError>
     where
-        Err: From<io::Error>,
-        Codec: Decoder<Item = Item, Error = Err>,
+        Codec: Decoder<Item = Item, Error = WALError>,
     {
         let mut buf = Vec::new();
         let _ignore = self.file.read_to_end(&mut buf)?;
         let mut pos = 0;
         let mut entries = Vec::new();
         while pos < buf.len() {
-            let (item, n) = self.codec.decode(&buf[pos..])?;
+            let (item, n) = match self.codec.decode(&buf[pos..]) {
+                Ok(d) => d,
+                Err(WALError::MaybeEnded) => {
+                    if !buf[pos..].iter().all(|b| *b == 0) {
+                        return Err(WALError::Corrupted(CorruptType::Codec(
+                            "Read zero".to_owned(),
+                        )));
+                    }
+                    return Ok(entries);
+                }
+                Err(e) => return Err(e),
+            };
             entries.push(item);
             pos += n;
         }
@@ -256,13 +266,10 @@ impl<T, Codec> Segment<T, Codec> {
     pub(super) fn segment_id(&self) -> u64 {
         self.segment_id
     }
-}
 
-impl<T, Codec> Drop for Segment<T, Codec> {
-    fn drop(&mut self) {
-        if let Err(err) = std::fs::remove_file(&self.path) {
-            error!("Failed to remove segment file: {err}");
-        }
+    /// Gets the file path of this segment
+    pub(super) fn path(&self) -> &Path {
+        self.path.as_path()
     }
 }
 
@@ -313,4 +320,14 @@ impl SegmentAttr for Remove {
 pub(super) enum ToDrop<Codec> {
     Insert(Segment<Insert, Codec>),
     Remove(Segment<Remove, Codec>),
+}
+
+impl<Codec> ToDrop<Codec> {
+    /// Gets the segment path
+    pub(super) fn path(&self) -> &Path {
+        match *self {
+            ToDrop::Insert(ref seg) => seg.path(),
+            ToDrop::Remove(ref seg) => seg.path(),
+        }
+    }
 }

@@ -54,8 +54,8 @@ mod lease_manager;
 /// Curp metrics
 mod metrics;
 
-/// Speculative pool storage
-mod sp_storage;
+/// Speculative pool WAL
+mod sp_wal;
 
 pub use storage::{db::DB, StorageApi, StorageError};
 

@@ -7,7 +7,7 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
-use curp_external_api::cmd::Command;
+use curp_external_api::cmd::{Command, ConflictCheck};
 use itertools::Itertools;
 use parking_lot::Mutex;
 use serde::{de::DeserializeOwned, Serialize};
@@ -81,7 +81,7 @@ struct SpeculativePoolWAL<C> {
 
 impl<C> SpeculativePoolWAL<C>
 where
-    C: Serialize + DeserializeOwned + Send + Sync + 'static,
+    C: Command,
 {
     #[allow(unused)]
     fn new(config: WALConfig) -> io::Result<Self> {
@@ -89,7 +89,7 @@ where
             std::fs::create_dir_all(&config.insert_dir)?;
         }
         if !config.remove_dir.try_exists()? {
-            std::fs::create_dir_all(&config.insert_dir)?;
+            std::fs::create_dir_all(&config.remove_dir)?;
         }
         let (drop_tx, drop_rx) = flume::unbounded();
         let handle = Self::spawn_dropping_task(drop_rx);
@@ -118,10 +118,26 @@ where
                     ToDrop::Insert(_) => debug!("Removing insert segment file"),
                     ToDrop::Remove(_) => debug!("Removing remove segment file"),
                 }
-                // The segment will be removed on drop
-                drop(segment);
+                if let Err(err) = std::fs::remove_file(segment.path()) {
+                    error!("Failed to remove segment file: {err}");
+                }
             }
         })
+    }
+
+    /// Keeps only commute commands
+    fn keep_commute_cmds(mut entries: Vec<PoolEntry<C>>) -> Vec<PoolEntry<C>> {
+        let commute = |entry: &PoolEntry<C>, others: &[PoolEntry<C>]| {
+            !others.iter().any(|e| e.is_conflict(&entry))
+        };
+        // start from last element
+        entries.reverse();
+        let keep = entries
+            .iter()
+            .enumerate()
+            .take_while(|(i, ref e)| commute(*e, &entries[..*i]))
+            .count();
+        entries.drain(..keep).collect()
     }
 }
 
@@ -139,16 +155,11 @@ impl<C: Command> PoolWALOps<C> for SpeculativePoolWAL<C> {
         let mut remove_l = self.remove.lock();
         let mut cmds = insert_l.recover(&self.config.insert_dir)?;
         let removed = remove_l.recover(&self.config.remove_dir)?;
-        let mut to_invalidate = Vec::new();
-        for id in removed {
-            if cmds.remove(&id).is_none() {
-                to_invalidate.push(id);
-            }
-        }
-        Ok(cmds
+        let entries = cmds
             .into_iter()
-            .map(|(id, cmd)| PoolEntry::new(id, cmd))
-            .collect())
+            .filter_map(|(id, cmd)| (!removed.contains(&id)).then_some(PoolEntry::new(id, cmd)))
+            .collect();
+        Ok(Self::keep_commute_cmds(entries))
     }
 
     fn gc<F>(&self, check_fn: F) -> io::Result<()>
@@ -157,19 +168,12 @@ impl<C: Command> PoolWALOps<C> for SpeculativePoolWAL<C> {
     {
         let mut insert_l = self.insert.lock();
         let mut remove_l = self.remove.lock();
-        let all_ids: Vec<_> = insert_l
-            .all_ids()
-            .into_iter()
-            .chain(remove_l.all_ids().into_iter())
-            .unique()
-            .collect();
-        let obsolete_ids = check_fn(&all_ids);
-        for segment in insert_l.invalidates_propose_ids(&obsolete_ids) {
+        for segment in insert_l.gc(&check_fn) {
             if let Err(e) = self.drop_tx.as_ref().unwrap().send(ToDrop::Insert(segment)) {
                 error!("Failed to send segment to dropping task: {e}");
             }
         }
-        for segment in remove_l.invalidates_propose_ids(&obsolete_ids) {
+        for segment in remove_l.gc(&check_fn) {
             if let Err(e) = self.drop_tx.as_ref().unwrap().send(ToDrop::Remove(segment)) {
                 error!("Failed to send segment to dropping task: {e}");
             }
@@ -182,7 +186,7 @@ impl<C> Drop for SpeculativePoolWAL<C> {
     #[allow(clippy::unwrap_used)]
     fn drop(&mut self) {
         // The task will exit after `drop_tx` is dropped
-        let _drop = self.drop_tx.take();
+        drop(self.drop_tx.take());
         if let Err(err) = self.drop_task_handle.take().unwrap().join() {
             error!("Failed to join segment dropping task: {err:?}");
         }
@@ -230,7 +234,7 @@ where
     }
 
     fn recover_frames(&mut self, dir: impl AsRef<Path>) -> Result<Vec<DataFrame<C>>> {
-        let paths = get_file_paths_with_ext(dir, &segment::Insert::ext())?;
+        let paths = get_file_paths_with_ext(dir, &T::ext())?;
         let lfiles: Vec<_> = paths
             .into_iter()
             .map(LockedFile::open_rw)
@@ -239,16 +243,15 @@ where
             .into_iter()
             .map(|f| Segment::open(f, self.max_segment_size, WALCodec::new(), T::r#type()))
             .collect::<Result<_>>()?;
-
+        segments.sort_unstable();
         let logs: Vec<_> = segments
             .iter_mut()
             .map(Segment::recover::<C>)
-            .map(|result| result.map_err(Into::into))
-            .collect::<io::Result<_>>()?;
+            .collect::<Result<_>>()?;
 
-        segments.sort_unstable();
         self.next_segment_id = segments.last().map(Segment::segment_id).unwrap_or(0);
         self.segments = segments;
+        self.open_new_segment();
 
         Ok(logs.into_iter().flatten().collect())
     }
@@ -283,14 +286,19 @@ where
             .collect()
     }
 
-    /// Invalidates propose ids
-    fn invalidates_propose_ids(
-        &mut self,
-        propose_ids: &[ProposeId],
-    ) -> Vec<Segment<T, WALCodec<C>>> {
+    /// Try GC by propose ids
+    ///
+    /// The `check_fn` should filter out obsolete propose ids
+    fn gc<F>(&mut self, check_fn: &F) -> Vec<Segment<T, WALCodec<C>>>
+    where
+        F: Fn(&[ProposeId]) -> &[ProposeId],
+    {
+        let all_ids = self.all_ids();
+        let obsolete_ids = check_fn(&all_ids);
+
         let mut to_remove = Vec::new();
         for (pos, segment) in &mut self.segments.iter_mut().enumerate() {
-            if segment.invalidate_propose_ids(&propose_ids) {
+            if segment.invalidate_propose_ids(&obsolete_ids) {
                 to_remove.push(pos);
             }
         }
@@ -309,7 +317,7 @@ where
         self.write_frames(entries.into_iter().map(Into::into).collect())
     }
 
-    fn recover(&mut self, dir: impl AsRef<Path>) -> Result<HashMap<ProposeId, Arc<C>>> {
+    fn recover(&mut self, dir: impl AsRef<Path>) -> Result<Vec<(ProposeId, Arc<C>)>> {
         Ok(self
             .recover_frames(dir)?
             .into_iter()
