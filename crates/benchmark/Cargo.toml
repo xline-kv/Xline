@@ -19,7 +19,7 @@ clippy-utilities = "0.2.0"
 etcd-client = { version = "0.12.5", features = ["tls"] }
 indicatif = "0.17.8"
 rand = "0.8.5"
-thiserror = "1.0.58"
+thiserror = "1.0.60"
 tokio = "1.21.2"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.1"
