@@ -11,7 +11,7 @@ categories = ["Client"]
 keywords = ["Client", "Xline", "RPC"]
 
 [dependencies]
-anyhow = "1.0.82"
+anyhow = "1.0.83"
 clippy-utilities = "0.2.0"
 curp = { path = "../curp" }
 futures = "0.3.25"
