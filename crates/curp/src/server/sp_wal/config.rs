@@ -24,6 +24,7 @@ pub(crate) struct WALConfig {
 }
 
 impl WALConfig {
+    #[allow(unused)]
     /// Creates a new `WALConfig`
     pub(crate) fn new(dir: impl AsRef<Path>) -> Self {
         let mut insert_dir: PathBuf = dir.as_ref().into();

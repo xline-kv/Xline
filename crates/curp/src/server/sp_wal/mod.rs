@@ -1,14 +1,7 @@
-#![allow(unused)] // TODO: remove this
-use std::{
-    collections::{HashMap, HashSet},
-    io,
-    path::Path,
-    sync::Arc,
-};
+use std::{collections::HashSet, io, path::Path, sync::Arc};
 
 use clippy_utilities::OverflowArithmetic;
 use curp_external_api::cmd::{Command, ConflictCheck};
-use itertools::Itertools;
 use parking_lot::Mutex;
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::Sha256;
@@ -59,10 +52,10 @@ pub(crate) trait PoolWALOps<C: Command> {
 
     /// Try GC by propose ids
     ///
-    /// The `check_fn` should filter out obsolete propose ids
+    /// The `check_fn` should returns `true` if the propose id is obsolete
     fn gc<F>(&self, check_fn: F) -> io::Result<()>
     where
-        F: Fn(&[ProposeId]) -> &[ProposeId];
+        F: Fn(&ProposeId) -> bool;
 }
 
 /// WAL of speculative pool
@@ -84,6 +77,7 @@ where
     C: Command,
 {
     #[allow(unused)]
+    /// Creates a new `SpeculativePoolWAL`
     fn new(config: WALConfig) -> io::Result<Self> {
         if !config.insert_dir.try_exists()? {
             std::fs::create_dir_all(&config.insert_dir)?;
@@ -109,6 +103,7 @@ where
         })
     }
 
+    /// Spawns the segment file removal task
     fn spawn_dropping_task(
         drop_rx: flume::Receiver<ToDrop<WALCodec<C>>>,
     ) -> std::thread::JoinHandle<()> {
@@ -147,13 +142,28 @@ impl<C: Command> PoolWALOps<C> for SpeculativePoolWAL<C> {
     }
 
     fn remove(&self, propose_ids: Vec<ProposeId>) -> io::Result<()> {
-        self.remove.lock().remove(propose_ids)
+        let removed = self.insert.lock().remove_propose_ids(&propose_ids)?;
+        let removed_ids: Vec<_> = removed.iter().map(Segment::propose_ids).flatten().collect();
+        for segment in removed {
+            if let Err(e) = self.drop_tx.as_ref().unwrap().send(ToDrop::Insert(segment)) {
+                error!("Failed to send segment to dropping task: {e}");
+            }
+        }
+
+        let mut remove_l = self.remove.lock();
+        let removed = remove_l.remove_propose_ids(&removed_ids)?;
+        for segment in removed {
+            if let Err(e) = self.drop_tx.as_ref().unwrap().send(ToDrop::Remove(segment)) {
+                error!("Failed to send segment to dropping task: {e}");
+            }
+        }
+        remove_l.remove(propose_ids)
     }
 
     fn recover(&self) -> io::Result<Vec<PoolEntry<C>>> {
         let mut insert_l = self.insert.lock();
         let mut remove_l = self.remove.lock();
-        let mut cmds = insert_l.recover(&self.config.insert_dir)?;
+        let cmds = insert_l.recover(&self.config.insert_dir)?;
         let removed = remove_l.recover(&self.config.remove_dir)?;
         let entries = cmds
             .into_iter()
@@ -164,16 +174,16 @@ impl<C: Command> PoolWALOps<C> for SpeculativePoolWAL<C> {
 
     fn gc<F>(&self, check_fn: F) -> io::Result<()>
     where
-        F: Fn(&[ProposeId]) -> &[ProposeId],
+        F: Fn(&ProposeId) -> bool,
     {
         let mut insert_l = self.insert.lock();
         let mut remove_l = self.remove.lock();
-        for segment in insert_l.gc(&check_fn) {
+        for segment in insert_l.gc(&check_fn)? {
             if let Err(e) = self.drop_tx.as_ref().unwrap().send(ToDrop::Insert(segment)) {
                 error!("Failed to send segment to dropping task: {e}");
             }
         }
-        for segment in remove_l.gc(&check_fn) {
+        for segment in remove_l.gc(&check_fn)? {
             if let Err(e) = self.drop_tx.as_ref().unwrap().send(ToDrop::Remove(segment)) {
                 error!("Failed to send segment to dropping task: {e}");
             }
@@ -190,6 +200,22 @@ impl<C> Drop for SpeculativePoolWAL<C> {
         if let Err(err) = self.drop_task_handle.take().unwrap().join() {
             error!("Failed to join segment dropping task: {err:?}");
         }
+    }
+}
+
+#[cfg(test)]
+impl<C> SpeculativePoolWAL<C>
+where
+    C: Command,
+{
+    /// Propose ids of the `Insert` segment
+    fn insert_segment_ids(&self) -> Vec<Vec<ProposeId>> {
+        self.insert.lock().segment_ids()
+    }
+
+    /// Propose ids of the `Remove` segment
+    fn remove_segment_ids(&self) -> Vec<Vec<ProposeId>> {
+        self.remove.lock().segment_ids()
     }
 }
 
@@ -210,6 +236,7 @@ where
     T: SegmentAttr,
     C: Serialize + DeserializeOwned,
 {
+    /// Creates a new `WAL`
     fn new(dir: impl AsRef<Path>, max_segment_size: u64) -> io::Result<Self> {
         Ok(Self {
             segments: Vec::new(),
@@ -219,6 +246,7 @@ where
         })
     }
 
+    /// Writes frames to the log
     fn write_frames(&mut self, item: Vec<DataFrame<C>>) -> io::Result<()> {
         let last_segment = self
             .segments
@@ -233,6 +261,7 @@ where
         Ok(())
     }
 
+    /// Recovers all frames
     fn recover_frames(&mut self, dir: impl AsRef<Path>) -> Result<Vec<DataFrame<C>>> {
         let paths = get_file_paths_with_ext(dir, &T::ext())?;
         let lfiles: Vec<_> = paths
@@ -251,7 +280,7 @@ where
 
         self.next_segment_id = segments.last().map(Segment::segment_id).unwrap_or(0);
         self.segments = segments;
-        self.open_new_segment();
+        self.open_new_segment()?;
 
         Ok(logs.into_iter().flatten().collect())
     }
@@ -277,35 +306,42 @@ where
         Ok(())
     }
 
-    /// Gets all propose ids stored in this WAL
-    fn all_ids(&self) -> Vec<ProposeId> {
-        self.segments
-            .iter()
-            .map(Segment::propose_ids)
-            .flatten()
-            .collect()
-    }
-
     /// Try GC by propose ids
     ///
     /// The `check_fn` should filter out obsolete propose ids
-    fn gc<F>(&mut self, check_fn: &F) -> Vec<Segment<T, WALCodec<C>>>
+    fn gc<F>(&mut self, check_fn: &F) -> Result<Vec<Segment<T, WALCodec<C>>>>
     where
-        F: Fn(&[ProposeId]) -> &[ProposeId],
+        F: Fn(&ProposeId) -> bool,
     {
-        let all_ids = self.all_ids();
-        let obsolete_ids = check_fn(&all_ids);
-
-        let mut to_remove = Vec::new();
-        for (pos, segment) in &mut self.segments.iter_mut().enumerate() {
-            if segment.invalidate_propose_ids(&obsolete_ids) {
-                to_remove.push(pos);
-            }
+        for segment in &mut self.segments {
+            segment.gc(check_fn);
         }
-        to_remove
-            .into_iter()
-            .map(|pos| self.segments.remove(pos))
-            .collect()
+        self.remove_obsoletes()
+    }
+
+    /// Removes invalid propose ids
+    fn remove_propose_ids(&mut self, ids: &[ProposeId]) -> Result<Vec<Segment<T, WALCodec<C>>>> {
+        for segment in &mut self.segments {
+            segment.remove_propose_ids(ids);
+        }
+        self.remove_obsoletes()
+    }
+
+    /// Remove obsolete segments
+    fn remove_obsoletes(&mut self) -> Result<Vec<Segment<T, WALCodec<C>>>> {
+        let (to_remove, segments): (Vec<_>, Vec<_>) =
+            self.segments.drain(..).partition(Segment::is_obsolete);
+        self.segments = segments;
+        if self.segments.is_empty() {
+            self.open_new_segment()?;
+        }
+        Ok(to_remove)
+    }
+
+    /// Returns the segment ids of this [`WAL<T, C>`].
+    #[cfg(test)]
+    fn segment_ids(&self) -> Vec<Vec<ProposeId>> {
+        self.segments.iter().map(Segment::propose_ids).collect()
     }
 }
 
@@ -313,10 +349,12 @@ impl<C> WAL<segment::Insert, C>
 where
     C: Serialize + DeserializeOwned,
 {
+    /// Removes entries from this segment
     fn insert(&mut self, entries: Vec<PoolEntry<C>>) -> io::Result<()> {
         self.write_frames(entries.into_iter().map(Into::into).collect())
     }
 
+    /// Recovers all entries
     fn recover(&mut self, dir: impl AsRef<Path>) -> Result<Vec<(ProposeId, Arc<C>)>> {
         Ok(self
             .recover_frames(dir)?
@@ -333,10 +371,12 @@ impl<C> WAL<segment::Remove, C>
 where
     C: Serialize + DeserializeOwned,
 {
+    /// Removes propose ids from this segment
     fn remove(&mut self, ids: Vec<ProposeId>) -> io::Result<()> {
         self.write_frames(ids.into_iter().map(DataFrame::Remove).collect())
     }
 
+    /// Recovers all propose ids
     fn recover(&mut self, dir: impl AsRef<Path>) -> Result<HashSet<ProposeId>> {
         Ok(self
             .recover_frames(dir)?

@@ -340,3 +340,73 @@ impl<H> FrameEncoder for CommitFrame<H> {
         bytes
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use sha2::Sha256;
+
+    use super::*;
+    use crate::rpc::ProposeId;
+
+    #[tokio::test]
+    async fn frame_encode_decode_is_ok() {
+        let mut codec = WAL::<i32, Sha256>::new();
+        let insert_frame = DataFrame::Insert {
+            propose_id: ProposeId(1, 2),
+            cmd: Arc::new(1),
+        };
+
+        let remove_frame = DataFrame::Remove(ProposeId(3, 4));
+        let mut encoded = codec.encode(vec![insert_frame]).unwrap();
+        encoded.extend_from_slice(&codec.encode(vec![remove_frame]).unwrap());
+
+        let (insert_frame_get, len) = codec.decode(&encoded).unwrap();
+        let (remove_frame_get, _) = codec.decode(&encoded[len..]).unwrap();
+        let DataFrame::Insert {
+            propose_id,
+            ref cmd,
+        } = insert_frame_get[0]
+        else {
+            panic!("frame should be type: DataFrame::Insert");
+        };
+
+        let DataFrame::Remove(propose_id_remove) = remove_frame_get[0] else {
+            panic!("frame should be type: DataFrame::Remove");
+        };
+
+        assert_eq!(propose_id, ProposeId(1, 2));
+        assert_eq!(*cmd.as_ref(), 1);
+        assert_eq!(propose_id_remove, ProposeId(3, 4));
+    }
+
+    #[tokio::test]
+    async fn frame_zero_write_will_be_detected() {
+        let mut codec = WAL::<i32, Sha256>::new();
+        let insert_frame = DataFrame::Insert {
+            propose_id: ProposeId(1, 2),
+            cmd: Arc::new(1),
+        };
+        let mut encoded = codec.encode(vec![insert_frame]).unwrap();
+        encoded[0] = 0;
+
+        let err = codec.decode(&encoded).unwrap_err();
+        assert!(matches!(err, WALError::MaybeEnded), "error {err} not match");
+    }
+
+    #[tokio::test]
+    async fn frame_corrupt_will_be_detected() {
+        let mut codec = WAL::<i32, Sha256>::new();
+        let insert_frame = DataFrame::Insert {
+            propose_id: ProposeId(1, 2),
+            cmd: Arc::new(1),
+        };
+        let mut encoded = codec.encode(vec![insert_frame]).unwrap();
+        encoded[1] = 0;
+
+        let err = codec.decode(&encoded).unwrap_err();
+        assert!(
+            matches!(err, WALError::Corrupted(_)),
+            "error {err} not match"
+        );
+    }
+}

@@ -1,7 +1,6 @@
-use std::{path::Path, sync::Arc};
+use std::{collections::HashSet, path::Path, sync::Arc};
 
 use curp_test_utils::test_cmd::TestCommand;
-use tempfile::TempDir;
 
 use crate::rpc::{PoolEntry, ProposeId};
 
@@ -47,13 +46,13 @@ fn wal_insert_remove_in_different_thread_is_ok() {
     let handle = std::thread::spawn(move || {
         let mut gen = EntryGenerator::new();
         for e in gen.take(NUM_ENTRIES) {
-            wal.insert(vec![e]);
+            wal.insert(vec![e]).unwrap();
         }
     });
 
     let mut gen = EntryGenerator::new();
     for e in gen.take(NUM_ENTRIES) {
-        wal_c.remove(vec![e.id]);
+        wal_c.remove(vec![e.id]).unwrap();
     }
     handle.join().unwrap();
 }
@@ -79,7 +78,6 @@ fn wal_should_recover_commute_cmds() {
     const NUM_ENTRIES: usize = 1000;
     const INSERT_CHUNK_SIZE: usize = 10;
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut gen = EntryGenerator::new();
     let wal = init_wal(&temp_dir, &[]);
     let cmds = vec![
         TestCommand::new_put(vec![0], 0),
@@ -124,7 +122,25 @@ fn wal_insert_remove_then_recover_is_ok() {
 }
 
 #[test]
-fn wal_gc_is_ok() {}
+fn wal_gc_is_ok() {
+    const NUM_ENTRIES: usize = 1000;
+    const INSERT_CHUNK_SIZE: usize = 10;
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let mut gen = EntryGenerator::new();
+    let wal = init_wal(&tmp_dir, &[]);
+
+    let entries = gen.take(NUM_ENTRIES);
+    for chunk in entries.chunks_exact(INSERT_CHUNK_SIZE) {
+        wal.insert(chunk.to_vec()).unwrap();
+    }
+    let ids = wal.insert_segment_ids();
+
+    let to_gc: HashSet<_> = ids.iter().take(10).flatten().collect();
+    let num = to_gc.len();
+    wal.gc(|id| to_gc.contains(id)).unwrap();
+    drop(wal);
+    let _wal = init_wal(&tmp_dir, &entries[num..]);
+}
 
 fn init_wal(
     dir: impl AsRef<Path>,

@@ -8,7 +8,6 @@ use std::{
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use itertools::Itertools;
 use sha2::Sha256;
-use tracing::error;
 use utils::wal::{
     framed::{Decoder, Encoder},
     get_checksum, parse_u64, validate_data, LockedFile,
@@ -57,7 +56,7 @@ pub(super) struct Segment<T, Codec> {
     /// Codec of this segment
     codec: Codec,
     /// Type of this Segment
-    r#type: T,
+    _type: T,
 }
 
 impl<T, Codec> Segment<T, Codec>
@@ -88,7 +87,7 @@ where
             size: 0,
             propose_ids: HashSet::new(),
             codec,
-            r#type,
+            _type: r#type,
         })
     }
 
@@ -114,7 +113,7 @@ where
             size,
             propose_ids: HashSet::new(),
             codec,
-            r#type,
+            _type: r#type,
         })
     }
 
@@ -237,19 +236,19 @@ impl<T, Codec> Segment<T, Codec> {
         Ok(frames)
     }
 
-    /// Gets all propose ids stored in this WAL
-    pub(super) fn propose_ids(&self) -> Vec<ProposeId> {
-        self.propose_ids.clone().into_iter().collect()
+    /// GC invalid propose ids
+    pub(super) fn gc<F>(&mut self, check_fn: F)
+    where
+        F: Fn(&ProposeId) -> bool,
+    {
+        self.propose_ids.retain(|id| !check_fn(id));
     }
 
-    /// Remove invalid propose ids
-    ///
-    /// Returns `true` if this segment is obsolete and can be removed
-    pub(super) fn invalidate_propose_ids(&mut self, propose_ids: &[ProposeId]) -> bool {
+    /// Removes invalid propose ids
+    pub(super) fn remove_propose_ids(&mut self, propose_ids: &[ProposeId]) {
         for id in propose_ids {
             let _ignore = self.propose_ids.remove(id);
         }
-        self.is_obsolete()
     }
 
     /// Returns `true` if this segment is obsolete and can be removed
@@ -270,6 +269,11 @@ impl<T, Codec> Segment<T, Codec> {
     /// Gets the file path of this segment
     pub(super) fn path(&self) -> &Path {
         self.path.as_path()
+    }
+
+    /// Gets all propose ids stored in this WAL
+    pub(super) fn propose_ids(&self) -> Vec<ProposeId> {
+        self.propose_ids.clone().into_iter().collect()
     }
 }
 
@@ -329,5 +333,61 @@ impl<Codec> ToDrop<Codec> {
             ToDrop::Insert(ref seg) => seg.path(),
             ToDrop::Remove(ref seg) => seg.path(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::server::sp_wal::codec;
+
+    type TestSeg = Segment<Insert, codec::WAL<i32, Sha256>>;
+
+    #[test]
+    fn gen_parse_header_is_correct() {
+        fn corrupt(mut header: Vec<u8>, pos: usize) -> Vec<u8> {
+            header[pos] ^= 1;
+            header
+        }
+        for id in 0..100 {
+            let header = TestSeg::gen_header(id);
+            let id_parsed = TestSeg::parse_header(&header).unwrap();
+            assert_eq!(id, id_parsed);
+            for pos in 0..8 * 2 {
+                assert!(TestSeg::parse_header(&corrupt(header.clone(), pos)).is_err());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn segment_log_recovery_is_ok() {
+        const SEGMENT_ID: u64 = 1;
+        const SIZE_LIMIT: u64 = 5;
+        let dir = tempfile::tempdir().unwrap();
+        let mut tmp_path = dir.path().to_path_buf();
+        tmp_path.push("test.tmp");
+        let segment_name = TestSeg::segment_name(SEGMENT_ID);
+        let mut wal_path = dir.path().to_path_buf();
+        wal_path.push(segment_name);
+        let file = LockedFile::open_rw(&tmp_path).unwrap();
+        let mut segment =
+            TestSeg::create(file, SEGMENT_ID, SIZE_LIMIT, codec::WAL::new(), Insert).unwrap();
+
+        let frames: Vec<_> = (0..100)
+            .map(|i| DataFrame::Insert {
+                propose_id: ProposeId(i, 2),
+                cmd: Arc::new(i as i32),
+            })
+            .collect();
+        segment.write_sync(frames.clone()).unwrap();
+
+        drop(segment);
+
+        let file = LockedFile::open_rw(wal_path).unwrap();
+        let mut segment = TestSeg::open(file, SIZE_LIMIT, codec::WAL::new(), Insert).unwrap();
+        let recovered: Vec<_> = segment.recover().unwrap();
+        assert_eq!(frames, recovered);
     }
 }

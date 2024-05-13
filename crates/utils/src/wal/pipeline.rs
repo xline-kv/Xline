@@ -115,9 +115,18 @@ impl FilePipeline {
     fn clean_up(dir: &PathBuf) -> io::Result<()> {
         for result in std::fs::read_dir(dir)? {
             let file = result?;
-            if let Some(filename) = file.file_name().to_str() {
-                if filename.ends_with(TEMP_FILE_EXT) {
-                    std::fs::remove_file(file.path())?;
+            if file
+                .file_name()
+                .to_str()
+                .map(|fname| fname.ends_with(TEMP_FILE_EXT))
+                .unwrap_or(false)
+            {
+                if let Err(err) = std::fs::remove_file(file.path()) {
+                    // The file has already been deleted, continue
+                    if matches!(err.kind(), io::ErrorKind::NotFound) {
+                        continue;
+                    }
+                    return Err(err);
                 }
             }
         }
@@ -161,7 +170,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut pipeline = FilePipeline::new(dir.as_ref().into(), file_size).unwrap();
 
-        let check_size = |mut file: LockedFile| {
+        let check_size = |file: LockedFile| {
             let file = file.into_std();
             assert_eq!(file.metadata().unwrap().len(), file_size,);
         };
