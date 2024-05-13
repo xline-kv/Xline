@@ -15,4 +15,4 @@ updates:
     interval: "weekly"
   labels:
     - "dependencies"
-  open-pull-requests-limit: 10
+  open-pull-requests-limit: 3

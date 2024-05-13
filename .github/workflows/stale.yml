@@ -26,6 +26,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Auto unassign stale assignments
-      uses: JasonEtco/slash-assign-action@v1
+      uses: JasonEtco/slash-assign-action@v0.0.3
       with:
         required_label: 'good-first-issue'
