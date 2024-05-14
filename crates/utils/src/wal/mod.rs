@@ -24,6 +24,11 @@ pub struct LockedFile {
 
 impl LockedFile {
     /// Opens the file in read and append mode
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if file operations fail.
+    #[inline]
     pub fn open_rw(path: impl AsRef<Path>) -> io::Result<Self> {
         let file = OpenOptions::new()
             .create(true)
@@ -39,6 +44,11 @@ impl LockedFile {
     }
 
     /// Pre-allocates the file
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if file operations fail.
+    #[inline]
     pub fn preallocate(&mut self, size: u64) -> io::Result<()> {
         if size == 0 {
             return Ok(());
@@ -48,6 +58,8 @@ impl LockedFile {
     }
 
     /// Gets the path of this file
+    #[inline]
+    #[must_use]
     pub fn path(&self) -> PathBuf {
         self.path.clone()
     }
@@ -55,6 +67,11 @@ impl LockedFile {
     /// Renames the current file
     ///
     /// We will discard this file if the rename has failed
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if file operations fail.
+    #[inline]
     pub fn rename(mut self, new_name: impl AsRef<Path>) -> io::Result<Self> {
         let mut new_path = parent_dir(&self.path);
         new_path.push(new_name.as_ref());
@@ -68,6 +85,8 @@ impl LockedFile {
     }
 
     /// Converts self to std file
+    #[inline]
+    #[must_use]
     pub fn into_std(self) -> StdFile {
         let mut this = std::mem::ManuallyDrop::new(self);
         this.file
@@ -84,6 +103,7 @@ impl LockedFile {
 }
 
 impl Drop for LockedFile {
+    #[inline]
     fn drop(&mut self) {
         if self.file.is_some() && is_exist(self.path()) {
             let _ignore = std::fs::remove_file(self.path());
@@ -91,8 +111,13 @@ impl Drop for LockedFile {
     }
 }
 
-/// Gets the all files with the extension under the given folder
-pub fn get_file_paths_with_ext(dir: impl AsRef<Path>, ext: &str) -> io::Result<Vec<PathBuf>> {
+/// Gets the all files with the extension under the given folder.
+///
+/// # Errors
+///
+/// This function will return an error if failed to read the given directory.
+#[inline]
+pub fn get_file_paths_with_ext<A: AsRef<Path>>(dir: A, ext: &str) -> io::Result<Vec<PathBuf>> {
     let mut files = vec![];
     for result in std::fs::read_dir(dir)? {
         let file = result?;
@@ -106,14 +131,20 @@ pub fn get_file_paths_with_ext(dir: impl AsRef<Path>, ext: &str) -> io::Result<V
 }
 
 /// Gets the parent dir
-pub fn parent_dir(dir: impl AsRef<Path>) -> PathBuf {
+#[inline]
+pub fn parent_dir<A: AsRef<Path>>(dir: A) -> PathBuf {
     let mut parent = PathBuf::from(dir.as_ref());
     let _ignore = parent.pop();
     parent
 }
 
 /// Fsyncs the parent directory
-pub fn sync_parent_dir(dir: impl AsRef<Path>) -> io::Result<()> {
+///
+/// # Errors
+///
+/// This function will return an error if directory operations fail.
+#[inline]
+pub fn sync_parent_dir<A: AsRef<Path>>(dir: A) -> io::Result<()> {
     let parent_dir = parent_dir(&dir);
     let parent = std::fs::File::open(parent_dir)?;
     parent.sync_all()?;
@@ -122,6 +153,8 @@ pub fn sync_parent_dir(dir: impl AsRef<Path>) -> io::Result<()> {
 }
 
 /// Gets the checksum of the slice, we use Sha256 as the hash function
+#[inline]
+#[must_use]
 pub fn get_checksum<H: Digest>(data: &[u8]) -> Output<H> {
     let mut hasher = H::new();
     hasher.update(data);
@@ -129,16 +162,26 @@ pub fn get_checksum<H: Digest>(data: &[u8]) -> Output<H> {
 }
 
 /// Validates the the data with the given checksum
+#[inline]
+#[must_use]
 pub fn validate_data<H: Digest>(data: &[u8], checksum: &[u8]) -> bool {
     AsRef::<[u8]>::as_ref(&get_checksum::<H>(data)) == checksum
 }
 
 /// Checks whether the file exist
-pub fn is_exist(path: impl AsRef<Path>) -> bool {
+#[inline]
+#[must_use]
+pub fn is_exist<A: AsRef<Path>>(path: A) -> bool {
     std::fs::metadata(path).is_ok()
 }
 
 /// Parses a u64 from u8 slice
+///
+/// # Panics
+///
+/// Panics if `bytes_le` is not exactly 8 bytes long
+#[inline]
+#[must_use]
 pub fn parse_u64(bytes_le: &[u8]) -> u64 {
     assert_eq!(bytes_le.len(), 8, "The slice passed should be 8 bytes long");
     u64::from_le_bytes(

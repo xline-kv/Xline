@@ -29,6 +29,7 @@ const WAL_VERSION: u8 = 0x00;
 /// The size of wal file header in bytes
 const WAL_HEADER_SIZE: usize = 48;
 
+/// Segment attributes
 pub(super) trait SegmentAttr {
     /// Segment file extension
     fn ext() -> String;
@@ -72,9 +73,9 @@ where
         r#type: T,
     ) -> io::Result<Self> {
         let segment_name = Self::segment_name(segment_id);
-        let lfile = tmp_file.rename(segment_name)?;
-        let path = lfile.path();
-        let mut file = lfile.into_std();
+        let locked_file = tmp_file.rename(segment_name)?;
+        let path = locked_file.path();
+        let mut file = locked_file.into_std();
         file.write_all(&Self::gen_header(segment_id))?;
         file.flush()?;
         file.sync_data()?;
@@ -93,16 +94,16 @@ where
 
     /// Open an existing WAL segment file
     pub(super) fn open(
-        lfile: LockedFile,
+        locked_file: LockedFile,
         size_limit: u64,
         codec: Codec,
         r#type: T,
     ) -> Result<Self, WALError> {
-        let path = lfile.path();
-        let mut file = lfile.into_std();
+        let path = locked_file.path();
+        let mut file = locked_file.into_std();
         let size = file.metadata()?.len();
         let mut buf = vec![0; WAL_HEADER_SIZE];
-        let _ignore = file.read_exact(&mut buf)?;
+        file.read_exact(&mut buf)?;
         let segment_id = Self::parse_header(&buf)?;
 
         Ok(Self {
@@ -194,6 +195,7 @@ impl<T, Codec> Segment<T, Codec> {
     }
 
     /// Gets all items from the segment
+    #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)] // Operations are checked
     pub(super) fn get_all<Item>(&mut self) -> Result<Vec<Item>, WALError>
     where
         Codec: Decoder<Item = Item, Error = WALError>,
@@ -297,11 +299,12 @@ impl<T, Codec> Ord for Segment<T, Codec> {
     }
 }
 
+/// Insert Segment type
 pub(super) struct Insert;
 
 impl SegmentAttr for Insert {
     fn ext() -> String {
-        ".inswal".to_string()
+        ".inswal".to_owned()
     }
 
     fn r#type() -> Insert {
@@ -309,11 +312,12 @@ impl SegmentAttr for Insert {
     }
 }
 
+/// Remove Segment type
 pub(super) struct Remove;
 
 impl SegmentAttr for Remove {
     fn ext() -> String {
-        ".rmwal".to_string()
+        ".rmwal".to_owned()
     }
 
     fn r#type() -> Remove {
@@ -321,8 +325,11 @@ impl SegmentAttr for Remove {
     }
 }
 
+/// `Insert` or `Remove` segment send to dropping task
 pub(super) enum ToDrop<Codec> {
+    /// Insert
     Insert(Segment<Insert, Codec>),
+    /// Remove
     Remove(Segment<Remove, Codec>),
 }
 

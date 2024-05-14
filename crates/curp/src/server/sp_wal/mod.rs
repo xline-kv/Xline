@@ -121,16 +121,20 @@ where
     }
 
     /// Keeps only commute commands
+    #[allow(
+        clippy::indexing_slicing, // Slicings are checked
+        clippy::pattern_type_mismatch, // Can't be fixed
+    )]
     fn keep_commute_cmds(mut entries: Vec<PoolEntry<C>>) -> Vec<PoolEntry<C>> {
         let commute = |entry: &PoolEntry<C>, others: &[PoolEntry<C>]| {
-            !others.iter().any(|e| e.is_conflict(&entry))
+            !others.iter().any(|e| e.is_conflict(entry))
         };
         // start from last element
         entries.reverse();
         let keep = entries
             .iter()
             .enumerate()
-            .take_while(|(i, ref e)| commute(*e, &entries[..*i]))
+            .take_while(|(i, e)| commute(e, &entries[..*i]))
             .count();
         entries.drain(..keep).collect()
     }
@@ -141,18 +145,22 @@ impl<C: Command> PoolWALOps<C> for SpeculativePoolWAL<C> {
         self.insert.lock().insert(entries)
     }
 
+    #[allow(clippy::unwrap_used, clippy::unwrap_in_result)]
     fn remove(&self, propose_ids: Vec<ProposeId>) -> io::Result<()> {
-        let removed = self.insert.lock().remove_propose_ids(&propose_ids)?;
-        let removed_ids: Vec<_> = removed.iter().map(Segment::propose_ids).flatten().collect();
-        for segment in removed {
+        let removed_insert_ids = self.insert.lock().remove_propose_ids(&propose_ids)?;
+        let removed_ids: Vec<_> = removed_insert_ids
+            .iter()
+            .flat_map(Segment::propose_ids)
+            .collect();
+        for segment in removed_insert_ids {
             if let Err(e) = self.drop_tx.as_ref().unwrap().send(ToDrop::Insert(segment)) {
                 error!("Failed to send segment to dropping task: {e}");
             }
         }
 
         let mut remove_l = self.remove.lock();
-        let removed = remove_l.remove_propose_ids(&removed_ids)?;
-        for segment in removed {
+        let removed_remove_ids = remove_l.remove_propose_ids(&removed_ids)?;
+        for segment in removed_remove_ids {
             if let Err(e) = self.drop_tx.as_ref().unwrap().send(ToDrop::Remove(segment)) {
                 error!("Failed to send segment to dropping task: {e}");
             }
@@ -172,6 +180,7 @@ impl<C: Command> PoolWALOps<C> for SpeculativePoolWAL<C> {
         Ok(Self::keep_commute_cmds(entries))
     }
 
+    #[allow(clippy::unwrap_used, clippy::unwrap_in_result)]
     fn gc<F>(&self, check_fn: F) -> io::Result<()>
     where
         F: Fn(&ProposeId) -> bool,
@@ -219,6 +228,8 @@ where
     }
 }
 
+/// The WAL type
+#[allow(clippy::upper_case_acronyms)]
 struct WAL<T, C> {
     /// WAL segments
     segments: Vec<Segment<T, WALCodec<C>>>,
@@ -278,7 +289,7 @@ where
             .map(Segment::recover::<C>)
             .collect::<Result<_>>()?;
 
-        self.next_segment_id = segments.last().map(Segment::segment_id).unwrap_or(0);
+        self.next_segment_id = segments.last().map_or(0, Segment::segment_id);
         self.segments = segments;
         self.open_new_segment()?;
 

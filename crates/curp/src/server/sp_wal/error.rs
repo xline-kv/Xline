@@ -31,6 +31,7 @@ pub(crate) enum CorruptType {
 }
 
 impl From<WALError> for io::Error {
+    #[inline]
     fn from(err: WALError) -> Self {
         match err {
             WALError::MaybeEnded => unreachable!("Should not call on WALError::MaybeEnded"),

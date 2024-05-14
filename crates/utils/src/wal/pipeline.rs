@@ -15,6 +15,7 @@ use super::LockedFile;
 const TEMP_FILE_EXT: &str = ".tmp";
 
 /// The file pipeline, used for pipelining the creation of temp file
+#[allow(clippy::module_name_repetitions)]
 pub struct FilePipeline {
     /// The directory where the temp files are created
     dir: PathBuf,
@@ -31,6 +32,11 @@ pub struct FilePipeline {
 
 impl FilePipeline {
     /// Creates a new `FilePipeline`
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if failed to clean up the given directory.
+    #[inline]
     pub fn new(dir: PathBuf, file_size: u64) -> io::Result<Self> {
         Self::clean_up(&dir)?;
 
@@ -98,6 +104,7 @@ impl FilePipeline {
     }
 
     /// Stops the pipeline
+    #[inline]
     pub fn stop(&mut self) {
         self.stopped.store(true, Ordering::Relaxed);
     }
@@ -118,8 +125,7 @@ impl FilePipeline {
             if file
                 .file_name()
                 .to_str()
-                .map(|fname| fname.ends_with(TEMP_FILE_EXT))
-                .unwrap_or(false)
+                .is_some_and(|fname| fname.ends_with(TEMP_FILE_EXT))
             {
                 if let Err(err) = std::fs::remove_file(file.path()) {
                     // The file has already been deleted, continue
@@ -135,6 +141,7 @@ impl FilePipeline {
 }
 
 impl Drop for FilePipeline {
+    #[inline]
     fn drop(&mut self) {
         self.stop();
     }
@@ -143,6 +150,7 @@ impl Drop for FilePipeline {
 impl Iterator for FilePipeline {
     type Item = io::Result<LockedFile>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.stopped.load(Ordering::Relaxed) {
             return None;
@@ -151,11 +159,14 @@ impl Iterator for FilePipeline {
     }
 }
 
+#[allow(clippy::missing_fields_in_debug)] // `flume::IntoIter` does not implement `Debug`
 impl std::fmt::Debug for FilePipeline {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FilePipeline")
             .field("dir", &self.dir)
             .field("file_size", &self.file_size)
+            .field("stopped", &self.stopped)
             .finish()
     }
 }
