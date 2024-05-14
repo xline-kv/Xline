@@ -99,7 +99,7 @@ mod tests {
     use crate::{
         config::{
             client_config::{
-                default_client_wait_synced_timeout, default_fixed_backoff, default_propose_timeout,
+                default_client_id_keep_alive_interval, default_client_wait_synced_timeout, default_fixed_backoff, default_propose_timeout,
                 default_retry_count, ClientConfig,
             },
             compact_config::AutoCompactConfig,
@@ -175,8 +175,8 @@ mod tests {
             auth_private_key = './private_key.pem'
 
             [tls]
-            server_cert_path = './cert.pem'
-            server_key_path = './key.pem'
+            peer_cert_path = './cert.pem'
+            peer_key_path = './key.pem'
             client_ca_cert_path = './ca.pem'
 
             [metrics]
@@ -263,13 +263,13 @@ mod tests {
 
         assert_eq!(
             config.compact,
-            CompactConfig::new(
-                123,
-                Duration::from_millis(5),
-                Some(AutoCompactConfig::Periodic(Duration::from_secs(
+            CompactConfig {
+                compact_batch_size: 123,
+                compact_sleep_interval: Duration::from_millis(5),
+                auto_compact_config: Some(AutoCompactConfig::Periodic(Duration::from_secs(
                     10 * 60 * 60
                 )))
-            )
+            }
         );
 
         assert_eq!(
@@ -283,8 +283,8 @@ mod tests {
         assert_eq!(
             config.tls,
             TlsConfig {
-                server_cert_path: Some(PathBuf::from("./cert.pem")),
-                server_key_path: Some(PathBuf::from("./key.pem")),
+                peer_cert_path: Some(PathBuf::from("./cert.pem")),
+                peer_key_path: Some(PathBuf::from("./key.pem")),
                 client_ca_cert_path: Some(PathBuf::from("./ca.pem")),
                 ..Default::default()
             }

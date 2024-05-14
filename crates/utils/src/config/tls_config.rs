@@ -49,7 +49,7 @@ impl TlsConfig {
             client_key_path,
         }
     }
-    
+
     /// Whether the server tls is enabled
     #[must_use]
     #[inline]

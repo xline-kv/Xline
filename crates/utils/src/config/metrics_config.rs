@@ -8,27 +8,27 @@ pub struct MetricsConfig {
    /// Enable or not
    #[getset(get = "pub")]
    #[serde(default = "default_metrics_enable")]
-   enable: bool,
+   pub enable: bool,
    /// The http port to expose
    #[getset(get = "pub")]
    #[serde(default = "default_metrics_port")]
-   port: u16,
+   pub port: u16,
    /// The http path to expose
    #[getset(get = "pub")]
    #[serde(default = "default_metrics_path")]
-   path: String,
+   pub path: String,
    /// Enable push or not
    #[getset(get = "pub")]
    #[serde(default = "default_metrics_push")]
-   push: bool,
+   pub push: bool,
    /// Push endpoint
    #[getset(get = "pub")]
    #[serde(default = "default_metrics_push_endpoint")]
-   push_endpoint: String,
+   pub push_endpoint: String,
    /// Push protocol
    #[getset(get = "pub")]
    #[serde(with = "protocol_format", default = "default_metrics_push_protocol")]
-   push_protocol: MetricsPushProtocol,
+   pub push_protocol: MetricsPushProtocol,
 }
 
 impl MetricsConfig {
