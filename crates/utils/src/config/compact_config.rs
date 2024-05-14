@@ -83,7 +83,7 @@ pub const fn default_compact_sleep_interval() -> Duration {
 pub mod duration_format {
     use std::time::Duration;
 
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use crate::parse_duration;
 

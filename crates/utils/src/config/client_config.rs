@@ -39,6 +39,14 @@ pub struct ClientConfig {
     #[getset(get = "pub")]
     #[serde(default = "default_fixed_backoff")]
     fixed_backoff: bool,
+
+     /// Curp client keep client id alive interval
+    #[getset(get = "pub")]
+    #[serde(
+        with = "duration_format",
+        default = "default_client_id_keep_alive_interval"
+    )]
+    keep_alive_interval: Duration,
 }
 
 impl ClientConfig {
@@ -56,6 +64,7 @@ impl ClientConfig {
         max_retry_timeout: Duration,
         retry_count: usize,
         fixed_backoff: bool,
+        keep_alive_interval: Duration,
     ) -> Self {
         assert!(
             initial_retry_timeout <= max_retry_timeout,
@@ -68,6 +77,7 @@ impl ClientConfig {
             max_retry_timeout,
             retry_count,
             fixed_backoff,
+            keep_alive_interval,
         }
     }
 }
@@ -82,6 +92,7 @@ impl Default for ClientConfig {
             max_retry_timeout: default_max_retry_timeout(),
             retry_count: default_retry_count(),
             fixed_backoff: default_fixed_backoff(),
+            keep_alive_interval: default_client_id_keep_alive_interval(),
         }
     }
 }
@@ -97,6 +108,14 @@ pub const fn default_client_wait_synced_timeout() -> Duration {
 #[must_use]
 #[inline]
 pub const fn default_propose_timeout() -> Duration {
+    Duration::from_secs(1)
+}
+
+
+/// default client id keep alive interval
+#[must_use]
+#[inline]
+pub const fn default_client_id_keep_alive_interval() -> Duration {
     Duration::from_secs(1)
 }
 
@@ -141,7 +160,7 @@ pub const fn default_fixed_backoff() -> bool {
 pub mod duration_format {
     use std::time::Duration;
 
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use crate::parse_duration;
 

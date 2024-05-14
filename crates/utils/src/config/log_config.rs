@@ -39,7 +39,7 @@ impl Default for LogConfig {
 
 /// `LevelConfig` deserialization formatter
 pub mod level_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use super::LevelConfig;
     use crate::parse_log_level;
@@ -102,7 +102,7 @@ impl std::fmt::Display for RotationConfig {
 
 /// `RotationConfig` deserialization formatter
 pub mod rotation_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use super::RotationConfig;
     use crate::parse_rotation;

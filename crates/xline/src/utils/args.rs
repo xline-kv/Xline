@@ -5,7 +5,7 @@ use clap::Parser;
 use tokio::fs;
 use utils::{
     config::{
-        auth_config::AuthConfig, client_config::default_client_wait_synced_timeout,
+        auth_config::AuthConfig, client_config::default_client_wait_synced_timeout, client_config::default_client_id_keep_alive_interval,
         client_config::default_initial_retry_timeout, client_config::default_max_retry_timeout,
         client_config::default_propose_timeout, client_config::default_retry_count,
         client_config::ClientConfig, cluster_config::ClusterConfig,

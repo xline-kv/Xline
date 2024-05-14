@@ -133,7 +133,7 @@ pub const fn default_retry_count() -> usize {
 #[must_use]
 #[inline]
 pub const fn default_rpc_timeout() -> Duration {
-    Duration::from_millis(50)
+    Duration::from_millis(150)
 }
 
 /// default batch timeout
@@ -190,7 +190,7 @@ pub const fn default_log_entries_cap() -> usize {
 pub mod duration_format {
     use std::time::Duration;
 
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use crate::parse_duration;
 
@@ -207,7 +207,7 @@ pub mod duration_format {
 
 /// batch size deserialization formatter
 pub mod bytes_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use crate::parse_batch_bytes;
 

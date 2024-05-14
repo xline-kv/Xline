@@ -122,7 +122,7 @@ pub enum InitialClusterState {
 
 /// `InitialClusterState` deserialization formatter
 pub mod state_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use super::InitialClusterState;
     use crate::parse_state;

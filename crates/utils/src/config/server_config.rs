@@ -90,7 +90,7 @@ pub const fn default_watch_progress_notify_interval() -> Duration {
 pub mod duration_format {
     use std::time::Duration;
 
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use crate::parse_duration;
 
