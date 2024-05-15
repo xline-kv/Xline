@@ -1,6 +1,6 @@
 use std::{
     pin::Pin,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, Ordering}
 };
 
 use curp_external_api::cmd::Command;
