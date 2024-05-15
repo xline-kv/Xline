@@ -17,6 +17,7 @@ curp-external-api = { path = "../curp-external-api" }
 itertools = "0.13"
 prost = "0.12.3"
 serde = { version = "1.0.204", features = ["derive"] }
+serde_bytes = "0.11.14"
 thiserror = "1.0.61"
 tonic = { version = "0.4.2", package = "madsim-tonic" }
 utils = { path = "../utils", features = ["parking_lot"] }
