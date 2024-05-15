@@ -1,5 +1,3 @@
-use std::{cmp::Reverse, ops::Add, time::Duration};
-
 use curp_test_utils::{mock_role_change, test_cmd::TestCommand, TestRoleChange, TEST_CLIENT_ID};
 use test_macros::abort_on_panic;
 use tokio::time::{sleep, Instant};
@@ -688,7 +686,7 @@ fn add_node_should_add_new_node_to_curp() {
     let old_cluster = curp.cluster().clone();
     let changes = vec![ConfChange::add(1, vec!["http://127.0.0.1:4567".to_owned()])];
     assert!(curp.check_new_config(&changes).is_ok());
-    let infos = curp.apply_conf_change(changes.clone());
+    let infos = curp.apply_conf_change(changes.clone()).unwrap();
     assert!(curp.contains(1));
     curp.fallback_conf_change(changes, infos.0, infos.1, infos.2);
     let cluster_after_fallback = curp.cluster();
@@ -722,7 +720,7 @@ fn add_learner_node_and_promote_should_success() {
 
     let changes = vec![ConfChange::promote(1)];
     assert!(curp.check_new_config(&changes).is_ok());
-    let infos = curp.apply_conf_change(changes.clone());
+    let infos = curp.apply_conf_change(changes.clone()).unwrap();
     assert!(curp.check_learner(1, false));
     curp.fallback_conf_change(changes, infos.0, infos.1, infos.2);
     assert!(curp.check_learner(1, true));
@@ -752,7 +750,7 @@ fn remove_node_should_remove_node_from_curp() {
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
     let changes = vec![ConfChange::remove(follower_id)];
     assert!(curp.check_new_config(&changes).is_ok());
-    let infos = curp.apply_conf_change(changes.clone());
+    let infos = curp.apply_conf_change(changes.clone()).unwrap();
     assert_eq!(infos, (vec!["S1".to_owned()], "S1".to_owned(), false));
     assert!(!curp.contains(follower_id));
     curp.fallback_conf_change(changes, infos.0, infos.1, infos.2);
@@ -800,7 +798,7 @@ fn update_node_should_update_the_address_of_node() {
         vec!["http://127.0.0.1:4567".to_owned()],
     )];
     assert!(curp.check_new_config(&changes).is_ok());
-    let infos = curp.apply_conf_change(changes.clone());
+    let infos = curp.apply_conf_change(changes.clone()).unwrap();
     assert_eq!(infos, (vec!["S1".to_owned()], String::new(), false));
     assert_eq!(
         curp.cluster().peer_urls(follower_id),
