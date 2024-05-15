@@ -1156,6 +1156,11 @@ impl AuthStore {
         self.create_permission_cache()?;
         Ok(())
     }
+
+    /// Gets the auth revision generator
+    pub(crate) fn revision_gen(&self) -> Arc<RevisionNumberGenerator> {
+        Arc::clone(&self.revision)
+    }
 }
 
 /// Get common name from tonic request
@@ -1164,13 +1169,6 @@ fn get_cn<T>(request: &tonic::Request<T>) -> Option<String> {
     let cert_der = chain.first()?;
     let cert = x509_certificate::X509Certificate::from_der(cert_der.as_ref()).ok()?;
     cert.subject_common_name()
-}
-
-impl AuthStore {
-    /// Gets the auth revision generator
-    pub(crate) fn revision_gen(&self) -> Arc<RevisionNumberGenerator> {
-        Arc::clone(&self.revision)
-    }
 }
 
 #[cfg(test)]
