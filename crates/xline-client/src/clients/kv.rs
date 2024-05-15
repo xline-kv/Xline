@@ -135,11 +135,12 @@ impl KvClient {
     /// ```
     #[inline]
     pub async fn range(&self, request: RangeRequest) -> Result<RangeResponse> {
+        let fast_path = request.fast_path;
         let request = RequestWrapper::from(xlineapi::RangeRequest::from(request));
         let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client
-            .propose(&cmd, self.token.as_ref(), true)
+            .propose(&cmd, self.token.as_ref(), fast_path)
             .await??;
         Ok(cmd_res.into_inner().into())
     }
@@ -218,17 +219,17 @@ impl KvClient {
     /// ```
     #[inline]
     pub async fn txn(&self, request: TxnRequest) -> Result<TxnResponse> {
+        let fast_path = request.fast_path;
         let request = RequestWrapper::from(xlineapi::TxnRequest::from(request));
         let cmd = Command::new(request);
-        let (cmd_res, Some(sync_res)) = self
+        let (cmd_res, sync_res) = self
             .curp_client
-            .propose(&cmd, self.token.as_ref(), false)
-            .await??
-        else {
-            unreachable!("sync_res is always Some when use_fast_path is false");
-        };
+            .propose(&cmd, self.token.as_ref(), fast_path)
+            .await??;
         let mut res_wrapper = cmd_res.into_inner();
-        res_wrapper.update_revision(sync_res.revision());
+        if let Some(res) = sync_res {
+            res_wrapper.update_revision(res.revision());
+        }
         Ok(res_wrapper.into())
     }
 
@@ -282,7 +283,7 @@ impl KvClient {
         let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client
-            .propose(&cmd, self.token.as_ref(), true)
+            .propose(&cmd, self.token.as_ref(), false)
             .await??;
         Ok(cmd_res.into_inner().into())
     }
