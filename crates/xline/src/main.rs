@@ -151,6 +151,10 @@ use xline::{
     utils::{init_metrics, init_subscriber, parse_config},
 };
 
+/// Use jemalloc as global allocator
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 #[tokio::main]
 #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
 async fn main() -> Result<()> {
