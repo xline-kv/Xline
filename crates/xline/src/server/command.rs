@@ -293,6 +293,7 @@ impl CommandExecutor {
         Ok((asr, er))
     }
 
+    /// After sync other type of commands
     async fn after_sync_others<T>(
         &self,
         wrapper: &RequestWrapper,
@@ -320,13 +321,13 @@ impl CommandExecutor {
             .transpose()?;
 
         let (asr, wr_ops) = match wrapper.backend() {
-            RequestBackend::Auth => self.auth_storage.after_sync(wrapper, &auth_revision)?,
+            RequestBackend::Auth => self.auth_storage.after_sync(wrapper, auth_revision)?,
             RequestBackend::Lease => {
                 self.lease_storage
-                    .after_sync(wrapper, &general_revision)
+                    .after_sync(wrapper, general_revision)
                     .await?
             }
-            RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, &general_revision),
+            RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, general_revision),
             RequestBackend::Kv => unreachable!("Should not sync kv commands"),
         };
 
@@ -377,19 +378,15 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         }
         cmds.iter()
             .map(AfterSyncCmd::cmd)
-            .map(|c| self.check_alarm(c))
-            .collect::<Result<_, _>>()?;
+            .try_for_each(|c| self.check_alarm(c))?;
         let quota_enough = cmds
             .iter()
             .map(AfterSyncCmd::cmd)
             .all(|c| self.quota_checker.check(c));
-        cmds.iter()
-            .map(AfterSyncCmd::cmd)
-            .map(|c| {
-                self.auth_storage
-                    .check_permission(c.request(), c.auth_info())
-            })
-            .collect::<Result<_, _>>()?;
+        cmds.iter().map(AfterSyncCmd::cmd).try_for_each(|c| {
+            self.auth_storage
+                .check_permission(c.request(), c.auth_info())
+        })?;
 
         let index = self.kv_storage.index();
         let index_state = index.state();
@@ -473,8 +470,7 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         snapshot: Option<(Snapshot, LogIndex)>,
     ) -> Result<(), <Command as CurpCommand>::Error> {
         let s = if let Some((snapshot, index)) = snapshot {
-            _ = self
-                .persistent
+            self.persistent
                 .write_ops(vec![WriteOp::PutAppliedIndex(index)])?;
             Some(snapshot)
         } else {
