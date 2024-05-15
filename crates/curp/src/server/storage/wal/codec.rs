@@ -274,7 +274,10 @@ impl<C> FrameEncoder for DataFrame<'_, C>
 where
     C: Serialize,
 {
-    #[allow(clippy::arithmetic_side_effects)] // The integer shift is safe
+    #[allow(
+        clippy::arithmetic_side_effects,  // The integer shift is safe
+        clippy::indexing_slicing // The slicing is checked
+    )]
     fn encode(&self) -> Vec<u8> {
         match *self {
             DataFrame::Entry(ref entry) => {
@@ -319,6 +322,10 @@ impl FrameType for CommitFrame {
 }
 
 impl FrameEncoder for CommitFrame {
+    #[allow(
+        clippy::arithmetic_side_effects,  // Add won't overflow
+        clippy::indexing_slicing // The slicing is checked
+    )]
     fn encode(&self) -> Vec<u8> {
         let header = std::iter::once(self.frame_type()).chain([0u8; 7]);
         header.chain(self.checksum.clone()).collect()
