@@ -655,14 +655,16 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, propose_id, conf_changes.clone());
         debug!("{} gets new log[{}]", self.id(), entry.index);
-        let (addrs, name, is_learner) = self.apply_conf_change(conf_changes);
+        let apply_opt = self.apply_conf_change(conf_changes);
         self.ctx
             .last_conf_change_idx
             .store(entry.index, Ordering::Release);
-        let _ig = log_w.fallback_contexts.insert(
-            entry.index,
-            FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
-        );
+        if let Some((addrs, name, is_learner)) = apply_opt {
+            let _ig = log_w.fallback_contexts.insert(
+                entry.index,
+                FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
+            );
+        }
         self.entry_process_single(&mut log_w, &entry, false, st_r.term);
 
         let log_r = RwLockWriteGuard::downgrade(log_w);
@@ -779,7 +781,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let EntryData::ConfChange(ref cc) = e.entry_data else {
                 unreachable!("cc_entry should be conf change entry");
             };
-            let (addrs, name, is_learner) = self.apply_conf_change(cc.clone());
+            let Some((addrs, name, is_learner)) = self.apply_conf_change(cc.clone()) else {
+                continue;
+            };
             let _ig = log_w.fallback_contexts.insert(
                 e.index,
                 FallbackContext::new(Arc::clone(&e), addrs, name, is_learner),
@@ -1433,7 +1437,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     pub(super) fn apply_conf_change(
         &self,
         changes: Vec<ConfChange>,
-    ) -> (Vec<String>, String, bool) {
+    ) -> Option<(Vec<String>, String, bool)> {
         assert_eq!(changes.len(), 1, "Joint consensus is not supported yet");
         let Some(conf_change) = changes.into_iter().next() else {
             unreachable!("conf change is empty");
@@ -1878,7 +1882,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Switch to a new config and return old member infos for fallback
-    fn switch_config(&self, conf_change: ConfChange) -> (Vec<String>, String, bool) {
+    ///
+    /// FIXME: The state of `ctx.cluster_info` might be inconsistent with the log. A potential
+    /// fix would be to include the entire cluster info in the conf change log entry and
+    /// overwrite `ctx.cluster_info` when switching
+    fn switch_config(&self, conf_change: ConfChange) -> Option<(Vec<String>, String, bool)> {
         let node_id = conf_change.node_id;
         let mut cst_l = self.cst.lock();
         #[allow(clippy::explicit_auto_deref)] // Avoid compiler complaint about `Dashmap::Ref` type
@@ -1891,7 +1899,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
                 let _ig = self.ctx.curp_storage.put_member(&member);
                 let m = self.ctx.cluster_info.insert(member);
-                (m.is_none(), (vec![], String::new(), is_learner))
+                (m.is_none(), Some((vec![], String::new(), is_learner)))
             }
             ConfChangeType::Remove => {
                 _ = cst_l.config.remove(node_id);
@@ -1899,16 +1907,15 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 _ = self.ctx.sync_events.remove(&node_id);
                 _ = self.ctx.connects.remove(&node_id);
                 let _ig = self.ctx.curp_storage.remove_member(node_id);
-                let m = self.ctx.cluster_info.remove(&node_id);
-                let removed_member =
-                    m.unwrap_or_else(|| unreachable!("the member should exist before remove"));
+                // The member may not exist because the node could be restarted
+                // and has fetched the newest cluster info
+                //
+                // TODO: Review all the usages of `ctx.cluster_info` to ensure all
+                // the assertions are correct.
+                let member_opt = self.ctx.cluster_info.remove(&node_id);
                 (
                     true,
-                    (
-                        removed_member.peer_urls,
-                        removed_member.name,
-                        removed_member.is_learner,
-                    ),
+                    member_opt.map(|m| (m.peer_urls, m.name, m.is_learner)),
                 )
             }
             ConfChangeType::Update => {
@@ -1922,7 +1929,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 let _ig = self.ctx.curp_storage.put_member(&*m);
                 (
                     old_addrs != conf_change.address,
-                    (old_addrs, String::new(), false),
+                    Some((old_addrs, String::new(), false)),
                 )
             }
             ConfChangeType::Promote => {
@@ -1934,24 +1941,24 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                     unreachable!("the member should exist after promote");
                 });
                 let _ig = self.ctx.curp_storage.put_member(&*m);
-                (modified, (vec![], String::new(), false))
+                (modified, Some((vec![], String::new(), false)))
             }
         };
         if modified {
             self.ctx.cluster_info.cluster_version_update();
         }
-        if self.is_leader() {
-            self.ctx
-                .change_tx
-                .send(conf_change)
-                .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
-            if self
+        self.ctx
+            .change_tx
+            .send(conf_change)
+            .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
+        // TODO: We could wrap lst inside a role checking to prevent accidental lst mutation
+        if self.is_leader()
+            && self
                 .lst
                 .get_transferee()
                 .is_some_and(|transferee| !cst_l.config.voters().contains(&transferee))
-            {
-                self.lst.reset_transferee();
-            }
+        {
+            self.lst.reset_transferee();
         }
         fallback_info
     }

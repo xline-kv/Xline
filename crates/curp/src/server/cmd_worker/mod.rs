@@ -203,6 +203,7 @@ async fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
                 }
             }
             (EntryData::SetNodeState(node_id, ref name, ref client_urls), _) => {
+                info!("setting node state: {node_id}, urls: {:?}", client_urls);
                 if let Err(e) = ce.set_last_applied(entry.index) {
                     error!("failed to set last_applied, {e}");
                     return;

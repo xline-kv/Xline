@@ -372,6 +372,8 @@ pub const fn default_server_wait_synced_timeout() -> Duration {
 }
 
 /// default initial retry timeout
+/// FIXME: etcd client has it's own retry mechanism, which may lead to nested retry timeouts.
+/// Consider bypassing for proxied etcd client requests.
 #[must_use]
 #[inline]
 pub const fn default_initial_retry_timeout() -> Duration {
