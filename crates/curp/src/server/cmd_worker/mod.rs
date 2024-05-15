@@ -144,6 +144,7 @@ async fn worker_exe<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
 }
 
 /// Cmd worker after sync handler
+#[allow(clippy::too_many_lines)] // TODO: split this to multiple fns
 async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     entry: Arc<LogEntry<C>>,
     prepare: Option<C::PR>,
@@ -161,7 +162,10 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
                 .after_sync(vec![AfterSyncCmd::new(cmd.as_ref(), false)], entry.index)
                 .await
                 .map(|res| {
-                    let (asr, _) = res.into_iter().next().unwrap();
+                    let (asr, _) = res
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| unreachable!("the asr should always be Some"));
                     asr
                 });
             let asr_ok = asr.is_ok();
