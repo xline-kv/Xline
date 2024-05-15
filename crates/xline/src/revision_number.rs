@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 /// Revision number
 #[derive(Debug)]
 pub(crate) struct RevisionNumberGenerator {
+    /// The current revision number
     current: AtomicI64,
 }
 
@@ -42,7 +43,9 @@ impl Default for RevisionNumberGenerator {
 
 /// Revision generator with temporary state
 pub(crate) struct RevisionNumberGeneratorState<'a> {
+    /// The current revision number
     current: &'a AtomicI64,
+    /// Next revision number
     next: AtomicI64,
 }
 
@@ -60,6 +63,6 @@ impl RevisionNumberGeneratorState<'_> {
     /// Commit the revision number
     pub(crate) fn commit(&self) {
         self.current
-            .store(self.next.load(Ordering::Acquire), Ordering::Release)
+            .store(self.next.load(Ordering::Acquire), Ordering::Release);
     }
 }
