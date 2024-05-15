@@ -530,7 +530,8 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         } else {
             None
         };
-        self.db.reset(s).await
+        self.db.reset(s).await?;
+        self.kv_storage.recover().await
     }
 
     async fn snapshot(&self) -> Result<Snapshot, <Command as CurpCommand>::Error> {
