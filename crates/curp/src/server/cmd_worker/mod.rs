@@ -11,12 +11,12 @@ use tracing::{debug, error, info, warn};
 use super::{
     cmd_board::CommandBoard,
     conflict::{spec_pool_new::SpeculativePool, uncommitted_pool::UncommittedPool},
+    curp_node::AfterSyncEntry,
     raw_curp::RawCurp,
 };
 use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
-    response::ResponseSender,
     role_change::RoleChange,
     rpc::{ConfChangeType, PoolEntry, ProposeResponse, SyncedResponse},
     snapshot::{Snapshot, SnapshotMeta},
@@ -41,7 +41,7 @@ fn remove_from_sp_ucp<C: Command>(
 
 /// Cmd worker execute handler
 pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
-    entry: Arc<LogEntry<C>>,
+    entry: &LogEntry<C>,
     ce: &CE,
     curp: &RawCurp<C, RC>,
 ) -> Result<<C as Command>::ER, <C as Command>::Error> {
@@ -51,7 +51,7 @@ pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         EntryData::Command(ref cmd) => {
             let er = ce.execute(cmd);
             if er.is_err() {
-                remove_from_sp_ucp(&mut sp.lock(), &mut ucp.lock(), &entry);
+                remove_from_sp_ucp(&mut sp.lock(), &mut ucp.lock(), entry);
                 ce.trigger(entry.inflight_id());
             }
             debug!(
@@ -71,8 +71,9 @@ pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
 }
 
 /// After sync cmd entries
+#[allow(clippy::pattern_type_mismatch)] // Can't be fixed
 async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
-    cmd_entries: Vec<(Arc<LogEntry<C>>, Option<Arc<ResponseSender>>)>,
+    cmd_entries: Vec<AfterSyncEntry<C>>,
     ce: &CE,
     curp: &RawCurp<C, RC>,
     sp: &Mutex<SpeculativePool<C>>,
@@ -85,8 +86,7 @@ async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     let resp_txs = cmd_entries.iter().map(|(_, tx)| tx);
     let highest_index = cmd_entries
         .last()
-        .map(|(entry, _)| entry.index)
-        .unwrap_or_else(|| unreachable!());
+        .map_or_else(|| unreachable!(), |(entry, _)| entry.index);
     let cmds: Vec<_> = cmd_entries
         .iter()
         .map(|(entry, tx)| {
@@ -95,7 +95,11 @@ async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             };
             AfterSyncCmd::new(
                 cmd.as_ref(),
-                tx.as_ref().map_or(false, |tx| tx.is_conflict()),
+                // If the response sender is absent, it indicates that a new leader
+                // has been elected, and the entry has been recovered from the log
+                // or the speculative pool. In such cases, these entries needs to
+                // be re-executed.
+                tx.as_ref().map_or(true, |t| t.is_conflict()),
             )
         })
         .collect();
@@ -133,7 +137,7 @@ async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
 
 /// After sync entries other than cmd
 async fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
-    others: Vec<(Arc<LogEntry<C>>, Option<Arc<ResponseSender>>)>,
+    others: Vec<AfterSyncEntry<C>>,
     ce: &CE,
     curp: &RawCurp<C, RC>,
     cb: &RwLock<CommandBoard<C>>,
@@ -141,6 +145,7 @@ async fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     ucp: &Mutex<UncommittedPool<C>>,
 ) {
     let id = curp.id();
+    #[allow(clippy::pattern_type_mismatch)] // Can't be fixed
     for (entry, resp_tx) in others {
         match (&entry.entry_data, resp_tx) {
             (EntryData::Shutdown, _) => {
@@ -219,11 +224,12 @@ async fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
 
 /// Cmd worker after sync handler
 pub(super) async fn after_sync<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
-    entries: Vec<(Arc<LogEntry<C>>, Option<Arc<ResponseSender>>)>,
+    entries: Vec<AfterSyncEntry<C>>,
     ce: &CE,
     curp: &RawCurp<C, RC>,
 ) {
     let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
+    #[allow(clippy::pattern_type_mismatch)] // Can't be fixed
     let (cmd_entries, others): (Vec<_>, Vec<_>) = entries
         .into_iter()
         .partition(|(entry, _)| matches!(entry.entry_data, EntryData::Command(_)));
