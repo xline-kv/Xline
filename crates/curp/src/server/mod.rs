@@ -7,7 +7,7 @@ use tonic::transport::ClientTlsConfig;
 use tracing::instrument;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
-use utils::{config::curp_config::CurpConfig, task_manager::TaskManager, tracing::Extract};
+use utils::{config::curp::CurpConfig, task_manager::TaskManager, tracing::Extract};
 
 use self::curp_node::CurpNode;
 pub use self::{

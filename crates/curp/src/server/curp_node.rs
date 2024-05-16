@@ -21,7 +21,7 @@ use tracing::{debug, error, info, trace, warn};
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
 use utils::{
-    config::curp_config::CurpConfig,
+    config::curp::CurpConfig,
     task_manager::{tasks::TaskName, Listener, State, TaskManager},
 };
 

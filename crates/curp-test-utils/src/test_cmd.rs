@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{sync::mpsc, time::sleep};
 use tracing::debug;
-use utils::config::engine_config::EngineConfig;
+use utils::config::engine::EngineConfig;
 
 use crate::{META_TABLE, REVISION_TABLE, TEST_TABLE};
 

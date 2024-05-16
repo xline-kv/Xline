@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use async_trait::async_trait;
 use engine::{Engine, EngineType, StorageEngine, WriteOperation};
 use prost::Message;
-use utils::config::engine_config::EngineConfig;
+use utils::config::engine::EngineConfig;
 
 use super::{StorageApi, StorageError};
 use crate::{

@@ -4,8 +4,8 @@ use opentelemetry_sdk::runtime::Tokio;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format, layer::SubscriberExt, util::SubscriberInitExt, Layer};
 use utils::config::{
-    log_config::{file_appender, LogConfig},
-    trace_config::TraceConfig,
+    log::{file_appender, LogConfig},
+    trace::TraceConfig,
 };
 
 /// init tracing subscriber

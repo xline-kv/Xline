@@ -7,7 +7,7 @@ use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
 use tokio::{sync::mpsc::Receiver, time::sleep};
 use utils::{
-    config::compact_config::AutoCompactConfig,
+    config::compact::AutoCompactConfig,
     task_manager::{tasks::TaskName, Listener, TaskManager},
 };
 use xlineapi::{command::Command, execute_error::ExecuteError, RequestWrapper};

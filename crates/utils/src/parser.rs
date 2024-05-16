@@ -4,9 +4,9 @@ use clippy_utilities::OverflowArithmetic;
 use thiserror::Error;
 
 pub use crate::config::{
-    cluster_config::{ClusterRange, InitialClusterState},
-    log_config::{LevelConfig, RotationConfig},
-    metrics_config::MetricsPushProtocol,
+    cluster::{ClusterRange, InitialClusterState},
+    log::{LevelConfig, RotationConfig},
+    metrics::MetricsPushProtocol,
 };
 
 /// seconds per minute

@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 use engine::{Engine, EngineType, Snapshot, StorageEngine, WriteOperation};
 use prost::Message;
 use utils::{
-    config::engine_config::EngineConfig,
+    config::engine::EngineConfig,
     table_names::{
         ALARM_TABLE, AUTH_TABLE, KV_TABLE, LEASE_TABLE, META_TABLE, ROLE_TABLE, USER_TABLE,
         XLINE_TABLES,

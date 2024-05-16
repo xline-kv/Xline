@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use getset::Getters;
 use serde::Deserialize;
 
-use super::{client_config::ClientConfig, curp_config::CurpConfig, server_config::ServerTimeout};
+use super::{client::ClientConfig, curp::CurpConfig, server::ServerTimeout};
 
 /// Cluster configuration object, including cluster relevant configuration fields
 #[allow(clippy::module_name_repetitions)]
@@ -105,6 +105,7 @@ impl ClusterConfig {
 }
 
 /// Cluster Range type alias
+#[allow(clippy::module_name_repetitions)]
 pub type ClusterRange = std::ops::Range<u64>;
 
 /// Initial cluster state of xline server

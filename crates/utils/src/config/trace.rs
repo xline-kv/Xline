@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use getset::Getters;
 use serde::Deserialize;
 
-use super::log_config::{default_log_level, level_format, LevelConfig};
+use super::log::{default_log_level, level_format, LevelConfig};
 
 /// Xline tracing configuration object
 #[allow(clippy::module_name_repetitions)]

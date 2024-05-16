@@ -4,9 +4,9 @@ use etcd_client::ConnectOptions;
 use test_macros::abort_on_panic;
 use tonic::transport::{Certificate, ClientTlsConfig, Identity};
 use utils::config::{
-    auth_config::AuthConfig, cluster_config::ClusterConfig, compact_config::CompactConfig,
-    log_config::LogConfig, metrics_config::MetricsConfig, storage_config::StorageConfig,
-    tls_config::TlsConfig, trace_config::TraceConfig, XlineServerConfig,
+    auth::AuthConfig, cluster::ClusterConfig, compact::CompactConfig, log::LogConfig,
+    metrics::MetricsConfig, storage::StorageConfig, tls::TlsConfig, trace::TraceConfig,
+    XlineServerConfig,
 };
 use xline_client::types::kv::PutRequest;
 use xline_test_utils::{enable_auth, set_user, Cluster};

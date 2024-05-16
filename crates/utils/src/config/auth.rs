@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 /// Xline auth configuration object
 #[allow(clippy::module_name_repetitions)]
+#[non_exhaustive]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters, Default)]
 pub struct AuthConfig {
     /// The public key file

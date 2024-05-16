@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 /// Xline server settings
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+#[allow(clippy::module_name_repetitions)]
 pub struct ServerTimeout {
     /// Range request retry timeout settings
     #[getset(get = "pub")]

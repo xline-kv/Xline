@@ -1,35 +1,34 @@
 /// Xline auth configuration module
-pub mod auth_config;
+pub mod auth;
 /// Curp client module
-pub mod client_config;
+pub mod client;
 /// Cluster configuration module
-pub mod cluster_config;
+pub mod cluster;
 /// Compaction configuration module
-pub mod compact_config;
+pub mod compact;
 /// Curp server module
-pub mod curp_config;
+pub mod curp;
 /// Engine Configuration module
-pub mod engine_config;
+pub mod engine;
 /// Log configuration module
-pub mod log_config;
+pub mod log;
 /// Xline metrics configuration module
-pub mod metrics_config;
+pub mod metrics;
 /// Xline server module
-pub mod server_config;
+pub mod server;
 /// Storage Configuration module
-pub mod storage_config;
+pub mod storage;
 /// Xline tls configuration module
-pub mod tls_config;
+pub mod tls;
 /// Xline tracing configuration module
-pub mod trace_config;
+pub mod trace;
 
 use getset::Getters;
 use serde::Deserialize;
 
 use crate::config::{
-    auth_config::AuthConfig, cluster_config::ClusterConfig, compact_config::CompactConfig,
-    log_config::LogConfig, metrics_config::MetricsConfig, storage_config::StorageConfig,
-    tls_config::TlsConfig, trace_config::TraceConfig,
+    auth::AuthConfig, cluster::ClusterConfig, compact::CompactConfig, log::LogConfig,
+    metrics::MetricsConfig, storage::StorageConfig, tls::TlsConfig, trace::TraceConfig,
 };
 
 /// Xline server configuration object
@@ -98,15 +97,15 @@ mod tests {
     use super::*;
     use crate::{
         config::{
-            client_config::{
+            client::{
                 default_client_id_keep_alive_interval, default_client_wait_synced_timeout,
                 default_fixed_backoff, default_propose_timeout, default_retry_count, ClientConfig,
             },
-            compact_config::AutoCompactConfig,
-            curp_config::CurpConfigBuilder,
-            engine_config::EngineConfig,
-            server_config::ServerTimeout,
-            storage_config::default_quota,
+            compact::AutoCompactConfig,
+            curp::CurpConfigBuilder,
+            engine::EngineConfig,
+            server::ServerTimeout,
+            storage::default_quota,
         },
         InitialClusterState, LevelConfig, MetricsPushProtocol, RotationConfig,
     };
@@ -301,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn test_xline_server_default_config_should_be_loaded() {
+    fn test_xline_server_default_should_be_loaded() {
         let config: XlineServerConfig = toml::from_str(
             "[cluster]
                 name = 'node1'
@@ -390,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn test_auto_revision_compactor_config_should_be_loaded() {
+    fn test_auto_revision_compactor_should_be_loaded() {
         let config: XlineServerConfig = toml::from_str(
             "[cluster]
                 name = 'node1'

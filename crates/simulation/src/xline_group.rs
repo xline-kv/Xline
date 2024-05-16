@@ -5,8 +5,14 @@ use madsim::runtime::NodeHandle;
 use tonic::transport::Channel;
 use tracing::debug;
 use utils::config::{
-    AuthConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfig, InitialClusterState,
-    ServerTimeout, StorageConfig, TlsConfig,
+    auth::AuthConfig,
+    client::ClientConfig,
+    cluster::{ClusterConfig, InitialClusterState},
+    compact::CompactConfig,
+    curp::CurpConfig,
+    server::ServerTimeout,
+    storage::StorageConfig,
+    tls::TlsConfig,
 };
 use xline::server::XlineServer;
 use xline_client::{

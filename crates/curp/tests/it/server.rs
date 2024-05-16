@@ -15,7 +15,7 @@ use curp_test_utils::{
 use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
 use tokio::net::TcpListener;
-use utils::{config::client_config::ClientConfig, timestamp};
+use utils::{config::client::ClientConfig, timestamp};
 
 use crate::common::curp_group::{
     commandpb::ProposeId, CurpGroup, FetchClusterRequest, ProposeRequest, ProposeResponse,

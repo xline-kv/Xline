@@ -422,7 +422,7 @@ mod tests {
     use test_macros::abort_on_panic;
     use tokio::{sync::mpsc, time::Instant};
     use tracing_test::traced_test;
-    use utils::config::engine_config::EngineConfig;
+    use utils::config::engine::EngineConfig;
 
     use super::*;
     use crate::{log_entry::LogEntry, rpc::ProposeId};

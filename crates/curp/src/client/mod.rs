@@ -32,7 +32,7 @@ use tonic::transport::ClientTlsConfig;
 use tracing::debug;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
-use utils::{build_endpoint, config::client_config::ClientConfig};
+use utils::{build_endpoint, config::client::ClientConfig};
 
 use self::{
     retry::{Retry, RetryConfig},

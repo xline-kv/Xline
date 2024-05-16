@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::config::engine_config::EngineConfig;
+use crate::config::engine::EngineConfig;
 
 /// Storage Configuration
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

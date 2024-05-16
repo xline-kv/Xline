@@ -6,6 +6,7 @@ use serde::Deserialize;
 /// Compaction configuration
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Getters)]
 #[allow(clippy::module_name_repetitions)]
+#[non_exhaustive]
 pub struct CompactConfig {
     /// The max number of historical versions processed in a single compact operation
     #[getset(get = "pub")]

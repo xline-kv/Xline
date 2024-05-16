@@ -4,7 +4,7 @@ use derive_builder::Builder;
 use getset::Getters;
 use serde::Deserialize;
 
-use super::engine_config::EngineConfig;
+use super::engine::EngineConfig;
 
 /// Curp server timeout settings
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters, Builder)]

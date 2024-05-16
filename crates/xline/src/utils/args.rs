@@ -5,37 +5,37 @@ use clap::Parser;
 use tokio::fs;
 use utils::{
     config::{
-        auth_config::AuthConfig,
-        client_config::{
+        auth::AuthConfig,
+        client::{
             default_client_id_keep_alive_interval, default_client_wait_synced_timeout,
             default_initial_retry_timeout, default_max_retry_timeout, default_propose_timeout,
             default_retry_count, ClientConfig,
         },
-        cluster_config::{ClusterConfig, InitialClusterState},
-        compact_config::{
+        cluster::{ClusterConfig, InitialClusterState},
+        compact::{
             default_compact_batch_size, default_compact_sleep_interval, AutoCompactConfig,
             CompactConfig,
         },
-        curp_config::{
+        curp::{
             default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
             default_cmd_workers, default_follower_timeout_ticks, default_gc_interval,
             default_heartbeat_interval, default_log_entries_cap, default_rpc_timeout,
             default_server_wait_synced_timeout, CurpConfigBuilder,
         },
-        engine_config::EngineConfig,
-        log_config::{default_log_level, default_rotation, LevelConfig, LogConfig, RotationConfig},
-        metrics_config::{
+        engine::EngineConfig,
+        log::{default_log_level, default_rotation, LevelConfig, LogConfig, RotationConfig},
+        metrics::{
             default_metrics_enable, default_metrics_path, default_metrics_port,
             default_metrics_push_endpoint, default_metrics_push_protocol, MetricsConfig,
             MetricsPushProtocol,
         },
-        server_config::{
+        server::{
             default_compact_timeout, default_range_retry_timeout, default_sync_victims_interval,
             default_watch_progress_notify_interval, ServerTimeout,
         },
-        storage_config::{default_quota, StorageConfig},
-        tls_config::TlsConfig,
-        trace_config::TraceConfig,
+        storage::{default_quota, StorageConfig},
+        tls::TlsConfig,
+        trace::TraceConfig,
         XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_metrics_push_protocol,

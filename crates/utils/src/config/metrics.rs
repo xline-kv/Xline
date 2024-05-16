@@ -4,6 +4,7 @@ use serde::Deserialize;
 /// Xline metrics configuration object
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+#[non_exhaustive]
 pub struct MetricsConfig {
     /// Enable or not
     #[getset(get = "pub")]
@@ -114,6 +115,7 @@ pub fn default_metrics_push_endpoint() -> String {
 #[non_exhaustive]
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all(deserialize = "lowercase"))]
+#[allow(clippy::module_name_repetitions)]
 pub enum MetricsPushProtocol {
     /// HTTP protocol
     HTTP,
