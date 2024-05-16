@@ -471,6 +471,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 }
 
+/// Term, entries
+type AppendEntriesSuccess<C> = (u64, Vec<Arc<LogEntry<C>>>);
+/// Term, index
+type AppendEntriesFailure = (u64, LogIndex);
+
 // Curp handlers
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Checks the if term are up-to-date
@@ -492,12 +497,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Handles record
-    pub(super) fn follower_record(&self, propose_id: ProposeId, cmd: Arc<C>) -> bool {
+    pub(super) fn follower_record(&self, propose_id: ProposeId, cmd: &Arc<C>) -> bool {
         let conflict = self
             .ctx
             .spec_pool
             .lock()
-            .insert(PoolEntry::new(propose_id, Arc::clone(&cmd)))
+            .insert(PoolEntry::new(propose_id, Arc::clone(cmd)))
             .is_some();
         if conflict {
             metrics::get()
@@ -518,7 +523,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             conflicts.push(conflict);
         }
         metrics::get().proposals_failed.add(
-            conflicts.iter().filter(|c| **c).count() as u64,
+            conflicts.iter().filter(|c| **c).count().numeric_cast(),
             &[KeyValue::new("reason", "leader key conflict")],
         );
         conflicts
@@ -549,7 +554,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 "Should not insert resp_tx twice"
             );
         }
-        self.entry_process_multi(&mut log_w, to_process, term);
+        self.entry_process_multi(&mut log_w, &to_process, term);
 
         let log_r = RwLockWriteGuard::downgrade(log_w);
         self.persistent_log_entries(
@@ -588,6 +593,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.ctx.id_barrier.wait_all(conflict_cmds)
     }
 
+    /// Trigger the barrier of the given inflight id.
     pub(super) fn trigger(&self, propose_id: &ProposeId) {
         self.ctx.id_barrier.trigger(propose_id);
     }
@@ -612,7 +618,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, propose_id, EntryData::Shutdown);
         debug!("{} gets new log[{}]", self.id(), entry.index);
-        self.entry_process_single(&mut log_w, Arc::clone(&entry), true, st_r.term);
+        self.entry_process_single(&mut log_w, entry.as_ref(), true, st_r.term);
 
         let log_r = RwLockWriteGuard::downgrade(log_w);
         self.persistent_log_entries(&[entry.as_ref()], &log_r);
@@ -665,7 +671,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             entry.index,
             FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
         );
-        self.entry_process_single(&mut log_w, Arc::clone(&entry), conflict, st_r.term);
+        self.entry_process_single(&mut log_w, &entry, conflict, st_r.term);
 
         let log_r = RwLockWriteGuard::downgrade(log_w);
         self.persistent_log_entries(&[entry.as_ref()], &log_r);
@@ -690,7 +696,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, req.propose_id(), req);
         debug!("{} gets new log[{}]", self.id(), entry.index);
-        self.entry_process_single(&mut log_w, Arc::clone(&entry), false, st_r.term);
+        self.entry_process_single(&mut log_w, entry.as_ref(), false, st_r.term);
 
         let log_r = RwLockWriteGuard::downgrade(log_w);
         self.persistent_log_entries(&[entry.as_ref()], &log_r);
@@ -715,7 +721,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Handle `append_entries`
-    /// Return `Ok(term)` if succeeds
+    /// Return `Ok(term, entries)` if succeeds
     /// Return `Err(term, hint_index)` if fails
     pub(super) fn handle_append_entries(
         &self,
@@ -725,7 +731,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         prev_log_term: u64,
         entries: Vec<LogEntry<C>>,
         leader_commit: LogIndex,
-    ) -> Result<(u64, Vec<Arc<LogEntry<C>>>), (u64, LogIndex)> {
+    ) -> Result<AppendEntriesSuccess<C>, AppendEntriesFailure> {
         if entries.is_empty() {
             trace!(
                 "{} received heartbeat from {}: term({}), commit({}), prev_log_index({}), prev_log_term({})",
@@ -1465,6 +1471,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             unreachable!("conf change is empty");
         };
         let node_id = conf_change.node_id;
+        #[allow(clippy::explicit_auto_deref)] // Avoid compiler complaint about `Dashmap::Ref` type
         let fallback_change = match conf_change.change_type() {
             ConfChangeType::Add | ConfChangeType::AddLearner => {
                 self.cst
@@ -1495,7 +1502,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 let m = self.ctx.cluster_info.get(&node_id).unwrap_or_else(|| {
                     unreachable!("node {} should exist in cluster info", node_id)
                 });
-                let _ig = self.ctx.curp_storage.put_member(&m);
+                let _ig = self.ctx.curp_storage.put_member(&*m);
                 Some(ConfChange::update(node_id, old_addrs))
             }
             ConfChangeType::Promote => {
@@ -1508,7 +1515,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 let m = self.ctx.cluster_info.get(&node_id).unwrap_or_else(|| {
                     unreachable!("node {} should exist in cluster info", node_id)
                 });
-                let _ig = self.ctx.curp_storage.put_member(&m);
+                let _ig = self.ctx.curp_storage.put_member(&*m);
                 None
             }
         };
@@ -1852,7 +1859,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 )
             });
             let tx = self.ctx.resp_txs.lock().remove(&i);
-            entries.push((Arc::clone(&entry), tx));
+            entries.push((Arc::clone(entry), tx));
             log.last_as = i;
             if log.last_exe < log.last_as {
                 log.last_exe = log.last_as;
@@ -1881,6 +1888,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     fn switch_config(&self, conf_change: ConfChange) -> (Vec<String>, String, bool) {
         let node_id = conf_change.node_id;
         let mut cst_l = self.cst.lock();
+        #[allow(clippy::explicit_auto_deref)] // Avoid compiler complaint about `Dashmap::Ref` type
         let (modified, fallback_info) = match conf_change.change_type() {
             ConfChangeType::Add | ConfChangeType::AddLearner => {
                 let is_learner = matches!(conf_change.change_type(), ConfChangeType::AddLearner);
@@ -1918,7 +1926,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 let m = self.ctx.cluster_info.get(&node_id).unwrap_or_else(|| {
                     unreachable!("the member should exist after update");
                 });
-                let _ig = self.ctx.curp_storage.put_member(&m);
+                let _ig = self.ctx.curp_storage.put_member(&*m);
                 (
                     old_addrs != conf_change.address,
                     (old_addrs, String::new(), false),
@@ -1932,7 +1940,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 let m = self.ctx.cluster_info.get(&node_id).unwrap_or_else(|| {
                     unreachable!("the member should exist after promote");
                 });
-                let _ig = self.ctx.curp_storage.put_member(&m);
+                let _ig = self.ctx.curp_storage.put_member(&*m);
                 (modified, (vec![], String::new(), false))
             }
         };
@@ -1977,7 +1985,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Entry process shared by `handle_xxx`
-    fn entry_process_multi(&self, log: &mut Log<C>, entries: Vec<(u64, bool)>, term: u64) {
+    #[allow(clippy::pattern_type_mismatch)] // Can't be fixed
+    fn entry_process_multi(&self, log: &mut Log<C>, entries: &[(u64, bool)], term: u64) {
         if let Some(last_no_conflict) = entries
             .iter()
             .rev()
@@ -1998,7 +2007,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     fn entry_process_single(
         &self,
         log_w: &mut RwLockWriteGuard<'_, Log<C>>,
-        entry: Arc<LogEntry<C>>,
+        entry: &LogEntry<C>,
         conflict: bool,
         term: u64,
     ) {

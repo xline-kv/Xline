@@ -182,7 +182,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         }
         let id = req.propose_id();
         let cmd: Arc<C> = Arc::new(req.cmd()?);
-        let conflict = self.curp.follower_record(id, cmd);
+        let conflict = self.curp.follower_record(id, &cmd);
 
         Ok(RecordResponse { conflict })
     }

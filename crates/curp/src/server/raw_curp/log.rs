@@ -315,6 +315,9 @@ type ConfChangeEntries<C> = Vec<Arc<LogEntry<C>>>;
 /// Fallback indexes type
 type FallbackIndexes = HashSet<LogIndex>;
 
+/// Type returned when append success
+type AppendSuccess<C> = (Vec<Arc<LogEntry<C>>>, ConfChangeEntries<C>, FallbackIndexes);
+
 impl<C: Command> Log<C> {
     /// Create a new log
     pub(super) fn new(batch_limit: u64, entries_cap: usize) -> Self {
@@ -373,8 +376,7 @@ impl<C: Command> Log<C> {
         entries: Vec<LogEntry<C>>,
         prev_log_index: LogIndex,
         prev_log_term: u64,
-    ) -> Result<(Vec<Arc<LogEntry<C>>>, ConfChangeEntries<C>, FallbackIndexes), Vec<LogEntry<C>>>
-    {
+    ) -> Result<AppendSuccess<C>, Vec<LogEntry<C>>> {
         let mut to_persist = Vec::with_capacity(entries.len());
         let mut conf_changes = vec![];
         let mut need_fallback_indexes = HashSet::new();
