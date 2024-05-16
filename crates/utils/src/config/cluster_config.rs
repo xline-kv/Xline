@@ -3,9 +3,7 @@ use std::collections::HashMap;
 use getset::Getters;
 use serde::Deserialize;
 
-use super::client_config::ClientConfig;
-use super::curp_config::CurpConfig;
-use super::server_config::ServerTimeout;
+use super::{client_config::ClientConfig, curp_config::CurpConfig, server_config::ServerTimeout};
 
 /// Cluster configuration object, including cluster relevant configuration fields
 #[allow(clippy::module_name_repetitions)]

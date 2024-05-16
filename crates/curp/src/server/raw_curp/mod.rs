@@ -47,9 +47,11 @@ use self::{
     state::{CandidateState, LeaderState, State},
 };
 use super::{
-    cmd_worker::CEEventTxApi, conflict::spec_pool_new::SpeculativePool,
-    conflict::uncommitted_pool::UncommittedPool, lease_manager::LeaseManagerRef,
-    storage::StorageApi, DB,
+    cmd_worker::CEEventTxApi,
+    conflict::{spec_pool_new::SpeculativePool, uncommitted_pool::UncommittedPool},
+    lease_manager::LeaseManagerRef,
+    storage::StorageApi,
+    DB,
 };
 use crate::{
     cmd::Command,

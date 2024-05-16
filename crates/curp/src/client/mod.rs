@@ -30,9 +30,9 @@ use tokio::task::JoinHandle;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::debug;
-use utils::{build_endpoint, config::client_config::ClientConfig};
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
+use utils::{build_endpoint, config::client_config::ClientConfig};
 
 use self::{
     retry::{Retry, RetryConfig},

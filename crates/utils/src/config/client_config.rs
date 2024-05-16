@@ -40,7 +40,7 @@ pub struct ClientConfig {
     #[serde(default = "default_fixed_backoff")]
     fixed_backoff: bool,
 
-     /// Curp client keep client id alive interval
+    /// Curp client keep client id alive interval
     #[getset(get = "pub")]
     #[serde(
         with = "duration_format",
@@ -110,7 +110,6 @@ pub const fn default_client_wait_synced_timeout() -> Duration {
 pub const fn default_propose_timeout() -> Duration {
     Duration::from_secs(1)
 }
-
 
 /// default client id keep alive interval
 #[must_use]

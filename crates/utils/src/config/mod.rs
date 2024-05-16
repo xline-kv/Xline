@@ -26,14 +26,11 @@ pub mod trace_config;
 use getset::Getters;
 use serde::Deserialize;
 
-use crate::config::cluster_config::ClusterConfig;
-use crate::config::compact_config::CompactConfig;
-use crate::config::log_config::LogConfig;
-use crate::config::metrics_config::MetricsConfig;
-use crate::config::storage_config::StorageConfig;
-use crate::config::trace_config::TraceConfig;
-
-use crate::config::{auth_config::AuthConfig, tls_config::TlsConfig};
+use crate::config::{
+    auth_config::AuthConfig, cluster_config::ClusterConfig, compact_config::CompactConfig,
+    log_config::LogConfig, metrics_config::MetricsConfig, storage_config::StorageConfig,
+    tls_config::TlsConfig, trace_config::TraceConfig,
+};
 
 /// Xline server configuration object
 #[allow(clippy::module_name_repetitions)]
@@ -96,11 +93,14 @@ impl XlineServerConfig {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashMap, path::PathBuf, time::Duration};
+
+    use super::*;
     use crate::{
         config::{
             client_config::{
-                default_client_id_keep_alive_interval, default_client_wait_synced_timeout, default_fixed_backoff, default_propose_timeout,
-                default_retry_count, ClientConfig,
+                default_client_id_keep_alive_interval, default_client_wait_synced_timeout,
+                default_fixed_backoff, default_propose_timeout, default_retry_count, ClientConfig,
             },
             compact_config::AutoCompactConfig,
             curp_config::CurpConfigBuilder,
@@ -110,9 +110,6 @@ mod tests {
         },
         InitialClusterState, LevelConfig, MetricsPushProtocol, RotationConfig,
     };
-
-    use super::*;
-    use std::{collections::HashMap, path::PathBuf, time::Duration};
 
     #[allow(clippy::too_many_lines)] // just a testcase, not too bad
     #[test]
