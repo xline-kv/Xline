@@ -63,6 +63,9 @@ use crate::{
     snapshot::{Snapshot, SnapshotMeta},
 };
 
+/// After sync entry, composed of a log entry and response sender
+pub(crate) type AfterSyncEntry<C> = (Arc<LogEntry<C>>, Option<Arc<ResponseSender>>);
+
 /// The after sync task type
 #[derive(Debug)]
 pub(super) enum TaskType<C: Command> {
