@@ -593,7 +593,7 @@ impl KvStore {
                 // As we store use revision as key in the DB storage,
                 // a fake revision needs to be used during speculative execution
                 let fake_revision = i64::MAX;
-                self.execute_txn(&txn_db, index, req, fake_revision, &mut 0)
+                self.execute_txn(txn_db, index, req, fake_revision, &mut 0)
                     .map(Into::into)?
             }
             RequestWrapper::CompactionRequest(ref req) => {
@@ -720,7 +720,7 @@ impl KvStore {
     fn execute_txn_put(
         &self,
         txn_db: &Transaction,
-        index: &mut dyn IndexOperate,
+        index: &dyn IndexOperate,
         req: &PutRequest,
         revision: i64,
         sub_revision: &mut i64,
@@ -801,7 +801,7 @@ impl KvStore {
     fn execute_txn_delete_range<T>(
         &self,
         txn_db: &T,
-        index: &mut dyn IndexOperate,
+        index: &dyn IndexOperate,
         req: &DeleteRangeRequest,
         revision: i64,
         sub_revision: &mut i64,
@@ -1109,8 +1109,7 @@ impl KvStore {
                 succeeded: success,
                 responses: resps
                     .into_iter()
-                    .map(Option::into_iter)
-                    .flatten()
+                    .flat_map(Option::into_iter)
                     .map(Into::into)
                     .collect(),
             }
