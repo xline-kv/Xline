@@ -317,7 +317,10 @@ impl From<ServerArgs> for XlineServerConfig {
             args.jaeger_output_dir,
             args.jaeger_level,
         );
-        let auth = AuthConfig::new(args.auth_public_key, args.auth_private_key);
+        let auth = AuthConfig::new()
+            .auth_public_key(args.auth_public_key.unwrap())
+            .auth_private_key(args.auth_private_key.unwrap())
+            .build();
         let auto_compactor_cfg = if let Some(mode) = args.auto_compact_mode {
             match mode.as_str() {
                 "periodic" => {
