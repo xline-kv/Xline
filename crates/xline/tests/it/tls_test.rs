@@ -4,8 +4,8 @@ use etcd_client::ConnectOptions;
 use test_macros::abort_on_panic;
 use tonic::transport::{Certificate, ClientTlsConfig, Identity};
 use utils::config::{
-    AuthConfig, ClusterConfig, CompactConfig, LogConfig, MetricsConfig, StorageConfig, TlsConfig,
-    TraceConfig, XlineServerConfig,
+    AuthConfig, CompactConfig, LogConfig, MetricsConfig, StorageConfig, TlsConfig, TraceConfig,
+    XlineServerConfig,
 };
 use xline_client::types::kv::PutRequest;
 use xline_test_utils::{enable_auth, set_user, Cluster};
@@ -84,8 +84,9 @@ async fn test_certificate_authenticate() {
 fn configs_with_tls_config(size: usize, tls_config: TlsConfig) -> Vec<XlineServerConfig> {
     iter::repeat(tls_config)
         .map(|tls_config| {
+            let path = tempfile::tempdir().unwrap().into_path();
             XlineServerConfig::new(
-                ClusterConfig::default(),
+                Cluster::cluster_config_with_path(path),
                 StorageConfig::default(),
                 LogConfig::default(),
                 TraceConfig::default(),

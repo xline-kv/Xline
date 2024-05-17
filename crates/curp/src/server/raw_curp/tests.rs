@@ -44,6 +44,7 @@ impl RawCurp<TestCommand, TestRoleChange> {
         role_change: TestRoleChange,
         task_manager: Arc<TaskManager>,
     ) -> Self {
+        let curp_dir = tempfile::tempdir().unwrap();
         let all_members: HashMap<_, _> = (0..n)
             .map(|i| (format!("S{i}"), vec![format!("S{i}")]))
             .collect();
@@ -70,9 +71,12 @@ impl RawCurp<TestCommand, TestRoleChange> {
             .collect();
         let curp_config = CurpConfigBuilder::default()
             .log_entries_cap(10)
+            .curp_db_dir(curp_dir.into_path())
             .build()
             .unwrap();
-        let curp_storage = Arc::new(DB::open(&curp_config.curp_db_dir).unwrap());
+        let curp_storage =
+            Arc::new(DB::open(&curp_config.curp_db_dir, curp_config.wal_segment_size).unwrap());
+        let _ignore = curp_storage.recover().unwrap();
 
         // grant a infinity expiry lease for test client id
         lease_manager.write().expiry_queue.push(
