@@ -161,13 +161,13 @@ impl<C> DB<C> {
     /// # Errors
     /// Will return `StorageError` if failed to open the storage
     #[inline]
-    pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
+    pub fn open(data_dir: impl AsRef<Path>, wal_segment_size: u64) -> Result<Self, StorageError> {
         let mut rocksdb_dir = data_dir.as_ref().to_path_buf();
         rocksdb_dir.push(ROCKSDB_SUB_DIR);
         let mut wal_dir = data_dir.as_ref().to_path_buf();
         wal_dir.push(WAL_SUB_DIR);
         let db = Engine::new(EngineType::Rocks(rocksdb_dir), &[CF, MEMBERS_CF])?;
-        let wal_config = WALConfig::new(wal_dir);
+        let wal_config = WALConfig::new(wal_dir).with_max_segment_size(wal_segment_size);
         let wal = WALStorage::new(wal_config)?;
 
         Ok(Self {
@@ -184,6 +184,7 @@ mod tests {
     use curp_test_utils::{sleep_secs, test_cmd::TestCommand};
     use test_macros::abort_on_panic;
     use tokio::fs::remove_dir_all;
+    use utils::config::default_wal_segment_size;
 
     use super::*;
     use crate::rpc::ProposeId;
@@ -193,7 +194,10 @@ mod tests {
     async fn create_and_recover() -> Result<(), Box<dyn Error>> {
         let db_dir = tempfile::tempdir().unwrap().into_path();
         {
-            let s = DB::<TestCommand>::open(&db_dir)?;
+            let s = DB::<TestCommand>::open(&db_dir, default_wal_segment_size())?;
+            let (voted_for, entries) = s.recover()?;
+            assert!(voted_for.is_none());
+            assert!(entries.is_empty());
             s.flush_voted_for(1, 222)?;
             s.flush_voted_for(3, 111)?;
             let entry0 = LogEntry::new(1, 3, ProposeId(1, 1), Arc::new(TestCommand::default()));
@@ -206,7 +210,7 @@ mod tests {
         }
 
         {
-            let s = DB::<TestCommand>::open(&db_dir)?;
+            let s = DB::<TestCommand>::open(&db_dir, default_wal_segment_size())?;
             let (voted_for, entries) = s.recover()?;
             assert_eq!(voted_for, Some((3, 111)));
             assert_eq!(entries[0].index, 1);

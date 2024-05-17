@@ -80,7 +80,8 @@ pub mod bytes_format {
 
 /// Cluster configuration object, including cluster relevant configuration fields
 #[allow(clippy::module_name_repetitions)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters, Builder)]
+#[builder(default)]
 pub struct ClusterConfig {
     /// Get xline server name
     #[getset(get = "pub")]
@@ -322,6 +323,11 @@ pub struct CurpConfig {
     #[serde(default = "default_curp_db_dir")]
     pub curp_db_dir: PathBuf,
 
+    /// Curp storage path
+    #[builder(default = "default_wal_segment_size()")]
+    #[serde(default = "default_wal_segment_size")]
+    pub wal_segment_size: u64,
+
     /// Number of command execute workers
     #[builder(default = "default_cmd_workers()")]
     #[serde(default = "default_cmd_workers")]
@@ -337,6 +343,10 @@ pub struct CurpConfig {
     #[serde(default = "default_log_entries_cap")]
     pub log_entries_cap: usize,
 }
+
+/// WAL segment size in tests
+/// Use 64KiB to avoid excessive space usage during tests
+pub const TEST_WAL_SEGMENT_SIZE: u64 = 64 * 1024;
 
 /// default heartbeat interval
 #[must_use]
@@ -422,6 +432,23 @@ pub const fn default_candidate_timeout_ticks() -> u8 {
 #[inline]
 pub fn default_curp_db_dir() -> PathBuf {
     "/var/lib/xline/curp/db".into()
+}
+
+/// default wal segment size
+#[cfg(not(test))]
+#[must_use]
+#[inline]
+pub fn default_wal_segment_size() -> u64 {
+    // 64MiB
+    64 * 1024 * 1024
+}
+
+/// default wal segment size
+#[cfg(test)]
+#[must_use]
+#[inline]
+pub fn default_wal_segment_size() -> u64 {
+    TEST_WAL_SEGMENT_SIZE
 }
 
 /// default client wait synced timeout
@@ -514,6 +541,7 @@ impl Default for CurpConfig {
             follower_timeout_ticks: default_follower_timeout_ticks(),
             candidate_timeout_ticks: default_candidate_timeout_ticks(),
             curp_db_dir: default_curp_db_dir(),
+            wal_segment_size: default_wal_segment_size(),
             cmd_workers: default_cmd_workers(),
             gc_interval: default_gc_interval(),
             log_entries_cap: default_log_entries_cap(),

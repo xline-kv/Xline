@@ -110,7 +110,10 @@ impl XlineServer {
         let (client_tls_config, server_tls_config) = Self::read_tls_config(&tls_config).await?;
         #[cfg(madsim)]
         let (client_tls_config, server_tls_config) = (None, None);
-        let curp_storage = Arc::new(CurpDB::open(&cluster_config.curp_config().curp_db_dir)?);
+        let curp_storage = Arc::new(CurpDB::open(
+            &cluster_config.curp_config().curp_db_dir,
+            cluster_config.curp_config().wal_segment_size,
+        )?);
         let cluster_info = Arc::new(
             Self::init_cluster_info(
                 &cluster_config,
