@@ -177,9 +177,14 @@ impl TaskManager {
             };
             task.notifier.notify_waiters();
             for handle in task.handle.drain(..) {
-                handle
-                    .await
-                    .unwrap_or_else(|e| unreachable!("background task should not panic: {e}"));
+                // Directly abort the task if it's cancel safe
+                if task.name.cancel_safe() {
+                    handle.abort();
+                } else {
+                    handle
+                        .await
+                        .unwrap_or_else(|e| unreachable!("background task should not panic: {e}"));
+                }
             }
             for child in task.depend_by.drain(..) {
                 let Some(mut child_task) = tasks.get_mut(&child) else {

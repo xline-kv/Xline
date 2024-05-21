@@ -53,6 +53,28 @@ enum_with_iter! {
     HandlePropose,
 }
 
+impl TaskName {
+    /// Returns `true` if the task is cancel safe
+    pub(super) fn cancel_safe(self) -> bool {
+        match self {
+            TaskName::HandlePropose | TaskName::AfterSync => true,
+            TaskName::CompactBg
+            | TaskName::KvUpdates
+            | TaskName::WatchTask
+            | TaskName::LeaseKeepAlive
+            | TaskName::TonicServer
+            | TaskName::Election
+            | TaskName::SyncFollower
+            | TaskName::ConfChange
+            | TaskName::GcSpecPool
+            | TaskName::GcCmdBoard
+            | TaskName::RevokeExpiredLeases
+            | TaskName::SyncVictims
+            | TaskName::AutoCompactor => false,
+        }
+    }
+}
+
 /// All edges of task graph, the first item in each pair must be shut down before the second item
 pub const ALL_EDGES: [(TaskName, TaskName); 4] = [
     (TaskName::KvUpdates, TaskName::WatchTask),
