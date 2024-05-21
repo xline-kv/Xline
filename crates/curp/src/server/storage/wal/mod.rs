@@ -155,10 +155,9 @@ where
     /// Send frames with fsync
     #[allow(clippy::pattern_type_mismatch)] // Cannot satisfy both clippy
     pub(super) fn send_sync(&mut self, item: Vec<DataFrame<'_, C>>) -> io::Result<()> {
-        let last_segment = self
-            .segments
-            .last_mut()
-            .unwrap_or_else(|| unreachable!("there should be at least on segment"));
+        let Some(last_segment) = self.segments.last_mut() else {
+            return Ok(());
+        };
         if let Some(DataFrame::Entry(entry)) = item.last() {
             self.next_log_index = entry.index.overflow_add(1);
         }
