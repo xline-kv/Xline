@@ -678,7 +678,7 @@ impl KvStore {
     where
         T: XlineStorageOps,
     {
-        let response = PutResponse {
+        let mut response = PutResponse {
             header: Some(self.header_gen.gen_header()),
             ..Default::default()
         };
@@ -691,6 +691,9 @@ impl KvStore {
                 KvStoreInner::get_values(txn_db, &prev_rev.into_iter().collect::<Vec<_>>())?.pop();
             if prev_kv.is_none() && (req.ignore_lease || req.ignore_value) {
                 return Err(ExecuteError::KeyNotFound);
+            }
+            if req.prev_kv {
+                response.prev_kv = prev_kv.clone();
             }
             return Ok((response, prev_kv));
         }
@@ -708,11 +711,8 @@ impl KvStore {
         let prev_rev = (req.prev_kv || req.ignore_lease || req.ignore_value)
             .then(|| index.prev_rev(&req.key))
             .flatten();
-        let (mut response, prev_kv) =
+        let (response, _prev_kv) =
             self.generate_put_resp(req, txn_db, prev_rev.map(|key_rev| key_rev.as_revision()))?;
-        if req.prev_kv {
-            response.prev_kv = prev_kv;
-        }
         Ok(response)
     }
 
@@ -726,7 +726,7 @@ impl KvStore {
         sub_revision: &mut i64,
     ) -> Result<PutResponse, ExecuteError> {
         let (new_rev, prev_rev) = index.register_revision(req.key.clone(), revision, *sub_revision);
-        let (mut response, prev_kv) =
+        let (response, prev_kv) =
             self.generate_put_resp(req, txn_db, prev_rev.map(|key_rev| key_rev.as_revision()))?;
         let mut kv = KeyValue {
             key: req.key.clone(),
@@ -752,9 +752,6 @@ impl KvStore {
                 })
                 .value
                 .clone();
-        }
-        if req.prev_kv {
-            response.prev_kv = prev_kv;
         }
         txn_db.write_op(WriteOp::PutKeyValue(new_rev.as_revision(), kv.clone()))?;
         *sub_revision = sub_revision.overflow_add(1);
