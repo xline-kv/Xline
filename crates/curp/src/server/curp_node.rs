@@ -195,7 +195,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         ce: Arc<CE>,
         curp: Arc<RawCurp<C, RC>>,
         rx: flume::Receiver<Propose<C>>,
-        shutdown_listener: Listener,
     ) {
         /// Max number of propose in a batch
         const MAX_BATCH_SIZE: usize = 1024;
@@ -211,9 +210,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 .flatten()
                 .collect();
             addition.push(first);
-            if shutdown_listener.is_shutdown() {
-                break;
-            }
             let (read_onlys, mutatives): (Vec<_>, Vec<_>) =
                 addition.into_iter().partition(Propose::is_read_only);
 
@@ -754,23 +750,9 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         curp: Arc<RawCurp<C, RC>>,
         cmd_executor: Arc<CE>,
         as_rx: flume::Receiver<TaskType<C>>,
-        shutdown_listener: Listener,
     ) {
-        #[allow(
-            clippy::arithmetic_side_effects,
-            clippy::ignored_unit_patterns,
-            clippy::pattern_type_mismatch
-        )]
-        // introduced by tokio select
-        loop {
-            tokio::select! {
-                _ = shutdown_listener.wait() => {
-                    break;
-                }
-                Ok(task) = as_rx.recv_async() => {
-                    Self::handle_as_task(&curp, &cmd_executor, task).await;
-                }
-            }
+        while let Ok(task) = as_rx.recv_async().await {
+            Self::handle_as_task(&curp, &cmd_executor, task).await;
         }
         debug!("after sync task exits");
     }
@@ -912,11 +894,11 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         task_manager.spawn(TaskName::ConfChange, |n| {
             Self::conf_change_handler(Arc::clone(&curp), remove_events, n)
         });
-        task_manager.spawn(TaskName::HandlePropose, |n| {
-            Self::handle_propose_task(Arc::clone(&cmd_executor), Arc::clone(&curp), propose_rx, n)
+        task_manager.spawn(TaskName::HandlePropose, |_n| {
+            Self::handle_propose_task(Arc::clone(&cmd_executor), Arc::clone(&curp), propose_rx)
         });
-        task_manager.spawn(TaskName::AfterSync, |n| {
-            Self::after_sync_task(curp, cmd_executor, as_rx, n)
+        task_manager.spawn(TaskName::AfterSync, |_n| {
+            Self::after_sync_task(curp, cmd_executor, as_rx)
         });
     }
 
