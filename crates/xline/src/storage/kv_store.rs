@@ -1371,6 +1371,7 @@ mod test {
         let _res = store
             .after_sync(request, &txn_db, &index_state, &rev_gen_state, false)
             .await?;
+        txn_db.commit().unwrap();
         index_state.commit();
         rev_gen_state.commit();
         Ok(())
