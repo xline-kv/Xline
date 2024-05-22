@@ -1371,6 +1371,7 @@ mod test {
         let _res = store
             .after_sync(request, &txn_db, &index_state, &rev_gen_state, false)
             .await?;
+        txn_db.commit().unwrap();
         index_state.commit();
         rev_gen_state.commit();
         Ok(())
@@ -1590,7 +1591,8 @@ mod test {
                 })),
             }],
         });
-        let db = DB::open(&EngineConfig::Memory)?;
+        let path = tempfile::tempdir().unwrap();
+        let db = DB::open(&EngineConfig::RocksDB(path.path().to_path_buf()))?;
         let (store, _rev) = init_store(db).await?;
         exe_as_and_flush(&store, &txn_req).await?;
         let request = RangeRequest {
