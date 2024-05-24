@@ -1,8 +1,10 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{fmt::Debug, iter, sync::Arc};
 
 use clippy_utilities::OverflowArithmetic;
 use curp::{
-    cmd::{AfterSyncCmd, Command as CurpCommand, CommandExecutor as CurpCommandExecutor},
+    cmd::{
+        AfterSyncCmd, AfterSyncOk, Command as CurpCommand, CommandExecutor as CurpCommandExecutor,
+    },
     members::ServerId,
     InflightId, LogIndex,
 };
@@ -332,6 +334,83 @@ impl CommandExecutor {
     }
 }
 
+/// After Sync Result
+type AfterSyncResult = Result<AfterSyncOk<Command>, <Command as CurpCommand>::Error>;
+
+/// Collection of after sync results
+struct ASResultStates<'a> {
+    /// After sync cmds
+    cmds: Vec<AfterSyncCmd<'a, Command>>,
+    /// After sync results
+    results: Vec<Option<AfterSyncResult>>,
+}
+
+impl<'a> ASResultStates<'a> {
+    /// Creates a new [`ASResultStates`].
+    fn new(cmds: Vec<AfterSyncCmd<'a, Command>>) -> Self {
+        Self {
+            results: iter::repeat_with(|| None::<AfterSyncResult>)
+                .take(cmds.len())
+                .collect(),
+            cmds,
+        }
+    }
+
+    /// Updates the results of commands that have errors by applying a given
+    /// operation.
+    fn update_err<F>(&mut self, op: F)
+    where
+        F: Fn(&AfterSyncCmd<'_, Command>) -> Result<(), ExecuteError>,
+    {
+        for (cmd, result_opt) in self
+            .cmds
+            .iter()
+            .zip(self.results.iter_mut())
+            .filter(Self::filter_ok)
+        {
+            if let Err(e) = op(cmd) {
+                let _ignore = result_opt.replace(Err(e));
+            }
+        }
+    }
+
+    /// Updates the results of commands by applying a given operation.
+    fn update_result<F>(&mut self, op: F)
+    where
+        F: Fn(&AfterSyncCmd<'_, Command>) -> AfterSyncResult,
+    {
+        for (cmd, result_opt) in self
+            .cmds
+            .iter()
+            .zip(self.results.iter_mut())
+            .filter(Self::filter_ok)
+        {
+            let _ignore = result_opt.replace(op(cmd));
+        }
+    }
+
+    /// Skip if the command execution has already errored
+    #[allow(clippy::pattern_type_mismatch)] // Can't be fixed
+    fn filter_ok(
+        (_cmd, result_opt): &(&AfterSyncCmd<'a, Command>, &mut Option<AfterSyncResult>),
+    ) -> bool {
+        result_opt.as_ref().is_none()
+    }
+
+    /// Converts into errors.
+    fn into_errors(self, err: <Command as CurpCommand>::Error) -> Vec<AfterSyncResult> {
+        iter::repeat(err)
+            .map(Err)
+            .take(self.results.len())
+            .collect()
+    }
+
+    /// Converts into results.
+    fn into_results(self) -> Vec<AfterSyncResult> {
+        self.results.into_iter().flatten().collect()
+    }
+}
+
 #[async_trait::async_trait]
 impl CurpCommandExecutor<Command> for CommandExecutor {
     fn execute(
@@ -354,27 +433,21 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         &self,
         cmds: Vec<AfterSyncCmd<'_, Command>>,
         highest_index: LogIndex,
-    ) -> Result<
-        Vec<(
-            <Command as CurpCommand>::ASR,
-            Option<<Command as CurpCommand>::ER>,
-        )>,
-        <Command as CurpCommand>::Error,
-    > {
+    ) -> Vec<AfterSyncResult> {
         if cmds.is_empty() {
-            return Ok(Vec::new());
+            return Vec::new();
         }
-        cmds.iter()
-            .map(AfterSyncCmd::cmd)
-            .try_for_each(|c| self.check_alarm(c))?;
         let quota_enough = cmds
             .iter()
             .map(AfterSyncCmd::cmd)
             .all(|c| self.quota_checker.check(c));
-        cmds.iter().map(AfterSyncCmd::cmd).try_for_each(|c| {
+
+        let mut states = ASResultStates::new(cmds);
+        states.update_err(|c| self.check_alarm(c.cmd()));
+        states.update_err(|c| {
             self.auth_storage
-                .check_permission(c.request(), c.auth_info())
-        })?;
+                .check_permission(c.cmd().request(), c.cmd().auth_info())
+        });
 
         let index = self.kv_storage.index();
         let index_state = index.state();
@@ -384,10 +457,12 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         let auth_revision_state = auth_revision_gen.state();
 
         let txn_db = self.db.transaction();
-        txn_db.write_op(WriteOp::PutAppliedIndex(highest_index))?;
+        if let Err(e) = txn_db.write_op(WriteOp::PutAppliedIndex(highest_index)) {
+            return states.into_errors(e);
+        }
 
-        let mut resps = Vec::with_capacity(cmds.len());
-        for (cmd, to_execute) in cmds.into_iter().map(AfterSyncCmd::into_parts) {
+        states.update_result(|c| {
+            let (cmd, to_execute) = c.into_parts();
             let wrapper = cmd.request();
             let (asr, er) = match wrapper.backend() {
                 RequestBackend::Kv => self.after_sync_kv(
@@ -406,7 +481,6 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
                         to_execute,
                     ),
             }?;
-            resps.push((asr, er));
 
             if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
                 if compact_req.physical {
@@ -424,10 +498,13 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
             };
 
             self.lease_storage.mark_lease_synced(wrapper);
+
+            Ok(AfterSyncOk::new(asr, er))
+        });
+
+        if let Err(e) = txn_db.commit() {
+            return states.into_errors(ExecuteError::DbError(e.to_string()));
         }
-        txn_db
-            .commit()
-            .map_err(|e| ExecuteError::DbError(e.to_string()))?;
         index_state.commit();
         general_revision_state.commit();
         auth_revision_state.commit();
@@ -445,7 +522,7 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
             }
         }
 
-        Ok(resps)
+        states.into_results()
     }
 
     async fn reset(
