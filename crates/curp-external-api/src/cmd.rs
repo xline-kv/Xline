@@ -109,7 +109,7 @@ where
         &self,
         cmds: Vec<AfterSyncCmd<'_, C>>,
         highest_index: LogIndex,
-    ) -> Result<Vec<(C::ASR, Option<C::ER>)>, C::Error>;
+    ) -> Vec<Result<AfterSyncOk<C>, C::Error>>;
 
     /// Set the index of the last log entry that has been successfully applied
     /// to the command executor
@@ -207,7 +207,31 @@ impl<'a, C> AfterSyncCmd<'a, C> {
     /// Convert self into parts
     #[inline]
     #[must_use]
-    pub fn into_parts(self) -> (&'a C, bool) {
+    pub fn into_parts(&'a self) -> (&'a C, bool) {
         (self.cmd, self.to_exectue)
+    }
+}
+
+/// Ok type of the after sync result
+#[derive(Debug)]
+pub struct AfterSyncOk<C: Command> {
+    /// After Sync Result
+    asr: C::ASR,
+    /// Optional Execution Result
+    er_opt: Option<C::ER>,
+}
+
+impl<C: Command> AfterSyncOk<C> {
+    /// Creates a new [`AfterSyncOk<C>`].
+    #[inline]
+    pub fn new(asr: C::ASR, er_opt: Option<C::ER>) -> Self {
+        Self { asr, er_opt }
+    }
+
+    /// Decomposes `AfterSyncOk` into its constituent parts.
+    #[inline]
+    pub fn into_parts(self) -> (C::ASR, Option<C::ER>) {
+        let Self { asr, er_opt } = self;
+        (asr, er_opt)
     }
 }

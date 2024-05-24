@@ -385,7 +385,7 @@ mod test {
         let rev_gen_state = rev_gen.state();
 
         let req1 = RequestWrapper::from(LeaseGrantRequest { ttl: 10, id: 1 });
-        let _ignore1 = exe_and_sync_req(&lease_store, &req1, &rev_gen_state).await?;
+        let _ignore1 = exe_and_sync_req(&lease_store, &req1, &rev_gen_state)?;
 
         let lo = lease_store.look_up(1).unwrap();
         assert_eq!(lo.id(), 1);
@@ -399,7 +399,7 @@ mod test {
         lease_store.lease_collection.detach(1, "key".as_bytes())?;
 
         let req2 = RequestWrapper::from(LeaseRevokeRequest { id: 1 });
-        let _ignore2 = exe_and_sync_req(&lease_store, &req2, &rev_gen_state).await?;
+        let _ignore2 = exe_and_sync_req(&lease_store, &req2, &rev_gen_state)?;
         assert!(lease_store.look_up(1).is_none());
         assert!(lease_store.leases().is_empty());
 
@@ -407,9 +407,9 @@ mod test {
         let req4 = RequestWrapper::from(LeaseGrantRequest { ttl: 10, id: 4 });
         let req5 = RequestWrapper::from(LeaseRevokeRequest { id: 3 });
         let req6 = RequestWrapper::from(LeaseLeasesRequest {});
-        let _ignore3 = exe_and_sync_req(&lease_store, &req3, &rev_gen_state).await?;
-        let _ignore4 = exe_and_sync_req(&lease_store, &req4, &rev_gen_state).await?;
-        let resp_1 = exe_and_sync_req(&lease_store, &req6, &rev_gen_state).await?;
+        let _ignore3 = exe_and_sync_req(&lease_store, &req3, &rev_gen_state)?;
+        let _ignore4 = exe_and_sync_req(&lease_store, &req4, &rev_gen_state)?;
+        let resp_1 = exe_and_sync_req(&lease_store, &req6, &rev_gen_state)?;
 
         let ResponseWrapper::LeaseLeasesResponse(leases_1) = resp_1 else {
             panic!("wrong response type: {resp_1:?}");
@@ -417,8 +417,8 @@ mod test {
         assert_eq!(leases_1.leases[0].id, 3);
         assert_eq!(leases_1.leases[1].id, 4);
 
-        let _ignore5 = exe_and_sync_req(&lease_store, &req5, &rev_gen_state).await?;
-        let resp_2 = exe_and_sync_req(&lease_store, &req6, &rev_gen_state).await?;
+        let _ignore5 = exe_and_sync_req(&lease_store, &req5, &rev_gen_state)?;
+        let resp_2 = exe_and_sync_req(&lease_store, &req6, &rev_gen_state)?;
         let ResponseWrapper::LeaseLeasesResponse(leases_2) = resp_2 else {
             panic!("wrong response type: {resp_2:?}");
         };
@@ -487,7 +487,7 @@ mod test {
         let rev_gen_state = rev_gen.state();
 
         let req1 = RequestWrapper::from(LeaseGrantRequest { ttl: 10, id: 1 });
-        let _ignore1 = exe_and_sync_req(&store, &req1, &rev_gen_state).await?;
+        let _ignore1 = exe_and_sync_req(&store, &req1, &rev_gen_state)?;
         store.lease_collection.attach(1, "key".into())?;
 
         let (new_store, _) = init_store(db);
@@ -516,7 +516,7 @@ mod test {
         )
     }
 
-    async fn exe_and_sync_req(
+    fn exe_and_sync_req(
         ls: &LeaseStore,
         req: &RequestWrapper,
         rev_gen: &RevisionNumberGeneratorState<'_>,

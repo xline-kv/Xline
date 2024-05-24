@@ -12,6 +12,11 @@ use xline_test_utils::{
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_kv_put() -> Result<(), Box<dyn Error>> {
+    std::env::set_var("RUST_LOG", "curp=debug,xline=debug");
+    _ = tracing_subscriber::fmt()
+        .compact()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
     struct TestCase {
         key: &'static str,
         value: &'static str,

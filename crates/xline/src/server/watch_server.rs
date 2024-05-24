@@ -443,7 +443,7 @@ mod test {
             && wr.header.as_ref().map_or(false, |h| h.revision != 0)
     }
 
-    async fn put(store: &KvStore, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
+    fn put(store: &KvStore, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
         let req = RequestWrapper::from(PutRequest {
             key: key.into(),
             value: value.into(),
@@ -604,8 +604,8 @@ mod test {
             Duration::from_millis(10),
             &task_manager,
         );
-        put(&kv_store, "foo", "old_bar").await;
-        put(&kv_store, "foo", "bar").await;
+        put(&kv_store, "foo", "old_bar");
+        put(&kv_store, "foo", "bar");
 
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
         let req_stream = ReceiverStream::new(req_rx);
@@ -790,9 +790,9 @@ mod test {
             Duration::from_millis(10),
             &task_manager,
         );
-        put(&kv_store, "foo", "old_bar").await;
-        put(&kv_store, "foo", "bar").await;
-        put(&kv_store, "foo", "new_bar").await;
+        put(&kv_store, "foo", "old_bar");
+        put(&kv_store, "foo", "bar");
+        put(&kv_store, "foo", "new_bar");
 
         kv_store.update_compacted_revision(3);
 
