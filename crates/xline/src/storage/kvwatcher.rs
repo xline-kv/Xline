@@ -654,7 +654,7 @@ mod test {
             let store = Arc::clone(&store);
             async move {
                 for i in 0..100_u8 {
-                    put(store.as_ref(), "foo", vec![i]).await;
+                    put(store.as_ref(), "foo", vec![i]);
                 }
             }
         });
@@ -716,7 +716,7 @@ mod test {
         });
 
         for i in 0..100_u8 {
-            put(store.as_ref(), "foo", vec![i]).await;
+            put(store.as_ref(), "foo", vec![i]);
         }
         handle.await.unwrap();
         drop(store);
@@ -747,7 +747,7 @@ mod test {
         task_manager.shutdown(true).await;
     }
 
-    async fn put(store: &KvStore, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
+    fn put(store: &KvStore, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
         let req = RequestWrapper::from(PutRequest {
             key: key.into(),
             value: value.into(),
