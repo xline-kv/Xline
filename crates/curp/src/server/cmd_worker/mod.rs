@@ -70,7 +70,7 @@ pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
 
 /// After sync cmd entries
 #[allow(clippy::pattern_type_mismatch)] // Can't be fixed
-async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
+fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     cmd_entries: Vec<AfterSyncEntry<C>>,
     ce: &CE,
     curp: &RawCurp<C, RC>,
@@ -104,11 +104,13 @@ async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         })
         .collect();
 
-    match ce.after_sync(cmds, highest_index) {
-        Ok(resps) => {
-            let mut cb_w = cb.write();
-            let results = resps.into_iter().zip(propose_ids).zip(resp_txs);
-            for (((asr, er_opt), id), tx_opt) in results {
+    let results = ce.after_sync(cmds, highest_index);
+
+    let mut cb_w = cb.write();
+    for ((result, id), tx_opt) in results.into_iter().zip(propose_ids).zip(resp_txs) {
+        match result {
+            Ok(r) => {
+                let (asr, er_opt) = r.into_parts();
                 if let Some(er) = er_opt {
                     let _ignore = tx_opt.as_ref().map(|tx| {
                         tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er.clone()), true));
@@ -120,11 +122,7 @@ async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
                     .map(|tx| tx.send_synced(SyncedResponse::new_result::<C>(&Ok(asr.clone()))));
                 cb_w.insert_asr(id, Ok(asr));
             }
-        }
-        Err(e) => {
-            let mut cb_w = cb.write();
-            let results = resp_txs.zip(propose_ids);
-            for (tx_opt, id) in results {
+            Err(e) => {
                 let _ignore = tx_opt
                     .as_ref()
                     .map(|tx| tx.send_synced(SyncedResponse::new_result::<C>(&Err(e.clone()))));
@@ -243,7 +241,7 @@ pub(super) async fn after_sync<C: Command, CE: CommandExecutor<C>, RC: RoleChang
     let (cmd_entries, others): (Vec<_>, Vec<_>) = entries
         .into_iter()
         .partition(|(entry, _)| matches!(entry.entry_data, EntryData::Command(_)));
-    after_sync_cmds(cmd_entries, ce, curp, &cb, &sp, &ucp).await;
+    after_sync_cmds(cmd_entries, ce, curp, &cb, &sp, &ucp);
     after_sync_others(others, ce, curp, &cb, &sp, &ucp).await;
 }
 

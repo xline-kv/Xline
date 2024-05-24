@@ -1302,9 +1302,7 @@ mod test {
         }
     }
 
-    async fn init_store(
-        db: Arc<DB>,
-    ) -> Result<(StoreWrapper, RevisionNumberGenerator), ExecuteError> {
+    fn init_store(db: Arc<DB>) -> Result<(StoreWrapper, RevisionNumberGenerator), ExecuteError> {
         let store = init_empty_store(db);
         let keys = vec!["a", "b", "c", "d", "e", "z", "z", "z"];
         let vals = vec!["a", "b", "c", "d", "e", "z1", "z2", "z3"];
@@ -1315,7 +1313,7 @@ mod test {
                 value: val.into(),
                 ..Default::default()
             });
-            exe_as_and_flush(&store, &req).await?;
+            exe_as_and_flush(&store, &req)?;
         }
         Ok((store, revision))
     }
@@ -1354,7 +1352,7 @@ mod test {
         StoreWrapper(Some(storage), task_manager)
     }
 
-    async fn exe_as_and_flush(
+    fn exe_as_and_flush(
         store: &Arc<KvStore>,
         request: &RequestWrapper,
     ) -> Result<(), ExecuteError> {
@@ -1383,7 +1381,7 @@ mod test {
     #[abort_on_panic]
     async fn test_keys_only() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
-        let (store, _rev) = init_store(db).await?;
+        let (store, _rev) = init_store(db)?;
         let request = RangeRequest {
             key: vec![0],
             range_end: vec![0],
@@ -1404,7 +1402,7 @@ mod test {
     #[abort_on_panic]
     async fn test_range_empty() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
-        let (store, _rev) = init_store(db).await?;
+        let (store, _rev) = init_store(db)?;
 
         let request = RangeRequest {
             key: "x".into(),
@@ -1424,7 +1422,7 @@ mod test {
     #[abort_on_panic]
     async fn test_range_filter() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
-        let (store, _rev) = init_store(db).await?;
+        let (store, _rev) = init_store(db)?;
 
         let request = RangeRequest {
             key: vec![0],
@@ -1449,7 +1447,7 @@ mod test {
     #[abort_on_panic]
     async fn test_range_sort() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
-        let (store, _rev) = init_store(db).await?;
+        let (store, _rev) = init_store(db)?;
         let keys = ["a", "b", "c", "d", "e", "z"];
         let reversed_keys = ["z", "e", "d", "c", "b", "a"];
         let version_keys = ["z", "a", "b", "c", "d", "e"];
@@ -1514,7 +1512,7 @@ mod test {
         let db = DB::open(&EngineConfig::Memory)?;
         let ops = vec![WriteOp::PutScheduledCompactRevision(8)];
         db.write_ops(ops)?;
-        let (store, _rev_gen) = init_store(Arc::clone(&db)).await?;
+        let (store, _rev_gen) = init_store(Arc::clone(&db))?;
         assert_eq!(store.inner.index.get_from_rev(b"z", b"", 5).len(), 3);
 
         let new_store = init_empty_store(db);
@@ -1585,8 +1583,8 @@ mod test {
         });
         let path = tempfile::tempdir().unwrap();
         let db = DB::open(&EngineConfig::RocksDB(path.path().to_path_buf()))?;
-        let (store, _rev) = init_store(db).await?;
-        exe_as_and_flush(&store, &txn_req).await?;
+        let (store, _rev) = init_store(db)?;
+        exe_as_and_flush(&store, &txn_req)?;
         let request = RangeRequest {
             key: "success".into(),
             range_end: vec![],
@@ -1607,7 +1605,7 @@ mod test {
     #[abort_on_panic]
     async fn test_kv_store_index_available() {
         let db = DB::open(&EngineConfig::Memory).unwrap();
-        let (store, _revision) = init_store(Arc::clone(&db)).await.unwrap();
+        let (store, _revision) = init_store(Arc::clone(&db)).unwrap();
         let handle = tokio::spawn({
             let store = Arc::clone(&store);
             async move {
@@ -1617,7 +1615,7 @@ mod test {
                         value: vec![i],
                         ..Default::default()
                     });
-                    exe_as_and_flush(&store, &req).await.unwrap();
+                    exe_as_and_flush(&store, &req).unwrap();
                 }
             }
         });
@@ -1662,7 +1660,7 @@ mod test {
         ];
 
         for req in requests {
-            exe_as_and_flush(&store, &req).await.unwrap();
+            exe_as_and_flush(&store, &req).unwrap();
         }
 
         let target_revisions = index_compact(&store, 3);

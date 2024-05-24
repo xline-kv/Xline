@@ -9,7 +9,7 @@ use std::{
 
 use async_trait::async_trait;
 use curp_external_api::{
-    cmd::{AfterSyncCmd, Command, CommandExecutor, ConflictCheck, PbCodec},
+    cmd::{AfterSyncCmd, AfterSyncOk, Command, CommandExecutor, ConflictCheck, PbCodec},
     InflightId, LogIndex,
 };
 use engine::{
@@ -288,20 +288,11 @@ impl CommandExecutor<TestCommand> for TestCE {
         &self,
         cmds: Vec<AfterSyncCmd<'_, TestCommand>>,
         highest_index: LogIndex,
-    ) -> Result<
-        Vec<(
-            <TestCommand as Command>::ASR,
-            Option<<TestCommand as Command>::ER>,
-        )>,
-        <TestCommand as Command>::Error,
-    > {
+    ) -> Vec<Result<AfterSyncOk<TestCommand>, <TestCommand as Command>::Error>> {
         let as_duration = cmds
             .iter()
             .fold(Duration::default(), |acc, c| acc + c.cmd().as_dur);
         std::thread::sleep(as_duration);
-        if cmds.iter().any(|c| c.cmd().as_should_fail) {
-            return Err(ExecuteError("fail".to_owned()));
-        }
         let total = cmds.len();
         for (i, cmd) in cmds.iter().enumerate() {
             let index = highest_index - (total - i - 1) as u64;
@@ -316,12 +307,21 @@ impl CommandExecutor<TestCommand> for TestCE {
         )];
 
         let mut asrs = Vec::new();
-        for (i, c) in cmds.iter().enumerate() {
-            let cmd = c.cmd();
-            let index = highest_index - (total - i) as u64;
-            asrs.push((LogIndexResult(index), None));
+        for (i, (cmd, to_execute)) in cmds.iter().map(AfterSyncCmd::into_parts).enumerate() {
+            let index = highest_index - (total - i - 1) as u64;
+            if cmd.as_should_fail {
+                asrs.push(Err(ExecuteError("fail".to_owned())));
+                continue;
+            }
             if let TestCommandType::Put(v) = cmd.cmd_type {
-                let revision = self.next_revision(c.cmd())?;
+                let revision = match self.next_revision(cmd) {
+                    Ok(rev) => rev,
+                    Err(e) => {
+                        asrs.push(Err(e));
+                        continue;
+                    }
+                };
+
                 debug!("cmd {:?}-{:?} revision is {}", cmd.cmd_type, cmd, revision);
                 let value = v.to_le_bytes().to_vec();
                 let keys = cmd
@@ -342,16 +342,27 @@ impl CommandExecutor<TestCommand> for TestCE {
                         })),
                 );
             }
+            match to_execute.then(|| self.execute(cmd)).transpose() {
+                Ok(er) => {
+                    asrs.push(Ok(AfterSyncOk::new(LogIndexResult(index), er)));
+                }
+                Err(e) => asrs.push(Err(e)),
+            }
             debug!(
                 "{} after sync cmd({:?} - {:?}), index: {index}",
                 self.server_name, cmd.cmd_type, cmd
             );
         }
 
-        self.store
+        if let Err(e) = self
+            .store
             .write_multi(wr_ops, true)
-            .map_err(|e| ExecuteError(e.to_string()))?;
-        Ok(asrs)
+            .map_err(|e| ExecuteError(e.to_string()))
+        {
+            return std::iter::repeat(e).map(Err).take(cmds.len()).collect();
+        }
+
+        asrs
     }
 
     fn set_last_applied(&self, index: LogIndex) -> Result<(), <TestCommand as Command>::Error> {
