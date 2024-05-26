@@ -5,12 +5,12 @@ use curp_external_api::LogIndex;
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-
-use super::{
-    error::{CorruptType, WALError},
+use utils::wal::{
     framed::{Decoder, Encoder},
-    util::{get_checksum, validate_data},
+    get_checksum,
 };
+
+use super::error::{CorruptType, WALError};
 use crate::log_entry::LogEntry;
 
 /// Invalid frame type
@@ -280,7 +280,7 @@ impl CommitFrame {
     /// Creates a commit frame of data
     fn new_from_data(data: &[u8]) -> Self {
         Self {
-            checksum: get_checksum(data).to_vec(),
+            checksum: get_checksum::<Sha256>(data).to_vec(),
         }
     }
 

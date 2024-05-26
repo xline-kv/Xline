@@ -1,25 +1,22 @@
 use std::{
     io,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    task::Poll,
 };
 
-use clippy_utilities::OverflowArithmetic;
-use event_listener::Event;
-use thiserror::Error;
 use tracing::error;
 
-use super::util::LockedFile;
+use super::LockedFile;
 
 /// The temp file extension
 const TEMP_FILE_EXT: &str = ".tmp";
 
 /// The file pipeline, used for pipelining the creation of temp file
-pub(super) struct FilePipeline {
+#[allow(clippy::module_name_repetitions)]
+pub struct FilePipeline {
     /// The directory where the temp files are created
     dir: PathBuf,
     /// The size of the temp file
@@ -35,7 +32,12 @@ pub(super) struct FilePipeline {
 
 impl FilePipeline {
     /// Creates a new `FilePipeline`
-    pub(super) fn new(dir: PathBuf, file_size: u64) -> io::Result<Self> {
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if failed to clean up the given directory.
+    #[inline]
+    pub fn new(dir: PathBuf, file_size: u64) -> io::Result<Self> {
         Self::clean_up(&dir)?;
 
         let (file_tx, file_rx) = flume::bounded(1);
@@ -102,7 +104,8 @@ impl FilePipeline {
     }
 
     /// Stops the pipeline
-    pub(super) fn stop(&mut self) {
+    #[inline]
+    pub fn stop(&mut self) {
         self.stopped.store(true, Ordering::Relaxed);
     }
 
@@ -119,9 +122,17 @@ impl FilePipeline {
     fn clean_up(dir: &PathBuf) -> io::Result<()> {
         for result in std::fs::read_dir(dir)? {
             let file = result?;
-            if let Some(filename) = file.file_name().to_str() {
-                if filename.ends_with(TEMP_FILE_EXT) {
-                    std::fs::remove_file(file.path())?;
+            if file
+                .file_name()
+                .to_str()
+                .is_some_and(|fname| fname.ends_with(TEMP_FILE_EXT))
+            {
+                if let Err(err) = std::fs::remove_file(file.path()) {
+                    // The file has already been deleted, continue
+                    if matches!(err.kind(), io::ErrorKind::NotFound) {
+                        continue;
+                    }
+                    return Err(err);
                 }
             }
         }
@@ -130,6 +141,7 @@ impl FilePipeline {
 }
 
 impl Drop for FilePipeline {
+    #[inline]
     fn drop(&mut self) {
         self.stop();
     }
@@ -138,6 +150,7 @@ impl Drop for FilePipeline {
 impl Iterator for FilePipeline {
     type Item = io::Result<LockedFile>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.stopped.load(Ordering::Relaxed) {
             return None;
@@ -146,11 +159,14 @@ impl Iterator for FilePipeline {
     }
 }
 
+#[allow(clippy::missing_fields_in_debug)] // `flume::IntoIter` does not implement `Debug`
 impl std::fmt::Debug for FilePipeline {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FilePipeline")
             .field("dir", &self.dir)
             .field("file_size", &self.file_size)
+            .field("stopped", &self.stopped)
             .finish()
     }
 }
@@ -158,7 +174,6 @@ impl std::fmt::Debug for FilePipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::storage::wal::util::get_file_paths_with_ext;
 
     #[tokio::test]
     async fn file_pipeline_is_ok() {
@@ -166,7 +181,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut pipeline = FilePipeline::new(dir.as_ref().into(), file_size).unwrap();
 
-        let check_size = |mut file: LockedFile| {
+        let check_size = |file: LockedFile| {
             let file = file.into_std();
             assert_eq!(file.metadata().unwrap().len(), file_size,);
         };

@@ -11,17 +11,20 @@ use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp_external_api::LogIndex;
 use futures::{ready, FutureExt, SinkExt};
 use serde::{de::DeserializeOwned, Serialize};
+use sha2::Sha256;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt},
     sync::Mutex,
 };
 use tokio_stream::StreamExt;
+use utils::wal::{
+    framed::{Decoder, Encoder},
+    get_checksum, parse_u64, validate_data, LockedFile,
+};
 
 use super::{
     codec::{DataFrame, WAL},
     error::{CorruptType, WALError},
-    framed::{Decoder, Encoder},
-    util::{get_checksum, parse_u64, validate_data, LockedFile},
     WAL_FILE_EXT, WAL_MAGIC, WAL_VERSION,
 };
 use crate::log_entry::LogEntry;
@@ -242,7 +245,7 @@ impl WALSegment {
         buf.push(WAL_VERSION);
         buf.extend(base_index.to_le_bytes());
         buf.extend(segment_id.to_le_bytes());
-        buf.extend(get_checksum(&buf));
+        buf.extend(get_checksum::<Sha256>(&buf));
         buf
     }
 
@@ -272,7 +275,7 @@ impl WALSegment {
         let segment_id = parse_u64(next_field(8));
         let checksum = next_field(32);
 
-        if !validate_data(&src[0..24], checksum) {
+        if !validate_data::<Sha256>(&src[0..24], checksum) {
             return parse_error;
         }
 

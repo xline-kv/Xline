@@ -1,3 +1,9 @@
+/// Framed
+pub mod framed;
+
+/// File pipeline
+pub mod pipeline;
+
 use std::{
     fs::{File as StdFile, OpenOptions},
     io,
@@ -5,12 +11,11 @@ use std::{
 };
 
 use fs2::FileExt;
-use sha2::{digest::Output, Digest, Sha256};
-use tokio::fs::File as TokioFile;
+use sha2::{digest::Output, Digest};
 
 /// File that is exclusively locked
 #[derive(Debug)]
-pub(super) struct LockedFile {
+pub struct LockedFile {
     /// The inner std file
     file: Option<StdFile>,
     /// The path of the file
@@ -19,7 +24,12 @@ pub(super) struct LockedFile {
 
 impl LockedFile {
     /// Opens the file in read and append mode
-    pub(super) fn open_rw(path: impl AsRef<Path>) -> io::Result<Self> {
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if file operations fail.
+    #[inline]
+    pub fn open_rw(path: impl AsRef<Path>) -> io::Result<Self> {
         let file = OpenOptions::new()
             .create(true)
             .read(true)
@@ -34,7 +44,12 @@ impl LockedFile {
     }
 
     /// Pre-allocates the file
-    pub(super) fn preallocate(&mut self, size: u64) -> io::Result<()> {
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if file operations fail.
+    #[inline]
+    pub fn preallocate(&mut self, size: u64) -> io::Result<()> {
         if size == 0 {
             return Ok(());
         }
@@ -43,14 +58,21 @@ impl LockedFile {
     }
 
     /// Gets the path of this file
-    pub(super) fn path(&self) -> PathBuf {
+    #[inline]
+    #[must_use]
+    pub fn path(&self) -> PathBuf {
         self.path.clone()
     }
 
     /// Renames the current file
     ///
     /// We will discard this file if the rename has failed
-    pub(super) fn rename(mut self, new_name: impl AsRef<Path>) -> io::Result<Self> {
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if file operations fail.
+    #[inline]
+    pub fn rename(mut self, new_name: impl AsRef<Path>) -> io::Result<Self> {
         let mut new_path = parent_dir(&self.path);
         new_path.push(new_name.as_ref());
         std::fs::rename(&self.path, &new_path)?;
@@ -63,7 +85,9 @@ impl LockedFile {
     }
 
     /// Converts self to std file
-    pub(super) fn into_std(self) -> StdFile {
+    #[inline]
+    #[must_use]
+    pub fn into_std(self) -> StdFile {
         let mut this = std::mem::ManuallyDrop::new(self);
         this.file
             .take()
@@ -79,6 +103,7 @@ impl LockedFile {
 }
 
 impl Drop for LockedFile {
+    #[inline]
     fn drop(&mut self) {
         if self.file.is_some() && is_exist(self.path()) {
             let _ignore = std::fs::remove_file(self.path());
@@ -86,11 +111,13 @@ impl Drop for LockedFile {
     }
 }
 
-/// Gets the all files with the extension under the given folder
-pub(super) fn get_file_paths_with_ext(
-    dir: impl AsRef<Path>,
-    ext: &str,
-) -> io::Result<Vec<PathBuf>> {
+/// Gets the all files with the extension under the given folder.
+///
+/// # Errors
+///
+/// This function will return an error if failed to read the given directory.
+#[inline]
+pub fn get_file_paths_with_ext<A: AsRef<Path>>(dir: A, ext: &str) -> io::Result<Vec<PathBuf>> {
     let mut files = vec![];
     for result in std::fs::read_dir(dir)? {
         let file = result?;
@@ -104,14 +131,20 @@ pub(super) fn get_file_paths_with_ext(
 }
 
 /// Gets the parent dir
-pub(super) fn parent_dir(dir: impl AsRef<Path>) -> PathBuf {
+#[inline]
+pub fn parent_dir<A: AsRef<Path>>(dir: A) -> PathBuf {
     let mut parent = PathBuf::from(dir.as_ref());
     let _ignore = parent.pop();
     parent
 }
 
 /// Fsyncs the parent directory
-pub(super) fn sync_parent_dir(dir: impl AsRef<Path>) -> io::Result<()> {
+///
+/// # Errors
+///
+/// This function will return an error if directory operations fail.
+#[inline]
+pub fn sync_parent_dir<A: AsRef<Path>>(dir: A) -> io::Result<()> {
     let parent_dir = parent_dir(&dir);
     let parent = std::fs::File::open(parent_dir)?;
     parent.sync_all()?;
@@ -120,24 +153,36 @@ pub(super) fn sync_parent_dir(dir: impl AsRef<Path>) -> io::Result<()> {
 }
 
 /// Gets the checksum of the slice, we use Sha256 as the hash function
-pub(super) fn get_checksum(data: &[u8]) -> Output<Sha256> {
-    let mut hasher = Sha256::new();
+#[inline]
+#[must_use]
+pub fn get_checksum<H: Digest>(data: &[u8]) -> Output<H> {
+    let mut hasher = H::new();
     hasher.update(data);
     hasher.finalize()
 }
 
 /// Validates the the data with the given checksum
-pub(super) fn validate_data(data: &[u8], checksum: &[u8]) -> bool {
-    AsRef::<[u8]>::as_ref(&get_checksum(data)) == checksum
+#[inline]
+#[must_use]
+pub fn validate_data<H: Digest>(data: &[u8], checksum: &[u8]) -> bool {
+    AsRef::<[u8]>::as_ref(&get_checksum::<H>(data)) == checksum
 }
 
 /// Checks whether the file exist
-pub(super) fn is_exist(path: impl AsRef<Path>) -> bool {
+#[inline]
+#[must_use]
+pub fn is_exist<A: AsRef<Path>>(path: A) -> bool {
     std::fs::metadata(path).is_ok()
 }
 
 /// Parses a u64 from u8 slice
-pub(super) fn parse_u64(bytes_le: &[u8]) -> u64 {
+///
+/// # Panics
+///
+/// Panics if `bytes_le` is not exactly 8 bytes long
+#[inline]
+#[must_use]
+pub fn parse_u64(bytes_le: &[u8]) -> u64 {
     assert_eq!(bytes_le.len(), 8, "The slice passed should be 8 bytes long");
     u64::from_le_bytes(
         bytes_le
@@ -148,20 +193,18 @@ pub(super) fn parse_u64(bytes_le: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Read, process::Command};
-
     use super::*;
 
     #[test]
     fn file_rename_is_ok() {
-        let mut tempdir = tempfile::tempdir().unwrap();
+        let tempdir = tempfile::tempdir().unwrap();
         let mut path = PathBuf::from(tempdir.path());
         path.push("file.test");
         let lfile = LockedFile::open_rw(&path).unwrap();
         let new_name = "new_name.test";
         let mut new_path = parent_dir(&path);
         new_path.push(new_name);
-        lfile.rename(new_name);
+        lfile.rename(new_name).unwrap();
         assert!(!is_exist(path));
         assert!(is_exist(new_path));
     }
@@ -169,10 +212,10 @@ mod tests {
     #[test]
     #[allow(clippy::verbose_file_reads)] // false positive
     fn file_open_is_exclusive() {
-        let mut tempdir = tempfile::tempdir().unwrap();
+        let tempdir = tempfile::tempdir().unwrap();
         let mut path = PathBuf::from(tempdir.path());
         path.push("file.test");
-        let mut lfile = LockedFile::open_rw(&path).unwrap();
+        let _lfile = LockedFile::open_rw(&path).unwrap();
         assert!(
             LockedFile::open_rw(&path).is_err(),
             "acquire lock should failed"

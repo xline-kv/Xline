@@ -16,8 +16,6 @@ publish = false
 axum = { version = "0.6" }
 bytes = { version = "1" }
 clap = { version = "4", features = ["derive"] }
-crypto-common = { version = "0.1", default-features = false, features = ["std"] }
-digest = { version = "0.10", features = ["mac", "std"] }
 either = { version = "1", default-features = false, features = ["use_std"] }
 futures-channel = { version = "0.3", features = ["sink"] }
 futures-util = { version = "0.3", features = ["channel", "io", "sink"] }
@@ -34,7 +32,6 @@ petgraph = { version = "0.6" }
 predicates = { version = "3", default-features = false, features = ["diff"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["raw_value"] }
-sha2 = { version = "0.10" }
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
