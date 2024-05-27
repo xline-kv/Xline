@@ -105,7 +105,7 @@ where
     fn execute(&self, cmd: &C) -> Result<C::ER, C::Error>;
 
     /// Batch execute the after_sync callback
-    async fn after_sync(
+    fn after_sync(
         &self,
         cmds: Vec<AfterSyncCmd<'_, C>>,
         highest_index: LogIndex,

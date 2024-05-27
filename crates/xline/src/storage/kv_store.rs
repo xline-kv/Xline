@@ -11,8 +11,8 @@ use std::{
 
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use engine::{Transaction, TransactionApi};
+use event_listener::Listener;
 use prost::Message;
-use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use utils::table_names::{KV_TABLE, META_TABLE};
 use xlineapi::{
@@ -52,9 +52,9 @@ pub(crate) struct KvStore {
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// KV update sender
-    kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
+    kv_update_tx: flume::Sender<(i64, Vec<Event>)>,
     /// Compact task submit sender
-    compact_task_tx: mpsc::Sender<(i64, Option<Arc<event_listener::Event>>)>,
+    compact_task_tx: flume::Sender<(i64, Option<Arc<event_listener::Event>>)>,
     /// Lease collection
     lease_collection: Arc<LeaseCollection>,
 }
@@ -219,7 +219,7 @@ impl KvStore {
     }
 
     /// After-Syncs a request
-    pub(crate) async fn after_sync<T>(
+    pub(crate) fn after_sync<T>(
         &self,
         request: &RequestWrapper,
         txn_db: &T,
@@ -231,7 +231,6 @@ impl KvStore {
         T: XlineStorageOps + TransactionApi,
     {
         self.sync_request(request, txn_db, index, revision_gen, to_execute)
-            .await
     }
 
     /// Recover data from persistent storage
@@ -278,11 +277,7 @@ impl KvStore {
             if scheduled_rev > self.compacted_revision() {
                 let event = Arc::new(event_listener::Event::new());
                 let listener = event.listen();
-                if let Err(e) = self
-                    .compact_task_tx
-                    .send((scheduled_rev, Some(event)))
-                    .await
-                {
+                if let Err(e) = self.compact_task_tx.send((scheduled_rev, Some(event))) {
                     panic!("the compactor exited unexpectedly: {e:?}");
                 }
                 listener.await;
@@ -310,8 +305,8 @@ impl KvStore {
     pub(crate) fn new(
         inner: Arc<KvStoreInner>,
         header_gen: Arc<HeaderGenerator>,
-        kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
-        compact_task_tx: mpsc::Sender<(i64, Option<Arc<event_listener::Event>>)>,
+        kv_update_tx: flume::Sender<(i64, Vec<Event>)>,
+        compact_task_tx: flume::Sender<(i64, Option<Arc<event_listener::Event>>)>,
         lease_collection: Arc<LeaseCollection>,
     ) -> Self {
         Self {
@@ -340,9 +335,9 @@ impl KvStore {
     }
 
     /// Notify KV changes to KV watcher
-    async fn notify_updates(&self, revision: i64, updates: Vec<Event>) {
+    fn notify_updates(&self, revision: i64, updates: Vec<Event>) {
         assert!(
-            self.kv_update_tx.send((revision, updates)).await.is_ok(),
+            self.kv_update_tx.send((revision, updates)).is_ok(),
             "Failed to send updates to KV watcher"
         );
     }
@@ -890,7 +885,7 @@ impl KvStore {
 /// Sync requests
 impl KvStore {
     /// Sync kv requests
-    async fn sync_request<T>(
+    fn sync_request<T>(
         &self,
         wrapper: &RequestWrapper,
         txn_db: &T,
@@ -920,16 +915,14 @@ impl KvStore {
             RequestWrapper::TxnRequest(ref req) => {
                 self.sync_txn(txn_db, index, req, next_revision, &mut 0, to_execute)
             }
-            RequestWrapper::CompactionRequest(ref req) => {
-                self.sync_compaction(req, to_execute).await
-            }
+            RequestWrapper::CompactionRequest(ref req) => self.sync_compaction(req, to_execute),
             _ => unreachable!("Other request should not be sent to this store"),
         }?;
 
         let sync_response = if events.is_empty() {
             SyncResponse::new(revision_gen.get())
         } else {
-            self.notify_updates(next_revision, events).await;
+            self.notify_updates(next_revision, events);
             SyncResponse::new(revision_gen.next())
         };
 
@@ -1121,7 +1114,7 @@ impl KvStore {
     }
 
     /// Sync `CompactionRequest` and return if kvstore is changed
-    async fn sync_compaction(
+    fn sync_compaction(
         &self,
         req: &CompactionRequest,
         to_execute: bool,
@@ -1137,11 +1130,12 @@ impl KvStore {
         } else {
             (None, None)
         };
-        if let Err(e) = self.compact_task_tx.send((revision, event)).await {
+        // TODO: sync compaction task
+        if let Err(e) = self.compact_task_tx.send((revision, event)) {
             panic!("the compactor exited unexpectedly: {e:?}");
         }
         if let Some(listener) = listener {
-            listener.await;
+            listener.wait();
         }
         self.inner.db.write_ops(ops)?;
 
@@ -1334,8 +1328,8 @@ mod test {
 
     fn init_empty_store(db: Arc<DB>) -> StoreWrapper {
         let task_manager = Arc::new(TaskManager::new());
-        let (compact_tx, compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
-        let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
+        let (compact_tx, compact_rx) = flume::bounded(COMPACT_CHANNEL_SIZE);
+        let (kv_update_tx, kv_update_rx) = flume::bounded(CHANNEL_SIZE);
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
@@ -1374,9 +1368,7 @@ mod test {
         let index = store.index();
         let index_state = index.state();
         let rev_gen_state = store.revision.state();
-        let _res = store
-            .after_sync(request, &txn_db, &index_state, &rev_gen_state, false)
-            .await?;
+        let _res = store.after_sync(request, &txn_db, &index_state, &rev_gen_state, false)?;
         txn_db.commit().unwrap();
         index_state.commit();
         rev_gen_state.commit();

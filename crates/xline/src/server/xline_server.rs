@@ -13,13 +13,11 @@ use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator}
 #[cfg(not(madsim))]
 use futures::Stream;
 use jsonwebtoken::{DecodingKey, EncodingKey};
+use tokio::fs;
 #[cfg(not(madsim))]
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::{fs, sync::mpsc::channel};
 #[cfg(not(madsim))]
-use tonic::transport::{
-    server::Connected, Certificate, ClientTlsConfig, Identity, ServerTlsConfig,
-};
+use tonic::transport::{server::Connected, Certificate, ClientTlsConfig, Identity, ServerTlsConfig};
 use tonic::transport::{server::Router, Server};
 use tracing::{info, warn};
 use utils::{
@@ -197,7 +195,8 @@ impl XlineServer {
         Arc::new(LeaseCollection::new(min_ttl_secs.numeric_cast()))
     }
 
-    /// Construct underlying storages, including `KvStore`, `LeaseStore`, `AuthStore`
+    /// Construct underlying storages, including `KvStore`, `LeaseStore`,
+    /// `AuthStore`
     #[allow(clippy::type_complexity)] // it is easy to read
     #[inline]
     async fn construct_underlying_storages(
@@ -213,9 +212,9 @@ impl XlineServer {
         Arc<AlarmStore>,
         Arc<KvWatcher>,
     )> {
-        let (compact_task_tx, compact_task_rx) = channel(COMPACT_CHANNEL_SIZE);
+        let (compact_task_tx, compact_task_rx) = flume::bounded(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
-        let (kv_update_tx, kv_update_rx) = channel(CHANNEL_SIZE);
+        let (kv_update_tx, kv_update_rx) = flume::bounded(CHANNEL_SIZE);
         let kv_store_inner = Arc::new(KvStoreInner::new(Arc::clone(&index), Arc::clone(&db)));
         let kv_storage = Arc::new(KvStore::new(
             Arc::clone(&kv_store_inner),
@@ -426,8 +425,8 @@ impl XlineServer {
         self.start_inner(xline_incoming, curp_incoming).await
     }
 
-    /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and `CurpServer`
-    /// for the Xline Server.
+    /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and
+    /// `CurpServer` for the Xline Server.
     #[allow(
         clippy::type_complexity, // it is easy to read
         clippy::too_many_lines, // TODO: split this into multiple functions
