@@ -97,7 +97,7 @@ async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         })
         .collect();
 
-    match ce.after_sync(cmds, highest_index).await {
+    match ce.after_sync(cmds, highest_index) {
         Ok(resps) => {
             for ((asr, er_opt), tx) in resps
                 .into_iter()
