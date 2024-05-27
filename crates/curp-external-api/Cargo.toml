@@ -16,5 +16,5 @@ engine = { path = "../engine" }
 mockall = "0.12.1"
 prost = "0.12.3"
 serde = { version = "1.0.199", features = ["derive", "rc"] }
-thiserror = "1.0.60"
+thiserror = "1.0.61"
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
