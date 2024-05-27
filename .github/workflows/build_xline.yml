@@ -19,7 +19,7 @@ on:
         type: string
       script_name:
         description: "Name of the script to run"
-        required: true
+        required: false
         type: string
       uploadLogs:
         description: "Boolean to decide if logs should be uploaded"
@@ -31,6 +31,11 @@ on:
         required: false
         default: false
         type: boolean
+      artifactpath:
+        description: "artifact path"
+        required: false
+        type: string
+
 jobs:
   build_and_test:
     runs-on: ubuntu-latest
@@ -68,7 +73,17 @@ jobs:
           cd scripts
           cp ../target/release/{${{ inputs.binaries }}} .
           ${{ inputs.additional_setup_commands }}
-          bash ./${{ inputs.script_name }}
+
+      - name: runtest
+        if: ${{ inputs.script_name }}
+        run: |
+          bash ./scripts/${{ inputs.script_name }}
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.artifactpath }}
+        with:
+          name: xline
+          path: ${{ inputs.artifactpath }}
 
       - name: Upload logs
         if: ${{ inputs.uploadLogs }} && (failure() || cancelled())
