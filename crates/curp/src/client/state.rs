@@ -114,6 +114,11 @@ impl State {
         self.client_id.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Checks if self uses raw curp
+    pub(super) fn is_raw_curp(&self) -> bool {
+        self.immutable.is_raw_curp
+    }
+
     /// Generate client id if it does not exist when it is the leader
     pub(crate) async fn check_gen_local_client_id(&self) {
         let local_server_id = self.immutable.local_server;
