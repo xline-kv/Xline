@@ -104,7 +104,7 @@ async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         })
         .collect();
 
-    match ce.after_sync(cmds, highest_index).await {
+    match ce.after_sync(cmds, highest_index) {
         Ok(resps) => {
             let mut cb_w = cb.write();
             let results = resps.into_iter().zip(propose_ids).zip(resp_txs);

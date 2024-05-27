@@ -18,7 +18,7 @@ use engine::{
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{sync::mpsc, time::sleep};
+use tokio::sync::mpsc;
 use tracing::debug;
 use utils::config::EngineConfig;
 
@@ -284,7 +284,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(result)
     }
 
-    async fn after_sync(
+    fn after_sync(
         &self,
         cmds: Vec<AfterSyncCmd<'_, TestCommand>>,
         highest_index: LogIndex,
@@ -298,7 +298,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         let as_duration = cmds
             .iter()
             .fold(Duration::default(), |acc, c| acc + c.cmd().as_dur);
-        sleep(as_duration).await;
+        std::thread::sleep(as_duration);
         if cmds.iter().any(|c| c.cmd().as_should_fail) {
             return Err(ExecuteError("fail".to_owned()));
         }

@@ -269,7 +269,7 @@ impl CommandExecutor {
     }
 
     /// After sync KV commands
-    async fn after_sync_kv<T>(
+    fn after_sync_kv<T>(
         &self,
         wrapper: &RequestWrapper,
         txn_db: &T,
@@ -286,15 +286,14 @@ impl CommandExecutor {
     where
         T: XlineStorageOps + TransactionApi,
     {
-        let (asr, er) = self
-            .kv_storage
-            .after_sync(wrapper, txn_db, index, revision_gen, to_execute)
-            .await?;
+        let (asr, er) =
+            self.kv_storage
+                .after_sync(wrapper, txn_db, index, revision_gen, to_execute)?;
         Ok((asr, er))
     }
 
     /// After sync other type of commands
-    async fn after_sync_others<T>(
+    fn after_sync_others<T>(
         &self,
         wrapper: &RequestWrapper,
         txn_db: &T,
@@ -322,11 +321,7 @@ impl CommandExecutor {
 
         let (asr, wr_ops) = match wrapper.backend() {
             RequestBackend::Auth => self.auth_storage.after_sync(wrapper, auth_revision)?,
-            RequestBackend::Lease => {
-                self.lease_storage
-                    .after_sync(wrapper, general_revision)
-                    .await?
-            }
+            RequestBackend::Lease => self.lease_storage.after_sync(wrapper, general_revision)?,
             RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, general_revision),
             RequestBackend::Kv => unreachable!("Should not sync kv commands"),
         };
@@ -355,7 +350,7 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         }
     }
 
-    async fn after_sync(
+    fn after_sync(
         &self,
         cmds: Vec<AfterSyncCmd<'_, Command>>,
         highest_index: LogIndex,
@@ -395,26 +390,21 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         for (cmd, to_execute) in cmds.into_iter().map(AfterSyncCmd::into_parts) {
             let wrapper = cmd.request();
             let (asr, er) = match wrapper.backend() {
-                RequestBackend::Kv => {
-                    self.after_sync_kv(
-                        wrapper,
-                        &txn_db,
-                        &index_state,
-                        &general_revision_state,
-                        to_execute,
-                    )
-                    .await
-                }
-                RequestBackend::Auth | RequestBackend::Lease | RequestBackend::Alarm => {
-                    self.after_sync_others(
+                RequestBackend::Kv => self.after_sync_kv(
+                    wrapper,
+                    &txn_db,
+                    &index_state,
+                    &general_revision_state,
+                    to_execute,
+                ),
+                RequestBackend::Auth | RequestBackend::Lease | RequestBackend::Alarm => self
+                    .after_sync_others(
                         wrapper,
                         &txn_db,
                         &general_revision_state,
                         &auth_revision_state,
                         to_execute,
-                    )
-                    .await
-                }
+                    ),
             }?;
             resps.push((asr, er));
 

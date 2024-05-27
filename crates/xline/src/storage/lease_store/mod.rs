@@ -20,7 +20,6 @@ use engine::TransactionApi;
 use log::debug;
 use parking_lot::RwLock;
 use prost::Message;
-use tokio::sync::mpsc;
 use utils::table_names::LEASE_TABLE;
 use xlineapi::{
     command::{CommandResponse, SyncResponse},
@@ -58,7 +57,7 @@ pub(crate) struct LeaseStore {
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// KV update sender
-    kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
+    kv_update_tx: flume::Sender<(i64, Vec<Event>)>,
     /// Primary flag
     is_primary: AtomicBool,
     /// cache unsynced lease id
@@ -74,7 +73,7 @@ impl LeaseStore {
         header_gen: Arc<HeaderGenerator>,
         db: Arc<DB>,
         index: Arc<Index>,
-        kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
+        kv_update_tx: flume::Sender<(i64, Vec<Event>)>,
         is_leader: bool,
     ) -> Self {
         Self {
@@ -99,7 +98,7 @@ impl LeaseStore {
     }
 
     /// sync a lease request
-    pub(crate) async fn after_sync(
+    pub(crate) fn after_sync(
         &self,
         request: &RequestWrapper,
         revision_gen: &RevisionNumberGeneratorState<'_>,
@@ -110,7 +109,6 @@ impl LeaseStore {
             revision_gen.next()
         };
         self.sync_request(request, revision)
-            .await
             .map(|(rev, ops)| (SyncResponse::new(rev), ops))
     }
 
@@ -285,7 +283,7 @@ impl LeaseStore {
     }
 
     /// Sync `RequestWithToken`
-    async fn sync_request(
+    fn sync_request(
         &self,
         wrapper: &RequestWrapper,
         revision: i64,
@@ -298,7 +296,7 @@ impl LeaseStore {
             }
             RequestWrapper::LeaseRevokeRequest(ref req) => {
                 debug!("Sync LeaseRevokeRequest {:?}", req);
-                self.sync_lease_revoke_request(req, revision).await?
+                self.sync_lease_revoke_request(req, revision)?
             }
             RequestWrapper::LeaseLeasesRequest(ref req) => {
                 debug!("Sync LeaseLeasesRequest {:?}", req);
@@ -332,7 +330,7 @@ impl LeaseStore {
     }
 
     /// Sync `LeaseRevokeRequest`
-    async fn sync_lease_revoke_request(
+    fn sync_lease_revoke_request(
         &self,
         req: &LeaseRevokeRequest,
         revision: i64,
@@ -369,7 +367,7 @@ impl LeaseStore {
 
         let _ignore = self.lease_collection.revoke(req.id);
         assert!(
-            self.kv_update_tx.send((revision, updates)).await.is_ok(),
+            self.kv_update_tx.send((revision, updates)).is_ok(),
             "Failed to send updates to KV watcher"
         );
         Ok(ops)
@@ -456,7 +454,7 @@ mod test {
             "the future should block until the lease is synced"
         );
 
-        let (_ignore, ops) = lease_store.after_sync(&req1, &rev_gen_state).await?;
+        let (_ignore, ops) = lease_store.after_sync(&req1, &rev_gen_state)?;
         lease_store.db.write_ops(ops)?;
         lease_store.mark_lease_synced(&req1);
 
@@ -477,7 +475,7 @@ mod test {
             "the future should block until the lease is synced"
         );
 
-        let (_ignore, ops) = lease_store.after_sync(&req2, &rev_gen_state).await?;
+        let (_ignore, ops) = lease_store.after_sync(&req2, &rev_gen_state)?;
         lease_store.db.write_ops(ops)?;
         lease_store.mark_lease_synced(&req2);
 
@@ -519,7 +517,7 @@ mod test {
 
     fn init_store(db: Arc<DB>) -> (LeaseStore, RevisionNumberGenerator) {
         let lease_collection = Arc::new(LeaseCollection::new(0));
-        let (kv_update_tx, _) = mpsc::channel(1);
+        let (kv_update_tx, _) = flume::bounded(1);
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
         (
@@ -534,7 +532,7 @@ mod test {
         rev_gen: &RevisionNumberGeneratorState<'_>,
     ) -> Result<ResponseWrapper, ExecuteError> {
         let cmd_res = ls.execute(req)?;
-        let (_ignore, ops) = ls.after_sync(req, rev_gen).await?;
+        let (_ignore, ops) = ls.after_sync(req, rev_gen)?;
         ls.db.write_ops(ops)?;
         rev_gen.commit();
         Ok(cmd_res.into_inner())
