@@ -380,6 +380,9 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     ) -> Result<LeaseKeepAliveMsg, CurpError> {
         pin_mut!(req_stream);
         while let Some(req) = req_stream.next().await {
+            // NOTE: The leader may shutdown itself in configuration change.
+            // We must first check this situation.
+            self.curp.check_leader_transfer()?;
             if self.curp.is_shutdown() {
                 return Err(CurpError::shutting_down());
             }
