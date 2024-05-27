@@ -383,7 +383,7 @@ impl KvWatcher {
     /// Create a new `Arc<KvWatcher>`
     pub(crate) fn new_arc(
         kv_store_inner: Arc<KvStoreInner>,
-        kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
+        kv_update_rx: flume::Receiver<(i64, Vec<Event>)>,
         sync_victims_interval: Duration,
         task_manager: &TaskManager,
     ) -> Arc<Self> {
@@ -405,13 +405,13 @@ impl KvWatcher {
     #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
     async fn kv_updates_task(
         kv_watcher: Arc<KvWatcher>,
-        mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
+        kv_update_rx: flume::Receiver<(i64, Vec<Event>)>,
         shutdown_listener: Listener,
     ) {
         loop {
             tokio::select! {
-                updates = kv_update_rx.recv() => {
-                    let Some(updates) = updates else {
+                updates = kv_update_rx.recv_async() => {
+                    let Ok(updates) = updates else {
                         return;
                     };
                     kv_watcher.handle_kv_updates(updates);
@@ -609,12 +609,12 @@ mod test {
     };
 
     fn init_empty_store(task_manager: &TaskManager) -> (Arc<KvStore>, Arc<KvWatcher>) {
-        let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
+        let (compact_tx, _compact_rx) = flume::bounded(COMPACT_CHANNEL_SIZE);
         let db = DB::open(&EngineConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
         let lease_collection = Arc::new(LeaseCollection::new(0));
-        let (kv_update_tx, kv_update_rx) = mpsc::channel(128);
+        let (kv_update_tx, kv_update_rx) = flume::bounded(128);
         let kv_store_inner = Arc::new(KvStoreInner::new(index, db));
         let store = Arc::new(KvStore::new(
             Arc::clone(&kv_store_inner),
@@ -760,7 +760,6 @@ mod test {
         let rev_gen_state = rev_gen.state();
         store
             .after_sync(&req, &txn, &index_state, &rev_gen_state, false)
-            .await
             .unwrap();
         txn.commit().unwrap();
         index_state.commit();
