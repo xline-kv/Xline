@@ -96,13 +96,17 @@ impl WALSegment {
         &mut self,
     ) -> Result<impl Iterator<Item = LogEntry<C>>, WALError>
     where
-        C: Serialize + DeserializeOwned + 'static,
+        C: Serialize + DeserializeOwned + 'static + std::fmt::Debug,
     {
         let frame_batches = self.read_all(WAL::<C>::new())?;
+        let frame_batches_filtered: Vec<_> = frame_batches
+            .into_iter()
+            .filter(|b| !b.is_empty())
+            .collect();
         // The highest_index of this segment
         let mut highest_index = u64::MAX;
         // We get the last frame batch to check it's type
-        if let Some(frames) = frame_batches.last() {
+        if let Some(frames) = frame_batches_filtered.last() {
             let frame = frames
                 .last()
                 .unwrap_or_else(|| unreachable!("a batch should contains at least one frame"));
@@ -115,13 +119,16 @@ impl WALSegment {
         self.update_seal_index(highest_index);
 
         // Get log entries that index is no larger than `highest_index`
-        Ok(frame_batches.into_iter().flatten().filter_map(move |f| {
-            if let DataFrameOwned::Entry(e) = f {
-                (e.index <= highest_index).then_some(e)
-            } else {
-                None
-            }
-        }))
+        Ok(frame_batches_filtered
+            .into_iter()
+            .flatten()
+            .filter_map(move |f| {
+                if let DataFrameOwned::Entry(e) = f {
+                    (e.index <= highest_index).then_some(e)
+                } else {
+                    None
+                }
+            }))
     }
 
     /// Seal the current segment
