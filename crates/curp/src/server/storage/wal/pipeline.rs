@@ -34,6 +34,10 @@ pub(super) struct FilePipeline {
     stopped: Arc<AtomicBool>,
     /// Join handle of the allocation task
     file_alloc_task_handle: Option<JoinHandle<()>>,
+    // #[cfg_attr(not(madsim), allow(unused))]
+    #[cfg(madsim)]
+    /// File count used in madsim tests
+    file_count: usize,
 }
 
 impl FilePipeline {
@@ -43,13 +47,13 @@ impl FilePipeline {
             error!("Failed to clean up tmp files: {e}");
         }
 
-        let (file_tx, file_rx) = flume::bounded(1);
         let dir_c = dir.clone();
         let stopped = Arc::new(AtomicBool::new(false));
         let stopped_c = Arc::clone(&stopped);
 
         #[cfg(not(madsim))]
         {
+            let (file_tx, file_rx) = flume::bounded(1);
             let file_alloc_task_handle = std::thread::spawn(move || {
                 let mut file_count = 0;
                 loop {
@@ -85,36 +89,13 @@ impl FilePipeline {
 
         #[cfg(madsim)]
         {
-            let _ignore = tokio::spawn(async move {
-                let mut file_count = 0;
-                loop {
-                    match Self::alloc(&dir_c, file_size, &mut file_count) {
-                        Ok(file) => {
-                            if file_tx.send_async(file).await.is_err() {
-                                // The receiver is already dropped, stop this task
-                                break;
-                            }
-                            if stopped_c.load(Ordering::Relaxed) {
-                                if let Err(e) = Self::clean_up(&dir_c) {
-                                    error!("failed to clean up pipeline temp files: {e}");
-                                }
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            error!("failed to allocate file: {e}");
-                            break;
-                        }
-                    }
-                }
-            });
-
             Self {
                 dir,
                 file_size,
-                file_iter: Some(file_rx.into_iter()),
+                file_iter: None,
                 stopped,
                 file_alloc_task_handle: None,
+                file_count: 0,
             }
         }
     }
@@ -161,6 +142,7 @@ impl Drop for FilePipeline {
 impl Iterator for FilePipeline {
     type Item = io::Result<LockedFile>;
 
+    #[cfg(not(madsim))]
     fn next(&mut self) -> Option<Self::Item> {
         if self.stopped.load(Ordering::Relaxed) {
             return None;
@@ -170,6 +152,14 @@ impl Iterator for FilePipeline {
             .unwrap_or_else(|| unreachable!("Option is always `Some`"))
             .next()
             .map(Ok)
+    }
+
+    #[cfg(madsim)]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.stopped.load(Ordering::Relaxed) {
+            return None;
+        }
+        Some(Self::alloc(&self.dir, self.file_size, &mut self.file_count))
     }
 }
 
