@@ -13,9 +13,9 @@ use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator}
 #[cfg(not(madsim))]
 use futures::Stream;
 use jsonwebtoken::{DecodingKey, EncodingKey};
+use tokio::fs;
 #[cfg(not(madsim))]
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::{fs, sync::mpsc::channel};
 #[cfg(not(madsim))]
 use tonic::transport::{
     server::Connected, Certificate, ClientTlsConfig, Identity, ServerTlsConfig,
@@ -211,9 +211,9 @@ impl XlineServer {
         Arc<AlarmStore>,
         Arc<KvWatcher>,
     )> {
-        let (compact_task_tx, compact_task_rx) = channel(COMPACT_CHANNEL_SIZE);
+        let (compact_task_tx, compact_task_rx) = flume::bounded(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
-        let (kv_update_tx, kv_update_rx) = channel(CHANNEL_SIZE);
+        let (kv_update_tx, kv_update_rx) = flume::bounded(CHANNEL_SIZE);
         let kv_store_inner = Arc::new(KvStoreInner::new(
             Arc::clone(&index),
             Arc::clone(&persistent),

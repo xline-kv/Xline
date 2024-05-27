@@ -459,7 +459,6 @@ mod test {
                 &store.revision_gen().state(),
                 false,
             )
-            .await
             .unwrap();
     }
 
@@ -584,13 +583,13 @@ mod test {
     #[abort_on_panic]
     async fn test_watch_prev_kv() {
         let task_manager = Arc::new(TaskManager::new());
-        let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
+        let (compact_tx, _compact_rx) = flume::bounded(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
         let db = DB::open(&EngineConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let next_id_gen = Arc::new(WatchIdGenerator::new(1));
-        let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
+        let (kv_update_tx, kv_update_rx) = flume::bounded(CHANNEL_SIZE);
         let kv_store_inner = Arc::new(KvStoreInner::new(index, Arc::clone(&db)));
         let kv_store = Arc::new(KvStore::new(
             Arc::clone(&kv_store_inner),
@@ -770,13 +769,13 @@ mod test {
     #[tokio::test]
     async fn watch_compacted_revision_should_fail() {
         let task_manager = Arc::new(TaskManager::new());
-        let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
+        let (compact_tx, _compact_rx) = flume::bounded(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
         let db = DB::open(&EngineConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let next_id_gen = Arc::new(WatchIdGenerator::new(1));
-        let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
+        let (kv_update_tx, kv_update_rx) = flume::bounded(CHANNEL_SIZE);
         let kv_store_inner = Arc::new(KvStoreInner::new(index, Arc::clone(&db)));
         let kv_store = Arc::new(KvStore::new(
             Arc::clone(&kv_store_inner),
