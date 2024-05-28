@@ -1,6 +1,6 @@
-//                LEASE_KEEP_ALIVE
-//                       |
-// KV_UPDATES      TONIC_SERVER
+//  AFTER_SYNC     LEASE_KEEP_ALIVE
+//      |                  |
+//  KV_UPDATES      TONIC_SERVER
 //       \        /      |
 //      WATCH_TASK  CONF_CHANGE
 //
@@ -76,7 +76,8 @@ impl TaskName {
 }
 
 /// All edges of task graph, the first item in each pair must be shut down before the second item
-pub const ALL_EDGES: [(TaskName, TaskName); 4] = [
+pub const ALL_EDGES: [(TaskName, TaskName); 5] = [
+    (TaskName::AfterSync, TaskName::KvUpdates),
     (TaskName::KvUpdates, TaskName::WatchTask),
     (TaskName::LeaseKeepAlive, TaskName::TonicServer),
     (TaskName::TonicServer, TaskName::WatchTask),
