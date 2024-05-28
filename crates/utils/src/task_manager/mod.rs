@@ -180,6 +180,9 @@ impl TaskManager {
                 // Directly abort the task if it's cancel safe
                 if task.name.cancel_safe() {
                     handle.abort();
+                    if let Err(e) = handle.await {
+                        assert!(e.is_cancelled(), "background task should not panic: {e}");
+                    }
                 } else {
                     handle
                         .await
@@ -417,8 +420,13 @@ mod test {
         for name in TaskName::iter() {
             let record_tx = record_tx.clone();
             tm.spawn(name, move |listener| async move {
-                listener.wait().await;
-                record_tx.send(name).unwrap();
+                if name.cancel_safe() {
+                    record_tx.send(name).unwrap();
+                    listener.wait().await;
+                } else {
+                    listener.wait().await;
+                    record_tx.send(name).unwrap();
+                }
             });
         }
         drop(record_tx);
