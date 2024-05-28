@@ -417,6 +417,7 @@ mod test {
         time::Duration,
     };
 
+    use engine::TransactionApi;
     use parking_lot::Mutex;
     use test_macros::abort_on_panic;
     use tokio::{
@@ -450,16 +451,17 @@ mod test {
             ..Default::default()
         });
 
+        let rev_gen = store.revision_gen();
+        let index = store.index();
         let txn = store.db().transaction();
+        let rev_state = rev_gen.state();
+        let index_state = index.state();
         store
-            .after_sync(
-                &req,
-                &txn,
-                &store.index().state(),
-                &store.revision_gen().state(),
-                false,
-            )
+            .after_sync(&req, &txn, &index_state, &rev_state, false)
             .unwrap();
+        txn.commit().unwrap();
+        index_state.commit();
+        rev_state.commit();
     }
 
     #[tokio::test]
