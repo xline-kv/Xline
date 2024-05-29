@@ -289,7 +289,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     #[cfg(madsim)]
     #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub async fn run_from_addr<CE>(
+    pub async fn run_from_addr(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         addr: std::net::SocketAddr,
@@ -302,10 +302,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
         client_tls_config: Option<ClientTlsConfig>,
         sps: Vec<SpObject<C>>,
         ucps: Vec<UcpObject<C>>,
-    ) -> Result<(), crate::error::ServerError>
-    where
-        CE: CommandExecutor<C>,
-    {
+    ) -> Result<(), crate::error::ServerError> {
         use utils::task_manager::tasks::TaskName;
 
         use crate::rpc::{InnerProtocolServer, ProtocolServer};
