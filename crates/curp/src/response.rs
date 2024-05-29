@@ -62,13 +62,13 @@ impl ResponseSender {
 /// Receiver for obtaining execution or after sync results
 pub(crate) struct ResponseReceiver {
     /// The response stream
-    resp_stream: Pin<Box<dyn Stream<Item = tonic::Result<OpResponse>> + Send>>,
+    resp_stream: Pin<Box<dyn Stream<Item = Result<OpResponse, Status>> + Send>>,
 }
 
 impl ResponseReceiver {
     /// Creates a new [`ResponseReceiver`].
     pub(crate) fn new(
-        resp_stream: Box<dyn Stream<Item = tonic::Result<OpResponse>> + Send>,
+        resp_stream: Box<dyn Stream<Item = Result<OpResponse, Status>> + Send>,
     ) -> Self {
         Self {
             resp_stream: Box::into_pin(resp_stream),
