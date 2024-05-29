@@ -164,7 +164,10 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         request: ProposeRequest,
         token: Option<String>,
         timeout: Duration,
-    ) -> Result<tonic::Response<Box<dyn Stream<Item = tonic::Result<OpResponse>> + Send>>, CurpError>;
+    ) -> Result<
+        tonic::Response<Box<dyn Stream<Item = Result<OpResponse, tonic::Status>> + Send>>,
+        CurpError,
+    >;
 
     /// Send `RecordRequest`
     async fn record(
@@ -397,8 +400,10 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         request: ProposeRequest,
         token: Option<String>,
         timeout: Duration,
-    ) -> Result<tonic::Response<Box<dyn Stream<Item = tonic::Result<OpResponse>> + Send>>, CurpError>
-    {
+    ) -> Result<
+        tonic::Response<Box<dyn Stream<Item = Result<OpResponse, tonic::Status>> + Send>>,
+        CurpError,
+    > {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         if let Some(token) = token {
@@ -681,8 +686,10 @@ where
         request: ProposeRequest,
         token: Option<String>,
         _timeout: Duration,
-    ) -> Result<tonic::Response<Box<dyn Stream<Item = tonic::Result<OpResponse>> + Send>>, CurpError>
-    {
+    ) -> Result<
+        tonic::Response<Box<dyn Stream<Item = Result<OpResponse, tonic::Status>> + Send>>,
+        CurpError,
+    > {
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
