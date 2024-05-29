@@ -9,8 +9,8 @@ use curp::{
     cmd::Command,
     members::{ClusterInfo, ServerId},
     rpc::{
-        ConfChange, FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ReadState,
+        ConfChange, FetchClusterRequest, FetchClusterResponse, Member, OpResponse,
+        ProposeConfChangeRequest, ProposeConfChangeResponse, ReadState,
     },
     server::{
         conflict::test_pools::{TestSpecPool, TestUncomPool},
@@ -400,15 +400,15 @@ pub struct SimProtocolClient {
 
 impl SimProtocolClient {
     #[inline]
-    pub async fn propose(
+    pub async fn propose_stream(
         &mut self,
         cmd: impl tonic::IntoRequest<ProposeRequest> + 'static + Send,
-    ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<tonic::Streaming<OpResponse>>, tonic::Status> {
         let addr = self.addr.clone();
         self.handle
             .spawn(async move {
                 let mut client = ProtocolClient::connect(addr).await.unwrap();
-                client.propose(cmd).await
+                client.propose_stream(cmd).await
             })
             .await
             .unwrap()
