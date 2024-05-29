@@ -1,5 +1,6 @@
 use std::{
     fs,
+    marker::PhantomData,
     path::{Path, PathBuf},
 };
 
@@ -9,7 +10,7 @@ use crate::{
     api::{engine_api::StorageEngine, snapshot_api::SnapshotApi},
     error::EngineError,
     memory_engine::{MemoryEngine, MemorySnapshot, MemoryTransaction},
-    TransactionApi,
+    StorageOps, TransactionApi,
 };
 
 /// Mock `RocksDB` Storage Engine
@@ -77,39 +78,20 @@ impl RocksEngine {
 #[async_trait::async_trait]
 impl StorageEngine for RocksEngine {
     type Snapshot = RocksSnapshot;
-    type Transaction = RocksTransaction;
+    type Transaction<'db> = RocksTransaction<'db>;
 
     #[inline]
-    fn transaction(&self) -> RocksTransaction {
+    fn transaction(&self) -> RocksTransaction<'_> {
         RocksTransaction {
             db: self.clone(),
             inner: self.inner.transaction(),
+            phatom: PhantomData,
         }
-    }
-
-    #[inline]
-    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
-        self.inner.get(table, key)
-    }
-
-    #[inline]
-    fn get_multi(
-        &self,
-        table: &str,
-        keys: &[impl AsRef<[u8]>],
-    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
-        self.inner.get_multi(table, keys)
     }
 
     #[inline]
     fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, EngineError> {
         self.inner.get_all(table)
-    }
-
-    #[inline]
-    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError> {
-        self.inner.write_batch(wr_ops, sync)?;
-        self.fs_sync()
     }
 
     #[inline]
@@ -141,6 +123,33 @@ impl StorageEngine for RocksEngine {
     #[inline]
     fn file_size(&self) -> Result<u64, EngineError> {
         Ok(0)
+    }
+}
+
+impl StorageOps for RocksEngine {
+    fn write(&self, op: crate::WriteOperation<'_>, sync: bool) -> Result<(), EngineError> {
+        self.write_multi(vec![op], sync)
+    }
+
+    fn write_multi(
+        &self,
+        ops: Vec<crate::WriteOperation<'_>>,
+        sync: bool,
+    ) -> Result<(), EngineError> {
+        self.inner.write_multi(ops, sync)?;
+        self.fs_sync()
+    }
+
+    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
+        self.inner.get(table, key)
+    }
+
+    fn get_multi(
+        &self,
+        table: &str,
+        keys: &[impl AsRef<[u8]>],
+    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
+        self.inner.get_multi(table, keys)
     }
 }
 
@@ -208,17 +217,26 @@ impl SnapshotApi for RocksSnapshot {
 
 /// Mock `RocksTransaction`
 #[derive(Debug)]
-pub struct RocksTransaction {
+pub struct RocksTransaction<'a> {
     /// The mock engine
     db: RocksEngine,
     /// The memory transaction
     inner: MemoryTransaction,
+    /// phantom lifetime
+    phatom: PhantomData<&'a ()>,
 }
 
-#[async_trait::async_trait]
-impl TransactionApi for RocksTransaction {
-    fn write(&self, op: WriteOperation<'_>) -> Result<(), EngineError> {
-        self.inner.write(op)
+impl StorageOps for RocksTransaction<'_> {
+    fn write(&self, op: crate::WriteOperation<'_>, sync: bool) -> Result<(), EngineError> {
+        self.inner.write(op, sync)
+    }
+
+    fn write_multi(
+        &self,
+        ops: Vec<crate::WriteOperation<'_>>,
+        sync: bool,
+    ) -> Result<(), EngineError> {
+        self.inner.write_multi(ops, sync)
     }
 
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
@@ -232,9 +250,12 @@ impl TransactionApi for RocksTransaction {
     ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
         self.inner.get_multi(table, keys)
     }
+}
 
-    async fn commit(self) -> Result<(), EngineError> {
-        self.inner.commit().await?;
+#[async_trait::async_trait]
+impl TransactionApi for RocksTransaction<'_> {
+    fn commit(self) -> Result<(), EngineError> {
+        self.inner.commit()?;
         self.db.fs_sync()
     }
 

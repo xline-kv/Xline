@@ -5,12 +5,11 @@ use bytes::{Bytes, BytesMut};
 #[cfg(madsim)]
 use crate::mock_rocksdb_engine::{RocksEngine, RocksSnapshot, RocksTransaction};
 #[cfg(not(madsim))]
+use crate::rocksdb_engine::{RocksEngine, RocksSnapshot, RocksTransaction};
 use crate::{
     error::EngineError,
     memory_engine::{MemoryEngine, MemorySnapshot, MemoryTransaction},
-    metrics,
-    rocksdb_engine::{RocksEngine, RocksSnapshot, RocksTransaction},
-    SnapshotApi, StorageEngine, StorageOps, TransactionApi, WriteOperation,
+    metrics, SnapshotApi, StorageEngine, StorageOps, TransactionApi, WriteOperation,
 };
 
 #[derive(Debug)]
