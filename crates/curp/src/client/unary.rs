@@ -3,7 +3,7 @@ use std::{cmp::Ordering, marker::PhantomData, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{future, stream::FuturesUnordered, Future, Stream, StreamExt};
-use tonic::Response;
+use tonic::{Response, Status};
 use tracing::{debug, warn};
 
 use super::{state::State, ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
@@ -109,7 +109,7 @@ impl<C: Command> Unary<C> {
     where
         PF: Future<
             Output = Result<
-                Response<Box<dyn Stream<Item = tonic::Result<OpResponse>> + Send>>,
+                Response<Box<dyn Stream<Item = Result<OpResponse, Status>> + Send>>,
                 CurpError,
             >,
         >,
@@ -130,7 +130,7 @@ impl<C: Command> Unary<C> {
     where
         PF: Future<
             Output = Result<
-                Response<Box<dyn Stream<Item = tonic::Result<OpResponse>> + Send>>,
+                Response<Box<dyn Stream<Item = Result<OpResponse, Status>> + Send>>,
                 CurpError,
             >,
         >,

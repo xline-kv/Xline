@@ -8,6 +8,7 @@ use curp_test_utils::test_cmd::TestCommand;
 use futures::{future::BoxFuture, Stream};
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
+use tonic::Status;
 use tracing_test::traced_test;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
@@ -567,7 +568,7 @@ impl ConnectApi for MockedStreamConnectApi {
         _request: ProposeRequest,
         _token: Option<String>,
         _timeout: Duration,
-    ) -> Result<tonic::Response<Box<dyn Stream<Item = tonic::Result<OpResponse>> + Send>>, CurpError>
+    ) -> Result<tonic::Response<Box<dyn Stream<Item = Result<OpResponse, Status>> + Send>>, CurpError>
     {
         unreachable!("please use MockedConnectApi")
     }
