@@ -11,6 +11,7 @@ use std::{
 use bincode::serialized_size;
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use itertools::Itertools;
+use num::Integer;
 use tokio::sync::mpsc;
 use tracing::{error, warn};
 
@@ -22,6 +23,128 @@ use crate::{
     snapshot::SnapshotMeta,
     LogIndex,
 };
+
+#[allow(dead_code)]
+struct SlidingWindow<T> {
+    start_index: usize,
+    limit: T,
+    current_size: T,
+    slot: VecDeque<T>,
+}
+
+#[allow(dead_code)]
+impl<T: Integer + Copy> SlidingWindow<T> {
+    fn new(start_index: usize, limit: T) -> Self {
+        return Self {
+            start_index,
+            limit,
+            current_size: num::zero(),
+            slot: VecDeque::new(),
+        };
+    }
+
+    fn append(&mut self, item: T) -> Option<Vec<Range<usize>>> {
+        let mut result = vec![];
+        while (item + self.current_size) > self.limit {
+            if self.slot.is_empty() {
+                result.push(self.start_index..(self.start_index + 1));
+                self.start_index.inc();
+                return Some(result);
+            }
+            result.push(self.start_index..(self.start_index + self.slot.len()));
+            self.start_index.inc();
+            let kicked = self.slot.pop_front();
+            if let Some(kicked) = kicked {
+                self.current_size = self.current_size - kicked;
+            }
+        }
+
+        self.current_size = self.current_size + item;
+        self.slot.push_back(item);
+
+        if result.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::SlidingWindow;
+
+    #[test]
+    fn test_slide_window_append_small_item() {
+        let mut window = SlidingWindow::new(0, 10);
+        let result = window.append(5);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_slide_window_append_items_fitting_limit() {
+        let mut window = SlidingWindow::new(0, 10);
+        let result = window.append(5);
+        assert_eq!(result, None);
+        let result = window.append(5);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_slide_window_append_items_overflow_limit() {
+        let mut window = SlidingWindow::new(0, 10);
+        let result = window.append(5);
+        assert_eq!(result, None);
+        let result = window.append(4);
+        assert_eq!(result, None);
+        let result = window.append(2);
+        assert_eq!(result, Some(vec![0..2]));
+    }
+
+    #[test]
+    fn test_slide_window_append_items_overflow_limit2() {
+        let mut window = SlidingWindow::new(0, 10);
+        let result = window.append(5);
+        assert_eq!(result, None);
+        let result = window.append(4);
+        assert_eq!(result, None);
+        let result = window.append(7);
+        assert_eq!(result, Some(vec![0..2, 1..2]));
+    }
+
+    #[test]
+    fn test_slide_window_append_items_overflow_limit_twice() {
+        let mut window = SlidingWindow::new(0, 10);
+        let result = window.append(5);
+        assert_eq!(result, None);
+        let result = window.append(4);
+        assert_eq!(result, None);
+        let result = window.append(7);
+        assert_eq!(result, Some(vec![0..2, 1..2]));
+        let result = window.append(4);
+        assert_eq!(result, Some(vec![2..3]));
+    }
+
+    #[test]
+    fn test_slide_window_append_very_large_item() {
+        let mut window = SlidingWindow::new(0, 10);
+        let result = window.append(11);
+        assert_eq!(result, Some(vec![0..1]));
+        let result = window.append(11);
+        assert_eq!(result, Some(vec![1..2]));
+    }
+
+    #[test]
+    fn test_slide_window_append_very_large_item2() {
+        let mut window = SlidingWindow::new(0, 10);
+        let result = window.append(5);
+        assert_eq!(result, None);
+        let result = window.append(11);
+        assert_eq!(result, Some(vec![0..1, 1..2]));
+        let result = window.append(11);
+        assert_eq!(result, Some(vec![2..3]));
+    }
+}
 
 /// Enum representing a range of values in the log.
 #[derive(Debug, Eq, PartialEq)]
