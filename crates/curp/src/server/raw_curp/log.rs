@@ -1,6 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)] // u64 is large enough and won't overflow
 
 use std::{
+    cmp::min,
     collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
     ops::{Bound, Range, RangeBounds, RangeInclusive},
@@ -149,7 +150,15 @@ impl<C: Command> Log<C> {
     /// `batch_end` will keep len elem
     fn truncate(&mut self, len: usize) {
         self.entries.truncate(len);
+        self.entry_size.truncate(len);
         self.batch_end.truncate(len);
+        self.first_idx_in_cur_batch = min(self.first_idx_in_cur_batch, len);
+
+        #[allow(clippy::indexing_slicing)]
+        while self.li_to_pi(self.batch_end[self.first_idx_in_cur_batch - 1]) >= len {
+            self.batch_end[self.first_idx_in_cur_batch - 1] = 0;
+            self.first_idx_in_cur_batch -= 1;
+        }
     }
 
     /// push a log entry into the back of queue
@@ -773,6 +782,8 @@ mod tests {
         assert_eq!(log.base_index, 12);
         assert_eq!(log.entries.front().unwrap().index, 13);
         assert_eq!(log.batch_end.len(), 18);
+        assert!(log.entries.len() == log.batch_end.len());
+        assert!(log.entry_size.len() == log.entries.len());
     }
 
     #[test]
@@ -813,6 +824,5 @@ mod tests {
             log_entry_size
         );
         assert!(log.has_next_batch(15));
-        println!("{}", log.first_idx_in_cur_batch);
     }
 }
