@@ -1,6 +1,7 @@
 # Xline
 
 ![Xline-logo](doc/img/xline-horizontal-black.png)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fxline-kv%2FXline.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fxline-kv%2FXline?ref=badge_shield)
 
 [![Discord Shield][discord-badge]][discord-url]
 [![Apache 2.0 licensed][apache-badge]][apache-url]
@@ -122,3 +123,7 @@ The Xline project adheres to [the CNCF Community Code of Conduct](./CODE_OF_COND
   - Enable chaos engineering to validate the system's stability
   - Integration with other CNCF components
   - Support Karmada (a Kubernetes management system)
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fxline-kv%2FXline.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fxline-kv%2FXline?ref=badge_large)
