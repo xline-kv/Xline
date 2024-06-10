@@ -17,7 +17,7 @@ curp-external-api = { path = "../curp-external-api" }
 engine = { path = "../engine" }
 itertools = "0.12"
 prost = "0.12.3"
-serde = { version = "1.0.199", features = ["derive", "rc"] }
+serde = { version = "1.0.203", features = ["derive", "rc"] }
 thiserror = "1.0.61"
 tokio = { version = "0.2.25", package = "madsim-tokio", features = [
   "rt-multi-thread",
