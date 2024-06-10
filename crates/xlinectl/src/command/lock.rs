@@ -1,11 +1,11 @@
 use clap::{arg, ArgMatches, Command};
+use std::process::Command as StdCommand;
 use tokio::signal;
 use xline_client::{
     error::Result,
     types::lock::{LockRequest, UnlockRequest},
     Client,
 };
-use std::process::Command as StdCommand;
 
 use crate::utils::printer::Printer;
 
@@ -35,8 +35,10 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 
     if let Some(exec_command) = exec_command {
         let exec_command_vec: Vec<&String> = exec_command.collect();
-        if exec_command_vec.len() > 0 {
-            let (command, args) = exec_command_vec.split_first().unwrap();
+        if !exec_command_vec.is_empty() {
+            let (command, args) = exec_command_vec
+                .split_first()
+                .expect("Expected at least one exec command");
             let output = StdCommand::new(command)
                 .args(args)
                 .output()
