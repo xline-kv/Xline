@@ -5,6 +5,7 @@ use xline_client::{
     types::lock::{LockRequest, UnlockRequest},
     Client,
 };
+use std::process::Command as StdCommand;
 
 use crate::utils::printer::Printer;
 
@@ -13,6 +14,7 @@ pub(crate) fn command() -> Command {
     Command::new("lock")
         .about("Acquire a lock, which will return a unique key that exists so long as the lock is held")
         .arg(arg!(<lockname> "name of the lock"))
+        .arg(arg!(<exec_command> "command to execute").num_args(1..).required(false))
 }
 
 /// Build request from matches
@@ -28,6 +30,20 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
     let resp = client.lock_client().lock(req).await?;
 
     resp.print();
+
+    let exec_command = matches.get_many::<String>("exec_command");
+
+    if let Some(exec_command) = exec_command {
+        let exec_command_vec: Vec<&String> = exec_command.collect();
+        if exec_command_vec.len() > 0 {
+            let (command, args) = exec_command_vec.split_first().unwrap();
+            let output = StdCommand::new(command)
+                .args(args)
+                .output()
+                .expect("failed to execute command");
+            println!("{}", String::from_utf8_lossy(&output.stdout));
+        }
+    }
 
     signal::ctrl_c().await.expect("failed to listen for event");
 
