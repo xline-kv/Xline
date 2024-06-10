@@ -66,10 +66,13 @@ mod tests {
 
     #[test]
     fn command_parse_should_be_valid() {
-        let test_cases = vec![TestCase::new(
-            vec!["lock", "my_lock"],
-            Some(LockRequest::new("my_lock")),
-        )];
+        let test_cases = vec![
+            TestCase::new(vec!["lock", "my_lock"], Some(LockRequest::new("my_lock"))),
+            TestCase::new(
+                vec!["lock", "my_lock", "echo", "lock", "acquired"],
+                Some(LockRequest::new("my_lock")),
+            ),
+        ];
 
         for case in test_cases {
             case.run_test();
