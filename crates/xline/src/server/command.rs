@@ -24,7 +24,6 @@ use crate::{
     rpc::{RequestBackend, RequestWrapper},
     storage::{
         db::{WriteOp, DB},
-        storage_api::StorageApi,
         AlarmStore, AuthStore, KvStore, LeaseStore,
     },
 };

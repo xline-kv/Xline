@@ -14,7 +14,6 @@ use xlineapi::{execute_error::ExecuteError, AlarmMember};
 use super::{
     auth_store::{AUTH_ENABLE_KEY, AUTH_REVISION_KEY},
     revision::KeyRevision,
-    storage_api::StorageApi,
 };
 use crate::{
     rpc::{KeyValue, PbLease, Role, User},
@@ -26,6 +25,11 @@ use crate::{
 pub(crate) const FINISHED_COMPACT_REVISION: &str = "finished_compact_revision";
 /// Key of scheduled compact revision
 pub(crate) const SCHEDULED_COMPACT_REVISION: &str = "scheduled_compact_revision";
+
+/// Key and value pair
+type KeyValuePair = (Vec<u8>, Vec<u8>);
+/// Key and revision pair
+type KeyRevisionPair = (Vec<u8>, KeyRevision);
 
 /// Database to store revision to kv mapping
 #[derive(Debug)]
@@ -80,10 +84,13 @@ impl DB {
             })
             .unwrap_or_default()
     }
-}
-#[async_trait::async_trait]
-impl StorageApi for DB {
-    fn get_values<K>(
+
+    /// Get values by keys from storage
+    ///
+    /// # Errors
+    ///
+    /// if error occurs in storage, return `Err(error)`
+    pub(crate) fn get_values<K>(
         &self,
         table: &'static str,
         keys: &[K],
@@ -103,7 +110,16 @@ impl StorageApi for DB {
         Ok(values)
     }
 
-    fn get_value<K>(&self, table: &'static str, key: K) -> Result<Option<Vec<u8>>, ExecuteError>
+    /// Get values by keys from storage
+    ///
+    /// # Errors
+    ///
+    /// if error occurs in storage, return `Err(error)`
+    pub(crate) fn get_value<K>(
+        &self,
+        table: &'static str,
+        key: K,
+    ) -> Result<Option<Vec<u8>>, ExecuteError>
     where
         K: AsRef<[u8]> + std::fmt::Debug,
     {
@@ -112,19 +128,33 @@ impl StorageApi for DB {
             .map_err(|e| ExecuteError::DbError(format!("Failed to get key {key:?}: {e}")))
     }
 
-    fn get_all(&self, table: &'static str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ExecuteError> {
+    /// Get all values of the given table from storage
+    ///
+    /// # Errors
+    ///
+    /// if error occurs in storage, return `Err(error)`
+    pub(crate) fn get_all(&self, table: &'static str) -> Result<Vec<KeyValuePair>, ExecuteError> {
         self.engine.get_all(table).map_err(|e| {
             ExecuteError::DbError(format!("Failed to get all keys from {table:?}: {e}"))
         })
     }
 
-    fn get_snapshot(&self, snap_path: impl AsRef<Path>) -> Result<Snapshot, ExecuteError> {
+    /// Get the snapshot of the storage
+    pub(crate) fn get_snapshot(
+        &self,
+        snap_path: impl AsRef<Path>,
+    ) -> Result<Snapshot, ExecuteError> {
         self.engine
             .get_snapshot(snap_path, &XLINE_TABLES)
             .map_err(|e| ExecuteError::DbError(format!("Failed to get snapshot, error: {e}")))
     }
 
-    async fn reset(&self, snapshot: Option<Snapshot>) -> Result<(), ExecuteError> {
+    /// Reset the storage by given snapshot
+    ///
+    /// # Errors
+    ///
+    /// if error occurs in storage, return `Err(error)`
+    pub(crate) async fn reset(&self, snapshot: Option<Snapshot>) -> Result<(), ExecuteError> {
         if let Some(snap) = snapshot {
             self.engine
                 .apply_snapshot(snap, &XLINE_TABLES)
@@ -145,7 +175,11 @@ impl StorageApi for DB {
         }
     }
 
-    fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<Vec<(Vec<u8>, KeyRevision)>, ExecuteError> {
+    /// Flush the operations to storage
+    pub(crate) fn flush_ops(
+        &self,
+        ops: Vec<WriteOp>,
+    ) -> Result<Vec<KeyRevisionPair>, ExecuteError> {
         let mut wr_ops = Vec::new();
         let mut revs = Vec::new();
         let del_lease_key_buffer = Self::get_del_lease_key_buffer(&ops);
@@ -232,7 +266,8 @@ impl StorageApi for DB {
         Ok(revs)
     }
 
-    fn hash(&self) -> Result<u32, ExecuteError> {
+    /// Calculate the hash of the storage
+    pub(crate) fn hash(&self) -> Result<u32, ExecuteError> {
         let mut hasher = crc32fast::Hasher::new();
         for table in XLINE_TABLES {
             hasher.update(table.as_bytes());
@@ -247,11 +282,13 @@ impl StorageApi for DB {
         Ok(hasher.finalize())
     }
 
-    fn estimated_file_size(&self) -> u64 {
+    /// Get the cached size of the engine
+    pub(crate) fn estimated_file_size(&self) -> u64 {
         self.engine.estimated_file_size()
     }
 
-    fn file_size(&self) -> Result<u64, ExecuteError> {
+    /// Get the file size of the engine
+    pub(crate) fn file_size(&self) -> Result<u64, ExecuteError> {
         self.engine
             .file_size()
             .map_err(|e| ExecuteError::DbError(format!("Failed to get file size, error: {e}")))

@@ -24,7 +24,6 @@ use super::{
     index::{Index, IndexOperate},
     lease_store::LeaseCollection,
     revision::{KeyRevision, Revision},
-    storage_api::StorageApi,
 };
 use crate::{
     header_gen::HeaderGenerator,

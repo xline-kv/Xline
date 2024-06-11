@@ -30,7 +30,6 @@ pub(crate) use self::{lease::Lease, lease_collection::LeaseCollection};
 use super::{
     db::{WriteOp, DB},
     index::Index,
-    storage_api::StorageApi,
 };
 use crate::{
     header_gen::HeaderGenerator,

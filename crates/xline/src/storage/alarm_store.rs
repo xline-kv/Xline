@@ -18,10 +18,7 @@ use xlineapi::{
     AlarmAction, AlarmMember, AlarmResponse, AlarmType, RequestWrapper, ResponseWrapper,
 };
 
-use super::{
-    db::{WriteOp, DB},
-    storage_api::StorageApi,
-};
+use super::db::{WriteOp, DB};
 use crate::header_gen::HeaderGenerator;
 
 /// Alarm store

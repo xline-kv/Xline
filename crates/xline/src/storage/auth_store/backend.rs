@@ -6,7 +6,7 @@ use xlineapi::execute_error::ExecuteError;
 
 use crate::{
     rpc::{Role, User},
-    storage::{db::DB, storage_api::StorageApi},
+    storage::db::DB,
 };
 
 /// Key of `AuthEnable`

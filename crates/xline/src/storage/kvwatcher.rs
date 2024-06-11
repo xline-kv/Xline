@@ -604,7 +604,7 @@ mod test {
         rpc::PutRequest,
         storage::{
             compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, lease_store::LeaseCollection,
-            storage_api::StorageApi, KvStore,
+            KvStore,
         },
     };
 

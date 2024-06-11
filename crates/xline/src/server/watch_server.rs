@@ -431,8 +431,7 @@ mod test {
         rpc::{PutRequest, WatchProgressRequest},
         storage::{
             compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, kv_store::KvStoreInner,
-            kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection, storage_api::StorageApi,
-            KvStore,
+            kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection, KvStore,
         },
     };
 
