@@ -116,20 +116,18 @@ impl StorageOps for RocksTransaction<'_> {
                     .cf_handle(table.as_ref())
                     .ok_or_else(|| EngineError::TableNotFound(table.clone()))?;
                 let mode = IteratorMode::From(&from, Direction::Forward);
+                let txn_l = self.txn.lock();
+                let txn_ref = txn_l.as_ref().unwrap();
                 #[allow(clippy::pattern_type_mismatch)] // can't be fixed
-                let kvs: Vec<_> = self
-                    .txn
-                    .lock()
-                    .as_ref()
-                    .unwrap()
+                let kvs = txn_ref
                     .iterator_cf(&cf, mode)
                     .take_while(|res| {
                         res.as_ref()
                             .is_ok_and(|(key, _)| key.as_ref() < to.as_slice())
                     })
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .flatten();
                 for (key, _) in kvs {
-                    self.txn.lock().as_ref().unwrap().delete_cf(&cf, key)?;
+                    txn_ref.delete_cf(&cf, key)?;
                 }
             }
         }
@@ -137,7 +135,10 @@ impl StorageOps for RocksTransaction<'_> {
         Ok(())
     }
 
-    fn write_multi(&self, ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError> {
+    fn write_multi<'a, Ops>(&self, ops: Ops, sync: bool) -> Result<(), EngineError>
+    where
+        Ops: IntoIterator<Item = WriteOperation<'a>>,
+    {
         for op in ops {
             self.write(op, sync)?;
         }
