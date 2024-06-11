@@ -426,9 +426,12 @@ impl XlineServer {
 
     /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and `CurpServer`
     /// for the Xline Server.
-    #[allow(clippy::type_complexity, clippy::too_many_lines)] // it is easy to read
-    #[allow(clippy::as_conversions)] // cast to dyn
-    #[allow(trivial_casts)] // same as above
+    #[allow(
+        clippy::type_complexity, // it is easy to read
+        clippy::too_many_lines, // TODO: split this into multiple functions
+        clippy::as_conversions, // cast to dyn
+        trivial_casts // same as above
+    )]
     async fn init_servers(
         &self,
         db: Arc<DB>,
