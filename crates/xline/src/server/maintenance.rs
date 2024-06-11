@@ -38,7 +38,7 @@ pub(crate) struct MaintenanceServer {
     /// Auth Storage
     auth_store: Arc<AuthStore>,
     /// persistent storage
-    persistent: Arc<DB>, // TODO: `persistent` is not a good name, rename it in a better way
+    db: Arc<DB>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// Consensus client
@@ -60,7 +60,7 @@ impl MaintenanceServer {
         kv_store: Arc<KvStore>,
         auth_store: Arc<AuthStore>,
         client: Arc<CurpClient>,
-        persistent: Arc<DB>,
+        db: Arc<DB>,
         header_gen: Arc<HeaderGenerator>,
         cluster_info: Arc<ClusterInfo>,
         raw_curp: Arc<RawCurp<Command, State<Arc<CurpClient>>>>,
@@ -70,7 +70,7 @@ impl MaintenanceServer {
         Self {
             kv_store,
             auth_store,
-            persistent,
+            db,
             header_gen,
             client,
             cluster_info,
@@ -123,7 +123,7 @@ impl Maintenance for MaintenanceServer {
         let is_learner = self.cluster_info.self_member().is_learner;
         let (leader, term, _) = self.raw_curp.leader();
         let commit_index = self.raw_curp.commit_index();
-        let size = self.persistent.file_size().map_err(|e| {
+        let size = self.db.file_size().map_err(|e| {
             error!("get file size failed, {e}");
             tonic::Status::internal("get file size failed")
         })?;
@@ -168,7 +168,7 @@ impl Maintenance for MaintenanceServer {
     ) -> Result<tonic::Response<HashResponse>, tonic::Status> {
         Ok(tonic::Response::new(HashResponse {
             header: Some(self.header_gen.gen_header()),
-            hash: self.persistent.hash()?,
+            hash: self.db.hash()?,
         }))
     }
 
@@ -193,7 +193,7 @@ impl Maintenance for MaintenanceServer {
         &self,
         _request: tonic::Request<SnapshotRequest>,
     ) -> Result<tonic::Response<Self::SnapshotStream>, tonic::Status> {
-        let stream = snapshot_stream(self.header_gen.as_ref(), self.persistent.as_ref())?;
+        let stream = snapshot_stream(self.header_gen.as_ref(), self.db.as_ref())?;
 
         Ok(tonic::Response::new(Box::pin(stream)))
     }
@@ -222,10 +222,10 @@ impl Maintenance for MaintenanceServer {
 /// Generate snapshot stream
 fn snapshot_stream(
     header_gen: &HeaderGenerator,
-    persistent: &DB,
+    db: &DB,
 ) -> Result<impl Stream<Item = Result<SnapshotResponse, tonic::Status>>, tonic::Status> {
     let tmp_path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());
-    let mut snapshot = persistent.get_snapshot(tmp_path).map_err(|e| {
+    let mut snapshot = db.get_snapshot(tmp_path).map_err(|e| {
         error!("get snapshot failed, {e}");
         tonic::Status::internal("get snapshot failed")
     })?;
@@ -291,9 +291,9 @@ mod test {
         let db_path = dir.join("db");
         let snapshot_path = dir.join("snapshot");
 
-        let persistent = DB::open(&EngineConfig::RocksDB(db_path.clone()))?;
+        let db = DB::open(&EngineConfig::RocksDB(db_path.clone()))?;
         let header_gen = HeaderGenerator::new(0, 0);
-        let snap1_stream = snapshot_stream(&header_gen, persistent.as_ref())?;
+        let snap1_stream = snapshot_stream(&header_gen, db.as_ref())?;
         tokio::pin!(snap1_stream);
         let mut recv_data = Vec::new();
         while let Some(data) = snap1_stream.next().await {
@@ -304,7 +304,7 @@ mod test {
             Sha256::output_size()
         );
 
-        let mut snap2 = persistent.get_snapshot(snapshot_path).unwrap();
+        let mut snap2 = db.get_snapshot(snapshot_path).unwrap();
         let size = snap2.size().numeric_cast();
         let mut snap2_data = BytesMut::with_capacity(size);
         snap2.read_buf_exact(&mut snap2_data).await.unwrap();

@@ -72,7 +72,7 @@ pub(crate) struct CommandExecutor {
     /// Alarm Storage
     alarm_storage: Arc<AlarmStore>,
     /// persistent storage
-    persistent: Arc<DB>,
+    db: Arc<DB>,
     /// Barrier for applied index
     index_barrier: Arc<IndexBarrier>,
     /// Barrier for propose id
@@ -101,7 +101,7 @@ struct CommandQuotaChecker {
     /// Quota size
     quota: u64,
     /// persistent storage
-    persistent: Arc<DB>,
+    db: Arc<DB>,
 }
 
 /// functions used to estimate request write size
@@ -159,8 +159,8 @@ mod size_estimate {
 
 impl CommandQuotaChecker {
     /// Create a new `CommandQuotaChecker`
-    fn new(quota: u64, persistent: Arc<DB>) -> Self {
-        Self { quota, persistent }
+    fn new(quota: u64, db: Arc<DB>) -> Self {
+        Self { quota, db }
     }
 }
 
@@ -170,8 +170,8 @@ impl QuotaChecker for CommandQuotaChecker {
             return true;
         }
         let cmd_size = size_estimate::cmd_size(cmd.request());
-        if self.persistent.estimated_file_size().overflow_add(cmd_size) > self.quota {
-            let Ok(file_size) = self.persistent.file_size() else {
+        if self.db.estimated_file_size().overflow_add(cmd_size) > self.quota {
+            let Ok(file_size) = self.db.file_size() else {
                 return false;
             };
             if file_size.overflow_add(cmd_size) > self.quota {
@@ -224,7 +224,7 @@ impl CommandExecutor {
         auth_storage: Arc<AuthStore>,
         lease_storage: Arc<LeaseStore>,
         alarm_storage: Arc<AlarmStore>,
-        persistent: Arc<DB>,
+        db: Arc<DB>,
         index_barrier: Arc<IndexBarrier>,
         id_barrier: Arc<IdBarrier>,
         general_rev: Arc<RevisionNumberGenerator>,
@@ -233,13 +233,13 @@ impl CommandExecutor {
         quota: u64,
     ) -> Self {
         let alarmer = RwLock::new(None);
-        let quota_checker = Arc::new(CommandQuotaChecker::new(quota, Arc::clone(&persistent)));
+        let quota_checker = Arc::new(CommandQuotaChecker::new(quota, Arc::clone(&db)));
         Self {
             kv_storage,
             auth_storage,
             lease_storage,
             alarm_storage,
-            persistent,
+            db,
             index_barrier,
             id_barrier,
             general_rev,
@@ -353,7 +353,7 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
             }
         };
         ops.append(&mut wr_ops);
-        let key_revisions = self.persistent.flush_ops(ops)?;
+        let key_revisions = self.db.flush_ops(ops)?;
         if !key_revisions.is_empty() {
             self.kv_storage.insert_index(key_revisions);
         }
@@ -378,30 +378,26 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         snapshot: Option<(Snapshot, LogIndex)>,
     ) -> Result<(), <Command as CurpCommand>::Error> {
         let s = if let Some((snapshot, index)) = snapshot {
-            _ = self
-                .persistent
-                .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
+            _ = self.db.flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
             Some(snapshot)
         } else {
             None
         };
-        self.persistent.reset(s).await
+        self.db.reset(s).await
     }
 
     async fn snapshot(&self) -> Result<Snapshot, <Command as CurpCommand>::Error> {
         let path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());
-        self.persistent.get_snapshot(path)
+        self.db.get_snapshot(path)
     }
 
     fn set_last_applied(&self, index: LogIndex) -> Result<(), <Command as CurpCommand>::Error> {
-        _ = self
-            .persistent
-            .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
+        _ = self.db.flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
         Ok(())
     }
 
     fn last_applied(&self) -> Result<LogIndex, <Command as CurpCommand>::Error> {
-        let Some(index_bytes) = self.persistent.get_value(META_TABLE, APPLIED_INDEX_KEY)? else {
+        let Some(index_bytes) = self.db.get_value(META_TABLE, APPLIED_INDEX_KEY)? else {
             return Ok(0);
         };
         let buf: [u8; 8] = index_bytes
