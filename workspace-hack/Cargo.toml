@@ -29,12 +29,13 @@ madsim-tokio = { git = "https://github.com/Phoenix500526/madsim.git", branch = "
 madsim-tonic = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic", default-features = false, features = ["tls"] }
 memchr = { version = "2" }
 num-traits = { version = "0.2", default-features = false, features = ["i128", "std"] }
-opentelemetry_sdk = { version = "0.22", features = ["metrics", "rt-tokio"] }
+opentelemetry_sdk = { version = "0.23", features = ["metrics", "rt-tokio"] }
 petgraph = { version = "0.6" }
 predicates = { version = "3", default-features = false, features = ["diff"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["raw_value"] }
 sha2 = { version = "0.10" }
+smallvec = { version = "1", default-features = false, features = ["const_generics"] }
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
@@ -56,7 +57,7 @@ memchr = { version = "2" }
 petgraph = { version = "0.6" }
 predicates = { version = "3", default-features = false, features = ["diff"] }
 syn-dff4ba8e3ae991db = { package = "syn", version = "1", features = ["extra-traits", "full"] }
-syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "full", "visit", "visit-mut"] }
+syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 
 ### END HAKARI SECTION
