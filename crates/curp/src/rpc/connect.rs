@@ -370,6 +370,15 @@ impl<C> Connect<C> {
     }
 }
 
+/// Sets timeout for a client connection
+macro_rules! with_timeout {
+    ($timeout:expr, $client_op:expr) => {
+        tokio::time::timeout($timeout, $client_op)
+            .await
+            .map_err(|_| tonic::Status::deadline_exceeded("timeout"))?
+    };
+}
+
 #[async_trait]
 impl ConnectApi for Connect<ProtocolClient<Channel>> {
     /// Get server id
@@ -392,11 +401,10 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
         if let Some(token) = token {
             _ = req.metadata_mut().insert("token", token.parse()?);
         }
-        let resp = client.propose_stream(req).await?.into_inner();
+        let resp = with_timeout!(timeout, client.propose_stream(req))?.into_inner();
         Ok(tonic::Response::new(Box::new(resp)))
 
         // let resp = client.propose_stream(req).await?.map(Box::new);
@@ -410,9 +418,8 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         timeout: Duration,
     ) -> Result<tonic::Response<RecordResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        client.record(req).await.map_err(Into::into)
+        let req = tonic::Request::new(request);
+        with_timeout!(timeout, client.record(req)).map_err(Into::into)
     }
 
     /// Send `ShutdownRequest`
@@ -424,9 +431,8 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     ) -> Result<tonic::Response<ShutdownResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.shutdown(req).await.map_err(Into::into)
+        with_timeout!(timeout, client.shutdown(req)).map_err(Into::into)
     }
 
     /// Send `ProposeRequest`
@@ -438,9 +444,8 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     ) -> Result<tonic::Response<ProposeConfChangeResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.propose_conf_change(req).await.map_err(Into::into)
+        with_timeout!(timeout, client.propose_conf_change(req)).map_err(Into::into)
     }
 
     /// Send `PublishRequest`
@@ -452,9 +457,8 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     ) -> Result<tonic::Response<PublishResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.publish(req).await.map_err(Into::into)
+        with_timeout!(timeout, client.publish(req)).map_err(Into::into)
     }
 
     /// Send `FetchClusterRequest`
@@ -464,9 +468,8 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         timeout: Duration,
     ) -> Result<tonic::Response<FetchClusterResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        client.fetch_cluster(req).await.map_err(Into::into)
+        let req = tonic::Request::new(request);
+        with_timeout!(timeout, client.fetch_cluster(req)).map_err(Into::into)
     }
 
     /// Send `FetchReadStateRequest`
@@ -476,9 +479,8 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         timeout: Duration,
     ) -> Result<tonic::Response<FetchReadStateResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        client.fetch_read_state(req).await.map_err(Into::into)
+        let req = tonic::Request::new(request);
+        with_timeout!(timeout, client.fetch_read_state(req)).map_err(Into::into)
     }
 
     /// Send `MoveLeaderRequest`
@@ -488,9 +490,8 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         timeout: Duration,
     ) -> Result<tonic::Response<MoveLeaderResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        client.move_leader(req).await.map_err(Into::into)
+        let req = tonic::Request::new(request);
+        with_timeout!(timeout, client.move_leader(req)).map_err(Into::into)
     }
 
     /// Keep send lease keep alive to server and mutate the client id
@@ -535,9 +536,8 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         let start_at = self.before_rpc::<AppendEntriesRequest>();
 
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        let result = client.append_entries(req).await;
+        let req = tonic::Request::new(request);
+        let result = with_timeout!(timeout, client.append_entries(req));
 
         #[cfg(feature = "client-metrics")]
         self.after_rpc(start_at, &result);
@@ -555,9 +555,8 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         let start_at = self.before_rpc::<VoteRequest>();
 
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        let result = client.vote(req).await;
+        let req = tonic::Request::new(request);
+        let result = with_timeout!(timeout, client.vote(req));
 
         #[cfg(feature = "client-metrics")]
         self.after_rpc(start_at, &result);
@@ -603,9 +602,8 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         let start_at = self.before_rpc::<TryBecomeLeaderNowRequest>();
 
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(TryBecomeLeaderNowRequest::default());
-        req.set_timeout(timeout);
-        let result = client.try_become_leader_now(req).await;
+        let req = tonic::Request::new(TryBecomeLeaderNowRequest::default());
+        let result = with_timeout!(timeout, client.try_become_leader_now(req));
 
         #[cfg(feature = "client-metrics")]
         self.after_rpc(start_at, &result);
