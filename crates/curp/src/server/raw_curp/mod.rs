@@ -218,7 +218,9 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             log_w.last_as = last_applied;
             log_w.last_exe = last_applied;
             log_w.commit_index = last_applied;
-            log_w.restore_entries(args.entries);
+            log_w
+                .restore_entries(args.entries)
+                .map_err(|e| RawCurpBuilderError::ValidationError(e.to_string()))?;
         }
 
         Ok(raw_curp)
