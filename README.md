@@ -1,14 +1,16 @@
 # Xline
 
 ![Xline-logo](doc/img/xline-horizontal-black.png)
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fxline-kv%2FXline.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fxline-kv%2FXline?ref=badge_shield)
 
 [![Discord Shield][discord-badge]][discord-url]
 [![Apache 2.0 licensed][apache-badge]][apache-url]
+[![FOSSA Status][fossa-shield]][fossa-badge]
 [![Build Status][actions-badge]][actions-url]
 [![codecov][cov-badge]][cov-url]
 [![OpenSSF Best Practices][openssf-badge]](openssf-url)
 
+[fossa-badge]: https://app.fossa.com/projects/git%2Bgithub.com%2Fxline-kv%2FXline?ref=badge_shield
+[fossa-shield]: https://app.fossa.com/api/projects/git%2Bgithub.com%2Fxline-kv%2FXline.svg?type=shield
 [discord-badge]: https://discordapp.com/api/guilds/1110584535248281760/widget.png?style=shield
 [discord-url]: https://discord.gg/hqDRtYkWzm
 [apache-badge]: https://img.shields.io/badge/license-Apache--2.0-brightgreen
