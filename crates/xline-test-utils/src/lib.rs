@@ -10,8 +10,16 @@ use tokio::{
 };
 use tonic::transport::ClientTlsConfig;
 use utils::config::{
-    default_quota, AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState,
-    LogConfig, MetricsConfig, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
+    auth::AuthConfig,
+    cluster::{ClusterConfig, InitialClusterState},
+    compact::CompactConfig,
+    engine::EngineConfig,
+    log::LogConfig,
+    metrics::MetricsConfig,
+    storage::{default_quota, StorageConfig},
+    tls::TlsConfig,
+    trace::TraceConfig,
+    XlineServerConfig,
 };
 use xline::server::XlineServer;
 use xline_client::types::auth::{

@@ -37,7 +37,7 @@ use tracing::{
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
 use utils::{
-    config::CurpConfig,
+    config::curp::CurpConfig,
     parking_lot_lock::{MutexMap, RwLockMap},
     task_manager::TaskManager,
 };
@@ -47,9 +47,11 @@ use self::{
     state::{CandidateState, LeaderState, State},
 };
 use super::{
-    cmd_worker::CEEventTxApi, conflict::spec_pool_new::SpeculativePool,
-    conflict::uncommitted_pool::UncommittedPool, lease_manager::LeaseManagerRef,
-    storage::StorageApi, DB,
+    cmd_worker::CEEventTxApi,
+    conflict::{spec_pool_new::SpeculativePool, uncommitted_pool::UncommittedPool},
+    lease_manager::LeaseManagerRef,
+    storage::StorageApi,
+    DB,
 };
 use crate::{
     cmd::Command,

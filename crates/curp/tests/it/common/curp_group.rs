@@ -40,7 +40,10 @@ use tracing::debug;
 use utils::{
     build_endpoint,
     config::{
-        default_quota, ClientConfig, CurpConfig, CurpConfigBuilder, EngineConfig, StorageConfig,
+        client::ClientConfig,
+        curp::{CurpConfig, CurpConfigBuilder},
+        engine::EngineConfig,
+        storage::{default_quota, StorageConfig},
     },
     task_manager::{tasks::TaskName, Listener, TaskManager},
 };

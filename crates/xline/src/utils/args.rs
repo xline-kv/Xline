@@ -5,19 +5,37 @@ use clap::Parser;
 use tokio::fs;
 use utils::{
     config::{
-        default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
-        default_client_id_keep_alive_interval, default_client_wait_synced_timeout,
-        default_cmd_workers, default_compact_batch_size, default_compact_sleep_interval,
-        default_compact_timeout, default_follower_timeout_ticks, default_gc_interval,
-        default_heartbeat_interval, default_initial_retry_timeout, default_log_entries_cap,
-        default_log_level, default_max_retry_timeout, default_metrics_enable, default_metrics_path,
-        default_metrics_port, default_metrics_push_endpoint, default_metrics_push_protocol,
-        default_propose_timeout, default_quota, default_range_retry_timeout, default_retry_count,
-        default_rotation, default_rpc_timeout, default_server_wait_synced_timeout,
-        default_sync_victims_interval, default_watch_progress_notify_interval, AuthConfig,
-        AutoCompactConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder,
-        EngineConfig, InitialClusterState, LevelConfig, LogConfig, MetricsConfig,
-        MetricsPushProtocol, RotationConfig, ServerTimeout, StorageConfig, TlsConfig, TraceConfig,
+        auth::AuthConfig,
+        client::{
+            default_client_id_keep_alive_interval, default_client_wait_synced_timeout,
+            default_initial_retry_timeout, default_max_retry_timeout, default_propose_timeout,
+            default_retry_count, ClientConfig,
+        },
+        cluster::{ClusterConfig, InitialClusterState},
+        compact::{
+            default_compact_batch_size, default_compact_sleep_interval, AutoCompactConfig,
+            CompactConfig,
+        },
+        curp::{
+            default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
+            default_cmd_workers, default_follower_timeout_ticks, default_gc_interval,
+            default_heartbeat_interval, default_log_entries_cap, default_rpc_timeout,
+            default_server_wait_synced_timeout, CurpConfigBuilder,
+        },
+        engine::EngineConfig,
+        log::{default_log_level, default_rotation, LevelConfig, LogConfig, RotationConfig},
+        metrics::{
+            default_metrics_enable, default_metrics_path, default_metrics_port,
+            default_metrics_push_endpoint, default_metrics_push_protocol, MetricsConfig,
+            MetricsPushProtocol,
+        },
+        server::{
+            default_compact_timeout, default_range_retry_timeout, default_sync_victims_interval,
+            default_watch_progress_notify_interval, ServerTimeout,
+        },
+        storage::{default_quota, StorageConfig},
+        tls::TlsConfig,
+        trace::TraceConfig,
         XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_metrics_push_protocol,
@@ -299,7 +317,10 @@ impl From<ServerArgs> for XlineServerConfig {
             args.jaeger_output_dir,
             args.jaeger_level,
         );
-        let auth = AuthConfig::new(args.auth_public_key, args.auth_private_key);
+        let auth = AuthConfig::new()
+            .auth_public_key(args.auth_public_key.unwrap())
+            .auth_private_key(args.auth_private_key.unwrap())
+            .build();
         let auto_compactor_cfg = if let Some(mode) = args.auto_compact_mode {
             match mode.as_str() {
                 "periodic" => {

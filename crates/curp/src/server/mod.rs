@@ -7,11 +7,13 @@ use tonic::transport::ClientTlsConfig;
 use tracing::instrument;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
-use utils::{config::CurpConfig, task_manager::TaskManager, tracing::Extract};
+use utils::{config::curp::CurpConfig, task_manager::TaskManager, tracing::Extract};
 
 use self::curp_node::CurpNode;
-pub use self::raw_curp::RawCurp;
-pub use self::{conflict::spec_pool_new::SpObject, conflict::uncommitted_pool::UcpObject};
+pub use self::{
+    conflict::{spec_pool_new::SpObject, uncommitted_pool::UcpObject},
+    raw_curp::RawCurp,
+};
 use crate::{
     cmd::{Command, CommandExecutor},
     members::{ClusterInfo, ServerId},

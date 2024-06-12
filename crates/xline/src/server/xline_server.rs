@@ -24,8 +24,12 @@ use tonic::transport::{server::Router, Server};
 use tracing::{info, warn};
 use utils::{
     config::{
-        AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState, StorageConfig,
-        TlsConfig,
+        auth::AuthConfig,
+        cluster::{ClusterConfig, InitialClusterState},
+        compact::CompactConfig,
+        engine::EngineConfig,
+        storage::StorageConfig,
+        tls::TlsConfig,
     },
     task_manager::{tasks::TaskName, TaskManager},
 };

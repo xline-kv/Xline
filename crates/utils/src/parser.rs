@@ -3,8 +3,10 @@ use std::{collections::HashMap, time::Duration};
 use clippy_utilities::OverflowArithmetic;
 use thiserror::Error;
 
-use crate::config::{
-    ClusterRange, InitialClusterState, LevelConfig, MetricsPushProtocol, RotationConfig,
+pub use crate::config::{
+    cluster::{ClusterRange, InitialClusterState},
+    log::{LevelConfig, RotationConfig},
+    metrics::MetricsPushProtocol,
 };
 
 /// seconds per minute

@@ -21,15 +21,17 @@ use tracing::{debug, error, info, trace, warn};
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
 use utils::{
-    config::CurpConfig,
+    config::curp::CurpConfig,
     task_manager::{tasks::TaskName, Listener, State, TaskManager},
 };
 
 use super::{
     cmd_board::{CmdBoardRef, CommandBoard},
     cmd_worker::{conflict_checked_mpmc, start_cmd_workers},
-    conflict::spec_pool_new::{SpObject, SpeculativePool},
-    conflict::uncommitted_pool::{UcpObject, UncommittedPool},
+    conflict::{
+        spec_pool_new::{SpObject, SpeculativePool},
+        uncommitted_pool::{UcpObject, UncommittedPool},
+    },
     gc::gc_cmd_board,
     lease_manager::LeaseManager,
     raw_curp::{AppendEntries, RawCurp, Vote},

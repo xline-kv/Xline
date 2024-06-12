@@ -1173,7 +1173,7 @@ mod test {
     use std::collections::HashMap;
 
     use merged_range::MergedRange;
-    use utils::config::EngineConfig;
+    use utils::config::engine::EngineConfig;
 
     use super::*;
     use crate::{
