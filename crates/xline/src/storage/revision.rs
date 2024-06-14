@@ -2,7 +2,7 @@ use prost::bytes::{Buf, BufMut};
 
 /// Revision of a key
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct KeyRevision {
+pub(crate) struct KeyRevision {
     /// Last creation revision
     pub(super) create_revision: i64,
     /// Number of modification since last creation

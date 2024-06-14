@@ -23,7 +23,7 @@ use crate::{
         StatusResponse,
     },
     state::State,
-    storage::{storage_api::StorageApi, AlarmStore, AuthStore, KvStore},
+    storage::{db::DB, AlarmStore, AuthStore, KvStore},
 };
 
 /// Minimum page size
@@ -32,16 +32,13 @@ const MIN_PAGE_SIZE: u64 = 512;
 pub(crate) const MAINTENANCE_SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
 
 /// Maintenance Server
-pub(crate) struct MaintenanceServer<S>
-where
-    S: StorageApi,
-{
+pub(crate) struct MaintenanceServer {
     /// Kv Storage
-    kv_store: Arc<KvStore<S>>,
+    kv_store: Arc<KvStore>,
     /// Auth Storage
-    auth_store: Arc<AuthStore<S>>,
+    auth_store: Arc<AuthStore>,
     /// persistent storage
-    persistent: Arc<S>, // TODO: `persistent` is not a good name, rename it in a better way
+    db: Arc<DB>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// Consensus client
@@ -49,34 +46,31 @@ where
     /// cluster information
     cluster_info: Arc<ClusterInfo>,
     /// Raw curp
-    raw_curp: Arc<RawCurp<Command, State<S, Arc<CurpClient>>>>,
+    raw_curp: Arc<RawCurp<Command, State<Arc<CurpClient>>>>,
     /// Command executor
-    ce: Arc<CommandExecutor<S>>,
+    ce: Arc<CommandExecutor>,
     /// Alarm store
-    alarm_store: Arc<AlarmStore<S>>,
+    alarm_store: Arc<AlarmStore>,
 }
 
-impl<S> MaintenanceServer<S>
-where
-    S: StorageApi,
-{
+impl MaintenanceServer {
     /// New `MaintenanceServer`
     #[allow(clippy::too_many_arguments)] // Consistent with other servers
     pub(crate) fn new(
-        kv_store: Arc<KvStore<S>>,
-        auth_store: Arc<AuthStore<S>>,
+        kv_store: Arc<KvStore>,
+        auth_store: Arc<AuthStore>,
         client: Arc<CurpClient>,
-        persistent: Arc<S>,
+        db: Arc<DB>,
         header_gen: Arc<HeaderGenerator>,
         cluster_info: Arc<ClusterInfo>,
-        raw_curp: Arc<RawCurp<Command, State<S, Arc<CurpClient>>>>,
-        ce: Arc<CommandExecutor<S>>,
-        alarm_store: Arc<AlarmStore<S>>,
+        raw_curp: Arc<RawCurp<Command, State<Arc<CurpClient>>>>,
+        ce: Arc<CommandExecutor>,
+        alarm_store: Arc<AlarmStore>,
     ) -> Self {
         Self {
             kv_store,
             auth_store,
-            persistent,
+            db,
             header_gen,
             client,
             cluster_info,
@@ -104,10 +98,7 @@ where
 }
 
 #[tonic::async_trait]
-impl<S> Maintenance for MaintenanceServer<S>
-where
-    S: StorageApi,
-{
+impl Maintenance for MaintenanceServer {
     async fn alarm(
         &self,
         request: tonic::Request<AlarmRequest>,
@@ -132,7 +123,7 @@ where
         let is_learner = self.cluster_info.self_member().is_learner;
         let (leader, term, _) = self.raw_curp.leader();
         let commit_index = self.raw_curp.commit_index();
-        let size = self.persistent.file_size().map_err(|e| {
+        let size = self.db.file_size().map_err(|e| {
             error!("get file size failed, {e}");
             tonic::Status::internal("get file size failed")
         })?;
@@ -177,7 +168,7 @@ where
     ) -> Result<tonic::Response<HashResponse>, tonic::Status> {
         Ok(tonic::Response::new(HashResponse {
             header: Some(self.header_gen.gen_header()),
-            hash: self.persistent.hash()?,
+            hash: self.db.hash()?,
         }))
     }
 
@@ -202,7 +193,7 @@ where
         &self,
         _request: tonic::Request<SnapshotRequest>,
     ) -> Result<tonic::Response<Self::SnapshotStream>, tonic::Status> {
-        let stream = snapshot_stream(self.header_gen.as_ref(), self.persistent.as_ref())?;
+        let stream = snapshot_stream(self.header_gen.as_ref(), self.db.as_ref())?;
 
         Ok(tonic::Response::new(Box::pin(stream)))
     }
@@ -229,12 +220,12 @@ where
 }
 
 /// Generate snapshot stream
-fn snapshot_stream<S: StorageApi>(
+fn snapshot_stream(
     header_gen: &HeaderGenerator,
-    persistent: &S,
+    db: &DB,
 ) -> Result<impl Stream<Item = Result<SnapshotResponse, tonic::Status>>, tonic::Status> {
     let tmp_path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());
-    let mut snapshot = persistent.get_snapshot(tmp_path).map_err(|e| {
+    let mut snapshot = db.get_snapshot(tmp_path).map_err(|e| {
         error!("get snapshot failed, {e}");
         tonic::Status::internal("get snapshot failed")
     })?;
@@ -300,9 +291,9 @@ mod test {
         let db_path = dir.join("db");
         let snapshot_path = dir.join("snapshot");
 
-        let persistent = DB::open(&EngineConfig::RocksDB(db_path.clone()))?;
+        let db = DB::open(&EngineConfig::RocksDB(db_path.clone()))?;
         let header_gen = HeaderGenerator::new(0, 0);
-        let snap1_stream = snapshot_stream(&header_gen, persistent.as_ref())?;
+        let snap1_stream = snapshot_stream(&header_gen, db.as_ref())?;
         tokio::pin!(snap1_stream);
         let mut recv_data = Vec::new();
         while let Some(data) = snap1_stream.next().await {
@@ -313,7 +304,7 @@ mod test {
             Sha256::output_size()
         );
 
-        let mut snap2 = persistent.get_snapshot(snapshot_path).unwrap();
+        let mut snap2 = db.get_snapshot(snapshot_path).unwrap();
         let size = snap2.size().numeric_cast();
         let mut snap2_data = BytesMut::with_capacity(size);
         snap2.read_buf_exact(&mut snap2_data).await.unwrap();

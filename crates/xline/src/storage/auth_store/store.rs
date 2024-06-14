@@ -47,20 +47,16 @@ use crate::{
     server::get_token,
     storage::{
         auth_store::backend::AuthStoreBackend,
-        db::WriteOp,
+        db::{WriteOp, DB},
         lease_store::{Lease, LeaseCollection},
-        storage_api::StorageApi,
     },
 };
 
 /// Auth store
 #[derive(Debug)]
-pub(crate) struct AuthStore<S>
-where
-    S: StorageApi,
-{
+pub(crate) struct AuthStore {
     /// Auth store Backend
-    backend: Arc<AuthStoreBackend<S>>,
+    backend: Arc<AuthStoreBackend>,
     /// Enabled
     enabled: AtomicBool,
     /// Revision
@@ -75,17 +71,14 @@ where
     token_manager: Option<JwtTokenManager>,
 }
 
-impl<S> AuthStore<S>
-where
-    S: StorageApi,
-{
+impl AuthStore {
     /// New `AuthStore`
     #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
     pub(crate) fn new(
         lease_collection: Arc<LeaseCollection>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
-        storage: Arc<S>,
+        storage: Arc<DB>,
     ) -> Self {
         let backend = Arc::new(AuthStoreBackend::new(storage));
         Self {
@@ -1344,7 +1337,7 @@ mod test {
         Ok(())
     }
 
-    fn init_auth_store(db: Arc<DB>) -> AuthStore<DB> {
+    fn init_auth_store(db: Arc<DB>) -> AuthStore {
         let store = init_empty_store(db);
         let rev = Arc::clone(&store.revision);
         let req1 = RequestWrapper::from(AuthRoleAddRequest {
@@ -1389,7 +1382,7 @@ mod test {
         store
     }
 
-    fn init_empty_store(db: Arc<DB>) -> AuthStore<DB> {
+    fn init_empty_store(db: Arc<DB>) -> AuthStore {
         let key_pair = test_key_pair();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let lease_collection = Arc::new(LeaseCollection::new(0));
@@ -1397,7 +1390,7 @@ mod test {
     }
 
     fn exe_and_sync(
-        store: &AuthStore<DB>,
+        store: &AuthStore,
         req: &RequestWrapper,
         revision: i64,
     ) -> Result<(CommandResponse, SyncResponse), ExecuteError> {
