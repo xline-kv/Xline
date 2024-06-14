@@ -604,7 +604,7 @@ mod test {
         rpc::PutRequest,
         storage::{
             compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, lease_store::LeaseCollection,
-            KvStore,
+            storage_api::XlineStorageOps, KvStore,
         },
     };
 
@@ -774,7 +774,7 @@ mod test {
             ..Default::default()
         });
         let (_sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
-        let key_revisions = db.flush_ops(ops).unwrap();
+        let key_revisions = db.write_ops(ops).unwrap();
         store.insert_index(key_revisions);
     }
 }

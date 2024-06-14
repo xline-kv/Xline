@@ -18,7 +18,7 @@ use xlineapi::{execute_error::ExecuteError, AlarmMember};
 use super::{
     auth_store::{AUTH_ENABLE_KEY, AUTH_REVISION_KEY},
     revision::KeyRevision,
-    storage_api::XlineStorageOps,
+    storage_api::{KeyRevisionPair, XlineStorageOps},
 };
 use crate::{
     rpc::{KeyValue, PbLease, Role, User},
@@ -33,8 +33,6 @@ pub(crate) const SCHEDULED_COMPACT_REVISION: &str = "scheduled_compact_revision"
 
 /// Key and value pair
 type KeyValuePair = (Vec<u8>, Vec<u8>);
-/// Key and revision pair
-type KeyRevisionPair = (Vec<u8>, KeyRevision);
 
 /// Database to store revision to kv mapping
 #[derive(Debug)]
@@ -98,6 +96,7 @@ impl StorageOps for DB {
 
 impl DB {
     /// Creates a transaction
+    #[allow(unused)] // TODO: use this in the following refactor
     pub(crate) fn transaction(&self) -> Transaction {
         self.engine.transaction()
     }
@@ -180,16 +179,26 @@ where
     T: StorageOps,
 {
     fn write_op(&self, op: WriteOp) -> Result<(), ExecuteError> {
-        self.write_ops(vec![op])
+        self.write_ops(vec![op]).map(|_| ())
     }
 
-    fn write_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError> {
+    fn write_ops(&self, ops: Vec<WriteOp>) -> Result<Vec<KeyRevisionPair>, ExecuteError> {
+        let mut revs = Vec::new();
         let mut wr_ops = Vec::new();
         let del_lease_key_buffer = get_del_lease_key_buffer(&ops);
         let del_alarm_buffer = get_del_alarm_buffer(&ops);
         for op in ops {
             let wop = match op {
                 WriteOp::PutKeyValue(rev, value) => {
+                    revs.push((
+                        value.key.clone(),
+                        KeyRevision::new(
+                            value.create_revision,
+                            value.version,
+                            rev.revision(),
+                            rev.sub_revision(),
+                        ),
+                    ));
                     let key = rev.encode_to_vec();
                     WriteOperation::new_put(KV_TABLE, key, value.encode_to_vec())
                 }
@@ -255,7 +264,8 @@ where
             wr_ops.push(wop);
         }
         self.write_multi(wr_ops, false)
-            .map_err(|e| ExecuteError::DbError(format!("Failed to flush ops, error: {e}")))
+            .map_err(|e| ExecuteError::DbError(format!("Failed to flush ops, error: {e}")))?;
+        Ok(revs)
     }
 
     fn get_value<K>(&self, table: &'static str, key: K) -> Result<Option<Vec<u8>>, ExecuteError>

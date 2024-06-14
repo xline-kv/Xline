@@ -1,6 +1,9 @@
 use xlineapi::execute_error::ExecuteError;
 
-use super::db::WriteOp;
+use super::{db::WriteOp, revision::KeyRevision};
+
+/// Key and revision pair
+pub(crate) type KeyRevisionPair = (Vec<u8>, KeyRevision);
 
 /// Storage operations in xline
 pub(crate) trait XlineStorageOps {
@@ -8,7 +11,8 @@ pub(crate) trait XlineStorageOps {
     fn write_op(&self, op: WriteOp) -> Result<(), ExecuteError>;
 
     /// Write a batch of operations to the transaction
-    fn write_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError>;
+    // TODO: Removes the return value after refactor of xline command execution
+    fn write_ops(&self, ops: Vec<WriteOp>) -> Result<Vec<KeyRevisionPair>, ExecuteError>;
 
     /// Get values by keys from storage
     ///

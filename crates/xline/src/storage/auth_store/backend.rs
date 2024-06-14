@@ -117,7 +117,7 @@ impl AuthStoreBackend {
         &self,
         ops: Vec<crate::storage::db::WriteOp>,
     ) -> Result<(), ExecuteError> {
-        _ = self.db.flush_ops(ops)?;
+        _ = self.db.write_ops(ops)?;
         Ok(())
     }
 }
