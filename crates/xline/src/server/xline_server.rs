@@ -23,6 +23,7 @@ use tonic::transport::{
 use tonic::transport::{server::Router, Server};
 use tracing::{info, warn};
 use utils::{
+    barrier::IdBarrier,
     config::{
         AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState, StorageConfig,
         TlsConfig,
@@ -36,7 +37,7 @@ use xlineapi::command::{Command, CurpClient};
 use super::{
     auth_server::AuthServer,
     auth_wrapper::AuthWrapper,
-    barriers::{IdBarrier, IndexBarrier},
+    barriers::IndexBarrier,
     cluster_server::ClusterServer,
     command::{Alarmer, CommandExecutor},
     kv_server::KvServer,
@@ -46,6 +47,7 @@ use super::{
     watch_server::{WatchServer, CHANNEL_SIZE},
 };
 use crate::{
+    conflict::{XlineSpeculativePools, XlineUncommittedPools},
     header_gen::HeaderGenerator,
     id_gen::IdGenerator,
     metrics::Metrics,
@@ -62,13 +64,12 @@ use crate::{
         kv_store::KvStoreInner,
         kvwatcher::KvWatcher,
         lease_store::LeaseCollection,
-        storage_api::StorageApi,
         AlarmStore, AuthStore, KvStore, LeaseStore,
     },
 };
 
 /// Rpc Server of curp protocol
-pub(crate) type CurpServer<S> = Rpc<Command, State<S, Arc<CurpClient>>>;
+pub(crate) type CurpServer = Rpc<Command, State<Arc<CurpClient>>>;
 
 /// Xline server
 #[derive(Debug)]
@@ -198,18 +199,18 @@ impl XlineServer {
     /// Construct underlying storages, including `KvStore`, `LeaseStore`, `AuthStore`
     #[allow(clippy::type_complexity)] // it is easy to read
     #[inline]
-    async fn construct_underlying_storages<S: StorageApi>(
+    async fn construct_underlying_storages(
         &self,
-        persistent: Arc<S>,
+        persistent: Arc<DB>,
         lease_collection: Arc<LeaseCollection>,
         header_gen: Arc<HeaderGenerator>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<(
-        Arc<KvStore<S>>,
-        Arc<LeaseStore<S>>,
-        Arc<AuthStore<S>>,
-        Arc<AlarmStore<S>>,
-        Arc<KvWatcher<S>>,
+        Arc<KvStore>,
+        Arc<LeaseStore>,
+        Arc<AuthStore>,
+        Arc<AlarmStore>,
+        Arc<KvWatcher>,
     )> {
         let (compact_task_tx, compact_task_rx) = channel(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
@@ -288,9 +289,9 @@ impl XlineServer {
     ///
     /// Will return `Err` when `init_servers` return an error
     #[inline]
-    pub async fn init_router<S: StorageApi>(
+    pub async fn init_router(
         &self,
-        persistent: Arc<S>,
+        persistent: Arc<DB>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<(Router, Router, Arc<CurpClient>)> {
         let (
@@ -434,20 +435,20 @@ impl XlineServer {
     #[allow(clippy::type_complexity, clippy::too_many_lines)] // it is easy to read
     #[allow(clippy::as_conversions)] // cast to dyn
     #[allow(trivial_casts)] // same as above
-    async fn init_servers<S: StorageApi>(
+    async fn init_servers(
         &self,
-        persistent: Arc<S>,
+        persistent: Arc<DB>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<(
-        KvServer<S>,
-        LockServer<S>,
-        Arc<LeaseServer<S>>,
-        AuthServer<S>,
-        WatchServer<S>,
-        MaintenanceServer<S>,
+        KvServer,
+        LockServer,
+        Arc<LeaseServer>,
+        AuthServer,
+        WatchServer,
+        MaintenanceServer,
         ClusterServer,
-        CurpServer<S>,
-        AuthWrapper<S>,
+        CurpServer,
+        AuthWrapper,
         Arc<CurpClient>,
     )> {
         let (header_gen, id_gen) = Self::construct_generator(&self.cluster_info);
@@ -474,10 +475,7 @@ impl XlineServer {
             Arc::clone(&lease_storage),
             Arc::clone(&alarm_storage),
             Arc::clone(&persistent),
-            Arc::clone(&index_barrier),
             Arc::clone(&id_barrier),
-            header_gen.general_revision_arc(),
-            header_gen.auth_revision_arc(),
             Arc::clone(&compact_events),
             self.storage_config.quota,
         ));
@@ -508,6 +506,7 @@ impl XlineServer {
         let state = State::new(Arc::clone(&lease_storage), auto_compactor);
 
         let curp_config = Arc::new(self.cluster_config.curp_config().clone());
+
         let curp_server = CurpServer::new(
             Arc::clone(&self.cluster_info),
             *self.cluster_config.is_leader(),
@@ -518,6 +517,8 @@ impl XlineServer {
             Arc::clone(&self.curp_storage),
             Arc::clone(&self.task_manager),
             self.client_tls_config.clone(),
+            XlineSpeculativePools::default().into_inner(),
+            XlineUncommittedPools::default().into_inner(),
         )
         .await;
 

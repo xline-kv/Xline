@@ -1,6 +1,8 @@
+#![allow(clippy::multiple_inherent_impl)]
+
 use std::{
     cmp::Ordering,
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     sync::{
         atomic::{AtomicI64, Ordering::Relaxed},
         Arc,
@@ -8,6 +10,7 @@ use std::{
 };
 
 use clippy_utilities::{NumericCast, OverflowArithmetic};
+use engine::{Transaction, TransactionApi};
 use prost::Message;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -18,16 +21,16 @@ use xlineapi::{
 };
 
 use super::{
-    db::SCHEDULED_COMPACT_REVISION,
+    db::{DB, SCHEDULED_COMPACT_REVISION},
     index::{Index, IndexOperate},
     lease_store::LeaseCollection,
     revision::{KeyRevision, Revision},
-    storage_api::StorageApi,
+    storage_api::XlineStorageOps,
 };
 use crate::{
     header_gen::HeaderGenerator,
     revision_check::RevisionCheck,
-    revision_number::RevisionNumberGenerator,
+    revision_number::{RevisionNumberGenerator, RevisionNumberGeneratorState},
     rpc::{
         CompactionRequest, CompactionResponse, Compare, CompareResult, CompareTarget,
         DeleteRangeRequest, DeleteRangeResponse, Event, EventType, KeyValue, PutRequest,
@@ -39,12 +42,9 @@ use crate::{
 
 /// KV store
 #[derive(Debug)]
-pub(crate) struct KvStore<DB>
-where
-    DB: StorageApi,
-{
+pub(crate) struct KvStore {
     /// Kv storage inner
-    inner: Arc<KvStoreInner<DB>>,
+    inner: Arc<KvStoreInner>,
     /// Revision
     revision: Arc<RevisionNumberGenerator>,
     /// Header generator
@@ -59,10 +59,7 @@ where
 
 /// KV store inner, shared by `KvStore` and `KvWatcher`
 #[derive(Debug)]
-pub(crate) struct KvStoreInner<DB>
-where
-    DB: StorageApi,
-{
+pub(crate) struct KvStoreInner {
     /// Key Index
     index: Arc<Index>,
     /// DB to store key value
@@ -71,10 +68,7 @@ where
     compacted_rev: AtomicI64,
 }
 
-impl<DB> KvStoreInner<DB>
-where
-    DB: StorageApi,
-{
+impl KvStoreInner {
     /// Create new `KvStoreInner`
     pub(crate) fn new(index: Arc<Index>, db: Arc<DB>) -> Self {
         Self {
@@ -84,13 +78,16 @@ where
         }
     }
 
-    /// Get `KeyValue` from the `KvStoreInner`
-    fn get_values(&self, revisions: &[Revision]) -> Result<Vec<KeyValue>, ExecuteError> {
+    /// Get `KeyValue` from the `KvStore`
+    fn get_values<T>(txn: &T, revisions: &[Revision]) -> Result<Vec<KeyValue>, ExecuteError>
+    where
+        T: XlineStorageOps,
+    {
         let revisions = revisions
             .iter()
             .map(Revision::encode_to_vec)
             .collect::<Vec<Vec<u8>>>();
-        let values = self.db.get_values(KV_TABLE, &revisions)?;
+        let values = txn.get_values(KV_TABLE, &revisions)?;
         let kvs: Vec<KeyValue> = values
             .into_iter()
             .flatten()
@@ -106,14 +103,58 @@ where
     /// Get `KeyValue` of a range
     ///
     /// If `range_end` is `&[]`, this function will return one or zero `KeyValue`.
-    fn get_range(
-        &self,
+    fn get_range<T>(
+        txn_db: &T,
+        index: &dyn IndexOperate,
         key: &[u8],
         range_end: &[u8],
         revision: i64,
-    ) -> Result<Vec<KeyValue>, ExecuteError> {
-        let revisions = self.index.get(key, range_end, revision);
-        self.get_values(&revisions)
+    ) -> Result<Vec<KeyValue>, ExecuteError>
+    where
+        T: XlineStorageOps,
+    {
+        let revisions = index.get(key, range_end, revision);
+        Self::get_values(txn_db, &revisions)
+    }
+
+    /// Get `KeyValue` of a range with limit and count only, return kvs and total count
+    fn get_range_with_opts<T>(
+        txn_db: &T,
+        index: &dyn IndexOperate,
+        key: &[u8],
+        range_end: &[u8],
+        revision: i64,
+        limit: usize,
+        count_only: bool,
+    ) -> Result<(Vec<KeyValue>, usize), ExecuteError>
+    where
+        T: XlineStorageOps,
+    {
+        let mut revisions = index.get(key, range_end, revision);
+        let total = revisions.len();
+        if count_only || total == 0 {
+            return Ok((vec![], total));
+        }
+        if limit != 0 {
+            revisions.truncate(limit);
+        }
+        let kvs = Self::get_values(txn_db, &revisions)?;
+        Ok((kvs, total))
+    }
+
+    /// Get previous `KeyValue` of a `KeyValue`
+    pub(crate) fn get_prev_kv(&self, kv: &KeyValue) -> Option<KeyValue> {
+        let txn_db = self.db.transaction();
+        let index = self.index.state();
+        Self::get_range(
+            &txn_db,
+            &index,
+            &kv.key,
+            &[],
+            kv.mod_revision.overflow_sub(1),
+        )
+        .ok()?
+        .pop()
     }
 
     /// Get `KeyValue` start from a revision and convert to `Event`
@@ -122,11 +163,11 @@ where
         key_range: KeyRange,
         revision: i64,
     ) -> Result<Vec<Event>, ExecuteError> {
+        let txn = self.db.transaction();
         let revisions =
             self.index
                 .get_from_rev(key_range.range_start(), key_range.range_end(), revision);
-        let events: Vec<Event> = self
-            .get_values(&revisions)?
+        let events = Self::get_values(&txn, &revisions)?
             .into_iter()
             .map(|kv| {
                 // Delete
@@ -148,61 +189,45 @@ where
         Ok(events)
     }
 
-    /// Get previous `KeyValue` of a `KeyValue`
-    pub(crate) fn get_prev_kv(&self, kv: &KeyValue) -> Option<KeyValue> {
-        self.get_range(&kv.key, &[], kv.mod_revision.overflow_sub(1))
-            .ok()?
-            .pop()
-    }
-
     /// Get compacted revision of  KV store
     pub(crate) fn compacted_revision(&self) -> i64 {
         self.compacted_rev.load(Relaxed)
     }
-
-    /// Get `KeyValue` of a range with limit and count only, return kvs and total count
-    fn get_range_with_opts(
-        &self,
-        key: &[u8],
-        range_end: &[u8],
-        revision: i64,
-        limit: usize,
-        count_only: bool,
-    ) -> Result<(Vec<KeyValue>, usize), ExecuteError> {
-        let mut revisions = self.index.get(key, range_end, revision);
-        let total = revisions.len();
-        if count_only || total == 0 {
-            return Ok((vec![], total));
-        }
-        if limit != 0 {
-            revisions.truncate(limit);
-        }
-        let kvs = self.get_values(&revisions)?;
-        Ok((kvs, total))
-    }
 }
 
-impl<DB> KvStore<DB>
-where
-    DB: StorageApi,
-{
-    /// execute a kv request
+impl KvStore {
+    /// Executes a request
     pub(crate) fn execute(
         &self,
         request: &RequestWrapper,
+        as_ctx: Option<(&Transaction, &mut dyn IndexOperate)>,
     ) -> Result<CommandResponse, ExecuteError> {
-        self.handle_kv_requests(request).map(CommandResponse::new)
+        if let Some((db, index)) = as_ctx {
+            self.execute_request(request, db, index)
+        } else {
+            self.execute_request(
+                request,
+                &self.inner.db.transaction(),
+                &mut self.inner.index.state(),
+            )
+        }
+        .map(CommandResponse::new)
     }
 
-    /// sync a kv request
-    pub(crate) async fn after_sync(
+    /// After-Syncs a request
+    pub(crate) async fn after_sync<T>(
         &self,
         request: &RequestWrapper,
-        revision: i64,
-    ) -> Result<(SyncResponse, Vec<WriteOp>), ExecuteError> {
-        self.sync_request(request, revision)
+        txn_db: &T,
+        index: &(dyn IndexOperate + Send + Sync),
+        revision_gen: &RevisionNumberGeneratorState<'_>,
+        to_execute: bool,
+    ) -> Result<(SyncResponse, Option<CommandResponse>), ExecuteError>
+    where
+        T: XlineStorageOps + TransactionApi,
+    {
+        self.sync_request(request, txn_db, index, revision_gen, to_execute)
             .await
-            .map(|(rev, ops)| (SyncResponse::new(rev), ops))
     }
 
     /// Recover data from persistent storage
@@ -276,13 +301,10 @@ where
     }
 }
 
-impl<DB> KvStore<DB>
-where
-    DB: StorageApi,
-{
+impl KvStore {
     /// New `KvStore`
     pub(crate) fn new(
-        inner: Arc<KvStoreInner<DB>>,
+        inner: Arc<KvStoreInner>,
         header_gen: Arc<HeaderGenerator>,
         kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
         compact_task_tx: mpsc::Sender<(i64, Option<Arc<event_listener::Event>>)>,
@@ -453,11 +475,12 @@ where
     }
 
     /// Check result of a `Compare`
-    fn check_compare(&self, cmp: &Compare) -> bool {
-        let kvs = self
-            .inner
-            .get_range(&cmp.key, &cmp.range_end, 0)
-            .unwrap_or_default();
+    fn check_compare<T>(txn_db: &T, index: &dyn IndexOperate, cmp: &Compare) -> bool
+    where
+        T: XlineStorageOps,
+    {
+        let kvs =
+            KvStoreInner::get_range(txn_db, index, &cmp.key, &cmp.range_end, 0).unwrap_or_default();
         if kvs.is_empty() {
             if let Some(TargetUnion::Value(_)) = cmp.target_union {
                 false
@@ -490,14 +513,14 @@ where
         revisions
             .iter()
             .for_each(|rev| ops.push(WriteOp::DeleteKeyValue(rev.as_ref())));
-        _ = self.inner.db.flush_ops(ops)?;
+        self.inner.db.write_ops(ops)?;
         Ok(())
     }
 
     /// Compact kv storage
     pub(crate) fn compact_finished(&self, revision: i64) -> Result<(), ExecuteError> {
         let ops = vec![WriteOp::PutFinishedCompactRevision(revision)];
-        _ = self.inner.db.flush_ops(ops)?;
+        self.inner.db.write_ops(ops)?;
         self.update_compacted_revision(revision);
         Ok(())
     }
@@ -536,35 +559,63 @@ where
     }
 }
 
-/// handle and sync kv requests
-impl<DB> KvStore<DB>
-where
-    DB: StorageApi,
-{
-    /// Handle kv requests
-    fn handle_kv_requests(
+#[cfg(test)]
+/// Test uitls
+impl KvStore {
+    pub(crate) fn db(&self) -> &DB {
+        self.inner.db.as_ref()
+    }
+}
+
+// Speculatively execute requests
+impl KvStore {
+    /// execute requests
+    fn execute_request(
         &self,
         wrapper: &RequestWrapper,
+        txn_db: &Transaction,
+        index: &mut dyn IndexOperate,
     ) -> Result<ResponseWrapper, ExecuteError> {
         debug!("Execute {:?}", wrapper);
+
         #[allow(clippy::wildcard_enum_match_arm)]
-        let res = match *wrapper {
-            RequestWrapper::RangeRequest(ref req) => self.handle_range_request(req).map(Into::into),
-            RequestWrapper::PutRequest(ref req) => self.handle_put_request(req).map(Into::into),
-            RequestWrapper::DeleteRangeRequest(ref req) => {
-                self.handle_delete_range_request(req).map(Into::into)
+        let res: ResponseWrapper = match *wrapper {
+            RequestWrapper::RangeRequest(ref req) => {
+                self.execute_range(txn_db, index, req).map(Into::into)?
             }
-            RequestWrapper::TxnRequest(ref req) => self.handle_txn_request(req).map(Into::into),
+            RequestWrapper::PutRequest(ref req) => {
+                self.execute_put(txn_db, index, req).map(Into::into)?
+            }
+            RequestWrapper::DeleteRangeRequest(ref req) => self
+                .execute_delete_range(txn_db, index, req)
+                .map(Into::into)?,
+            RequestWrapper::TxnRequest(ref req) => {
+                // As we store use revision as key in the DB storage,
+                // a fake revision needs to be used during speculative execution
+                let fake_revision = i64::MAX;
+                self.execute_txn(txn_db, index, req, fake_revision, &mut 0)
+                    .map(Into::into)?
+            }
             RequestWrapper::CompactionRequest(ref req) => {
-                self.handle_compaction_request(req).map(Into::into)
+                debug!("Receive CompactionRequest {:?}", req);
+                self.execute_compaction(req).map(Into::into)?
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
-        res
+
+        Ok(res)
     }
 
     /// Handle `RangeRequest`
-    fn handle_range_request(&self, req: &RangeRequest) -> Result<RangeResponse, ExecuteError> {
+    fn execute_range<T>(
+        &self,
+        tnx_db: &T,
+        index: &dyn IndexOperate,
+        req: &RangeRequest,
+    ) -> Result<RangeResponse, ExecuteError>
+    where
+        T: XlineStorageOps,
+    {
         req.check_revision(self.compacted_revision(), self.revision())?;
 
         let storage_fetch_limit = if (req.sort_order() != SortOrder::None)
@@ -578,7 +629,9 @@ where
         } else {
             req.limit.overflow_add(1) // get one extra for "more" flag
         };
-        let (mut kvs, total) = self.inner.get_range_with_opts(
+        let (mut kvs, total) = KvStoreInner::get_range_with_opts(
+            tnx_db,
+            index,
             &req.key,
             &req.range_end,
             req.revision,
@@ -611,11 +664,20 @@ where
             kvs.iter_mut().for_each(|kv| kv.value.clear());
         }
         response.kvs = kvs;
+
         Ok(response)
     }
 
-    /// Handle `PutRequest`
-    fn handle_put_request(&self, req: &PutRequest) -> Result<PutResponse, ExecuteError> {
+    /// Generates `PutResponse`
+    fn generate_put_resp<T>(
+        &self,
+        req: &PutRequest,
+        txn_db: &T,
+        prev_rev: Option<Revision>,
+    ) -> Result<(PutResponse, Option<KeyValue>), ExecuteError>
+    where
+        T: XlineStorageOps,
+    {
         let mut response = PutResponse {
             header: Some(self.header_gen.gen_header()),
             ..Default::default()
@@ -623,24 +685,91 @@ where
         if req.lease != 0 && self.lease_collection.look_up(req.lease).is_none() {
             return Err(ExecuteError::LeaseNotFound(req.lease));
         };
+
         if req.prev_kv || req.ignore_lease || req.ignore_value {
-            let prev_kv = self.inner.get_range(&req.key, &[], 0)?.pop();
+            let prev_kv =
+                KvStoreInner::get_values(txn_db, &prev_rev.into_iter().collect::<Vec<_>>())?.pop();
             if prev_kv.is_none() && (req.ignore_lease || req.ignore_value) {
                 return Err(ExecuteError::KeyNotFound);
             }
             if req.prev_kv {
-                response.prev_kv = prev_kv;
+                response.prev_kv = prev_kv.clone();
             }
-        };
+            return Ok((response, prev_kv));
+        }
+
+        Ok((response, None))
+    }
+
+    /// Handle `PutRequest`
+    fn execute_put(
+        &self,
+        txn_db: &Transaction,
+        index: &dyn IndexOperate,
+        req: &PutRequest,
+    ) -> Result<PutResponse, ExecuteError> {
+        let prev_rev = (req.prev_kv || req.ignore_lease || req.ignore_value)
+            .then(|| index.prev_rev(&req.key))
+            .flatten();
+        let (response, _prev_kv) =
+            self.generate_put_resp(req, txn_db, prev_rev.map(|key_rev| key_rev.as_revision()))?;
         Ok(response)
     }
 
-    /// Handle `DeleteRangeRequest`
-    fn handle_delete_range_request(
+    /// Handle `PutRequest`
+    fn execute_txn_put(
+        &self,
+        txn_db: &Transaction,
+        index: &dyn IndexOperate,
+        req: &PutRequest,
+        revision: i64,
+        sub_revision: &mut i64,
+    ) -> Result<PutResponse, ExecuteError> {
+        let (new_rev, prev_rev) = index.register_revision(req.key.clone(), revision, *sub_revision);
+        let (response, prev_kv) =
+            self.generate_put_resp(req, txn_db, prev_rev.map(|key_rev| key_rev.as_revision()))?;
+        let mut kv = KeyValue {
+            key: req.key.clone(),
+            value: req.value.clone(),
+            create_revision: new_rev.create_revision,
+            mod_revision: new_rev.mod_revision,
+            version: new_rev.version,
+            lease: req.lease,
+        };
+        if req.ignore_lease {
+            kv.lease = prev_kv
+                .as_ref()
+                .unwrap_or_else(|| {
+                    unreachable!("Should returns an error when prev kv does not exist")
+                })
+                .lease;
+        }
+        if req.ignore_value {
+            kv.value = prev_kv
+                .as_ref()
+                .unwrap_or_else(|| {
+                    unreachable!("Should returns an error when prev kv does not exist")
+                })
+                .value
+                .clone();
+        }
+        txn_db.write_op(WriteOp::PutKeyValue(new_rev.as_revision(), kv.clone()))?;
+        *sub_revision = sub_revision.overflow_add(1);
+
+        Ok(response)
+    }
+
+    /// Generates `DeleteRangeResponse`
+    fn generate_delete_range_resp<T>(
         &self,
         req: &DeleteRangeRequest,
-    ) -> Result<DeleteRangeResponse, ExecuteError> {
-        let prev_kvs = self.inner.get_range(&req.key, &req.range_end, 0)?;
+        txn_db: &T,
+        index: &dyn IndexOperate,
+    ) -> Result<DeleteRangeResponse, ExecuteError>
+    where
+        T: XlineStorageOps,
+    {
+        let prev_kvs = KvStoreInner::get_range(txn_db, index, &req.key, &req.range_end, 0)?;
         let mut response = DeleteRangeResponse {
             header: Some(self.header_gen.gen_header()),
             ..DeleteRangeResponse::default()
@@ -652,33 +781,91 @@ where
         Ok(response)
     }
 
-    /// Handle `TxnRequest`
-    fn handle_txn_request(&self, req: &TxnRequest) -> Result<TxnResponse, ExecuteError> {
-        req.check_revision(self.compacted_revision(), self.revision())?;
+    /// Handle `DeleteRangeRequest`
+    fn execute_delete_range<T>(
+        &self,
+        txn_db: &T,
+        index: &dyn IndexOperate,
+        req: &DeleteRangeRequest,
+    ) -> Result<DeleteRangeResponse, ExecuteError>
+    where
+        T: XlineStorageOps,
+    {
+        self.generate_delete_range_resp(req, txn_db, index)
+    }
 
-        let success = req
+    /// Handle `DeleteRangeRequest`
+    fn execute_txn_delete_range<T>(
+        &self,
+        txn_db: &T,
+        index: &dyn IndexOperate,
+        req: &DeleteRangeRequest,
+        revision: i64,
+        sub_revision: &mut i64,
+    ) -> Result<DeleteRangeResponse, ExecuteError>
+    where
+        T: XlineStorageOps,
+    {
+        let response = self.generate_delete_range_resp(req, txn_db, index)?;
+        let _keys = Self::delete_keys(
+            txn_db,
+            index,
+            &req.key,
+            &req.range_end,
+            revision,
+            sub_revision,
+        )?;
+
+        Ok(response)
+    }
+
+    /// Handle `TxnRequest`
+    fn execute_txn(
+        &self,
+        txn_db: &Transaction,
+        index: &mut dyn IndexOperate,
+        request: &TxnRequest,
+        revision: i64,
+        sub_revision: &mut i64,
+    ) -> Result<TxnResponse, ExecuteError> {
+        let success = request
             .compare
             .iter()
-            .all(|compare| self.check_compare(compare));
+            .all(|compare| Self::check_compare(txn_db, index, compare));
+        tracing::warn!("txn success in execute: {success}");
         let requests = if success {
-            req.success.iter()
+            request.success.iter()
         } else {
-            req.failure.iter()
+            request.failure.iter()
         };
-        let mut responses = Vec::with_capacity(requests.len());
-        for request_op in requests {
-            let response = self.handle_kv_requests(&request_op.clone().into())?;
-            responses.push(response.into());
-        }
+
+        let responses = requests
+            .filter_map(|op| op.request.as_ref())
+            .map(|req| match *req {
+                Request::RequestRange(ref r) => {
+                    self.execute_range(txn_db, index, r).map(Into::into)
+                }
+                Request::RequestTxn(ref r) => self
+                    .execute_txn(txn_db, index, r, revision, sub_revision)
+                    .map(Into::into),
+                Request::RequestPut(ref r) => self
+                    .execute_txn_put(txn_db, index, r, revision, sub_revision)
+                    .map(Into::into),
+                Request::RequestDeleteRange(ref r) => self
+                    .execute_txn_delete_range(txn_db, index, r, revision, sub_revision)
+                    .map(Into::into),
+            })
+            .collect::<Result<Vec<ResponseWrapper>, _>>()?;
+
         Ok(TxnResponse {
             header: Some(self.header_gen.gen_header()),
             succeeded: success,
-            responses,
+            responses: responses.into_iter().map(Into::into).collect(),
         })
     }
 
     /// Handle `CompactionRequest`
-    fn handle_compaction_request(
+    fn execute_compaction(
         &self,
         req: &CompactionRequest,
     ) -> Result<CompactionResponse, ExecuteError> {
@@ -694,39 +881,247 @@ where
             header: Some(self.header_gen.gen_header()),
         })
     }
+}
 
-    /// Sync requests in kv store
-    async fn sync_request(
+/// Sync requests
+impl KvStore {
+    /// Handle kv requests
+    async fn sync_request<T>(
         &self,
         wrapper: &RequestWrapper,
-        revision: i64,
-    ) -> Result<(i64, Vec<WriteOp>), ExecuteError> {
-        debug!("After Sync {:?} with revision {}", wrapper, revision);
-        #[allow(clippy::wildcard_enum_match_arm)] // only kv requests can be sent to kv store
-        let (ops, events) = match *wrapper {
-            RequestWrapper::RangeRequest(_) => (Vec::new(), Vec::new()),
-            RequestWrapper::PutRequest(ref req) => self.sync_put_request(req, revision, 0)?,
+        txn_db: &T,
+        index: &(dyn IndexOperate + Send + Sync),
+        revision_gen: &RevisionNumberGeneratorState<'_>,
+        to_execute: bool,
+    ) -> Result<(SyncResponse, Option<CommandResponse>), ExecuteError>
+    where
+        T: XlineStorageOps + TransactionApi,
+    {
+        debug!("Execute {:?}", wrapper);
+        warn!("after sync: {wrapper:?}");
+
+        let next_revision = revision_gen.get().overflow_add(1);
+
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let (events, execute_response): (_, Option<ResponseWrapper>) = match *wrapper {
+            RequestWrapper::RangeRequest(ref req) => {
+                self.sync_range(txn_db, index, req, to_execute)
+            }
+            RequestWrapper::PutRequest(ref req) => {
+                self.sync_put(txn_db, index, req, next_revision, &mut 0, to_execute)
+            }
             RequestWrapper::DeleteRangeRequest(ref req) => {
-                self.sync_delete_range_request(req, revision, 0)
+                self.sync_delete_range(txn_db, index, req, next_revision, &mut 0, to_execute)
             }
-            RequestWrapper::TxnRequest(ref req) => self.sync_txn_request(req, revision)?,
+            RequestWrapper::TxnRequest(ref req) => {
+                self.sync_txn(txn_db, index, req, next_revision, &mut 0, to_execute)
+            }
             RequestWrapper::CompactionRequest(ref req) => {
-                self.sync_compaction_request(req, revision).await?
+                self.sync_compaction(req, to_execute).await
             }
-            _ => {
-                unreachable!("only kv requests can be sent to kv store");
+            _ => unreachable!("Other request should not be sent to this store"),
+        }?;
+
+        let sync_response = if events.is_empty() {
+            SyncResponse::new(revision_gen.get())
+        } else {
+            self.notify_updates(next_revision, events).await;
+            SyncResponse::new(revision_gen.next())
+        };
+
+        tracing::warn!("sync response: {sync_response:?}");
+
+        Ok((sync_response, execute_response.map(CommandResponse::new)))
+    }
+
+    /// Sync `RangeRequest`
+    fn sync_range<T>(
+        &self,
+        txn_db: &T,
+        index: &dyn IndexOperate,
+        req: &RangeRequest,
+        to_execute: bool,
+    ) -> Result<(Vec<Event>, Option<ResponseWrapper>), ExecuteError>
+    where
+        T: XlineStorageOps,
+    {
+        Ok((
+            vec![],
+            to_execute
+                .then(|| self.execute_range(txn_db, index, req).map(Into::into))
+                .transpose()?,
+        ))
+    }
+
+    /// Handle `PutRequest`
+    fn sync_put<T>(
+        &self,
+        txn_db: &T,
+        index: &dyn IndexOperate,
+        req: &PutRequest,
+        revision: i64,
+        sub_revision: &mut i64,
+        to_execute: bool,
+    ) -> Result<(Vec<Event>, Option<ResponseWrapper>), ExecuteError>
+    where
+        T: XlineStorageOps,
+    {
+        let (new_rev, prev_rev_opt) =
+            index.register_revision(req.key.clone(), revision, *sub_revision);
+        let mut kv = KeyValue {
+            key: req.key.clone(),
+            value: req.value.clone(),
+            create_revision: new_rev.create_revision,
+            mod_revision: new_rev.mod_revision,
+            version: new_rev.version,
+            lease: req.lease,
+        };
+
+        if req.ignore_lease || req.ignore_value {
+            let prev_rev = prev_rev_opt
+                .map(|key_rev| key_rev.as_revision())
+                .ok_or(ExecuteError::KeyNotFound)?;
+            let prev_kv = KvStoreInner::get_values(txn_db, &[prev_rev])?.pop();
+            let prev = prev_kv.as_ref().ok_or(ExecuteError::KeyNotFound)?;
+            if req.ignore_lease {
+                kv.lease = prev.lease;
+            }
+            if req.ignore_value {
+                kv.value = prev.value.clone();
             }
         };
-        self.notify_updates(revision, events).await;
-        Ok((revision, ops))
+
+        let old_lease = self.get_lease(&kv.key);
+        if old_lease != 0 {
+            self.detach(old_lease, kv.key.as_slice())
+                .unwrap_or_else(|e| warn!("Failed to detach lease from a key, error: {:?}", e));
+        }
+        if req.lease != 0 {
+            self.attach(req.lease, kv.key.as_slice())
+                .unwrap_or_else(|e| warn!("unexpected error from lease Attach: {e}"));
+        }
+
+        txn_db.write_op(WriteOp::PutKeyValue(new_rev.as_revision(), kv.clone()))?;
+        *sub_revision = sub_revision.overflow_add(1);
+
+        let events = vec![Event {
+            #[allow(clippy::as_conversions)] // This cast is always valid
+            r#type: EventType::Put as i32,
+            kv: Some(kv),
+            prev_kv: None,
+        }];
+
+        let execute_resp = to_execute
+            .then(|| {
+                self.generate_put_resp(
+                    req,
+                    txn_db,
+                    prev_rev_opt.map(|key_rev| key_rev.as_revision()),
+                )
+                .map(|(resp, _)| resp.into())
+            })
+            .transpose()?;
+
+        Ok((events, execute_resp))
+    }
+
+    /// Handle `DeleteRangeRequest`
+    fn sync_delete_range<T>(
+        &self,
+        txn_db: &T,
+        index: &dyn IndexOperate,
+        req: &DeleteRangeRequest,
+        revision: i64,
+        sub_revision: &mut i64,
+        to_execute: bool,
+    ) -> Result<(Vec<Event>, Option<ResponseWrapper>), ExecuteError>
+    where
+        T: XlineStorageOps,
+    {
+        let keys = Self::delete_keys(
+            txn_db,
+            index,
+            &req.key,
+            &req.range_end,
+            revision,
+            sub_revision,
+        )?;
+
+        Self::detach_leases(&keys, &self.lease_collection);
+
+        let execute_resp = to_execute
+            .then(|| self.generate_delete_range_resp(req, txn_db, index))
+            .transpose()?
+            .map(Into::into);
+
+        Ok((Self::new_deletion_events(revision, keys), execute_resp))
+    }
+
+    /// Handle `TxnRequest`
+    fn sync_txn<T>(
+        &self,
+        txn_db: &T,
+        index: &dyn IndexOperate,
+        request: &TxnRequest,
+        revision: i64,
+        sub_revision: &mut i64,
+        to_execute: bool,
+    ) -> Result<(Vec<Event>, Option<ResponseWrapper>), ExecuteError>
+    where
+        T: XlineStorageOps,
+    {
+        request.check_revision(self.compacted_revision(), self.revision())?;
+        let success = request
+            .compare
+            .iter()
+            .all(|compare| Self::check_compare(txn_db, index, compare));
+        tracing::warn!("txn success: {success}");
+        let requests = if success {
+            request.success.iter()
+        } else {
+            request.failure.iter()
+        };
+
+        let (events, resps): (Vec<_>, Vec<_>) = requests
+            .filter_map(|op| op.request.as_ref())
+            .map(|req| match *req {
+                Request::RequestRange(ref r) => self.sync_range(txn_db, index, r, to_execute),
+                Request::RequestTxn(ref r) => {
+                    self.sync_txn(txn_db, index, r, revision, sub_revision, to_execute)
+                }
+                Request::RequestPut(ref r) => {
+                    self.sync_put(txn_db, index, r, revision, sub_revision, to_execute)
+                }
+                Request::RequestDeleteRange(ref r) => {
+                    self.sync_delete_range(txn_db, index, r, revision, sub_revision, to_execute)
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .unzip();
+
+        let resp = to_execute.then(|| {
+            TxnResponse {
+                header: Some(self.header_gen.gen_header()),
+                succeeded: success,
+                responses: resps
+                    .into_iter()
+                    .flat_map(Option::into_iter)
+                    .map(Into::into)
+                    .collect(),
+            }
+            .into()
+        });
+
+        Ok((events.into_iter().flatten().collect(), resp))
     }
 
     /// Sync `CompactionRequest` and return if kvstore is changed
-    async fn sync_compaction_request(
+    async fn sync_compaction(
         &self,
         req: &CompactionRequest,
-        _revision: i64,
-    ) -> Result<(Vec<WriteOp>, Vec<Event>), ExecuteError> {
+        to_execute: bool,
+    ) -> Result<(Vec<Event>, Option<ResponseWrapper>), ExecuteError> {
         let revision = req.revision;
         let ops = vec![WriteOp::PutScheduledCompactRevision(revision)];
         // TODO: Remove the physical process logic here. It's better to move into the KvServer
@@ -743,101 +1138,21 @@ where
         if let Some(listener) = listener {
             listener.await;
         }
-        Ok((ops, Vec::new()))
+        self.inner.db.write_ops(ops)?;
+
+        let resp = to_execute
+            .then(|| CompactionResponse {
+                header: Some(self.header_gen.gen_header()),
+            })
+            .map(Into::into);
+
+        Ok((vec![], resp))
     }
+}
 
-    /// Sync `TxnRequest` and return if kvstore is changed
-    fn sync_txn_request(
-        &self,
-        req: &TxnRequest,
-        revision: i64,
-    ) -> Result<(Vec<WriteOp>, Vec<Event>), ExecuteError> {
-        let mut sub_revision = 0;
-        let mut origin_reqs = VecDeque::from([Request::RequestTxn(req.clone())]);
-        let mut all_events = Vec::new();
-        let mut all_ops = Vec::new();
-        while let Some(request) = origin_reqs.pop_front() {
-            let (mut ops, mut events) = match request {
-                Request::RequestRange(_) => (Vec::new(), Vec::new()),
-                Request::RequestPut(ref put_req) => {
-                    self.sync_put_request(put_req, revision, sub_revision)?
-                }
-                Request::RequestDeleteRange(del_req) => {
-                    self.sync_delete_range_request(&del_req, revision, sub_revision)
-                }
-                Request::RequestTxn(txn_req) => {
-                    let success = txn_req
-                        .compare
-                        .iter()
-                        .all(|compare| self.check_compare(compare));
-                    let reqs_iter = if success {
-                        txn_req.success.into_iter()
-                    } else {
-                        txn_req.failure.into_iter()
-                    };
-                    origin_reqs.extend(reqs_iter.filter_map(|req_op| req_op.request));
-                    continue;
-                }
-            };
-            sub_revision = sub_revision.overflow_add(events.len().numeric_cast());
-            all_events.append(&mut events);
-            all_ops.append(&mut ops);
-        }
-        Ok((all_ops, all_events))
-    }
-
-    /// Sync `PutRequest` and return if kvstore is changed
-    fn sync_put_request(
-        &self,
-        req: &PutRequest,
-        revision: i64,
-        sub_revision: i64,
-    ) -> Result<(Vec<WriteOp>, Vec<Event>), ExecuteError> {
-        let mut ops = Vec::new();
-        let new_rev = self
-            .inner
-            .index
-            .register_revision(&req.key, revision, sub_revision);
-        let mut kv = KeyValue {
-            key: req.key.clone(),
-            value: req.value.clone(),
-            create_revision: new_rev.create_revision,
-            mod_revision: new_rev.mod_revision,
-            version: new_rev.version,
-            lease: req.lease,
-        };
-        if req.ignore_lease || req.ignore_value {
-            let prev_kv = self.inner.get_range(&req.key, &[], 0)?.pop();
-            let prev = prev_kv.as_ref().ok_or(ExecuteError::KeyNotFound)?;
-            if req.ignore_lease {
-                kv.lease = prev.lease;
-            }
-            if req.ignore_value {
-                kv.value = prev.value.clone();
-            }
-        }
-
-        let old_lease = self.get_lease(&kv.key);
-        if old_lease != 0 {
-            self.detach(old_lease, kv.key.as_slice())
-                .unwrap_or_else(|e| warn!("Failed to detach lease from a key, error: {:?}", e));
-        }
-        if req.lease != 0 {
-            self.attach(req.lease, kv.key.as_slice())
-                .unwrap_or_else(|e| panic!("unexpected error from lease Attach: {e}"));
-        }
-        ops.push(WriteOp::PutKeyValue(new_rev.as_revision(), kv.clone()));
-        let event = Event {
-            #[allow(clippy::as_conversions)] // This cast is always valid
-            r#type: EventType::Put as i32,
-            kv: Some(kv),
-            prev_kv: None,
-        };
-        Ok((ops, vec![event]))
-    }
-
+impl KvStore {
     /// create events for a deletion
-    fn new_deletion_events(revision: i64, keys: Vec<Vec<u8>>) -> Vec<Event> {
+    pub(crate) fn new_deletion_events(revision: i64, keys: Vec<Vec<u8>>) -> Vec<Event> {
         keys.into_iter()
             .map(|key| {
                 let kv = KeyValue {
@@ -859,7 +1174,7 @@ where
     fn mark_deletions<'a>(
         revisions: &[(Revision, Revision)],
         keys: &[Vec<u8>],
-    ) -> Vec<WriteOp<'a>> {
+    ) -> (Vec<WriteOp<'a>>, Vec<(Vec<u8>, KeyRevision)>) {
         assert_eq!(keys.len(), revisions.len(), "Index doesn't match with DB");
         keys.iter()
             .zip(revisions.iter())
@@ -869,55 +1184,66 @@ where
                     mod_revision: new_rev.revision(),
                     ..KeyValue::default()
                 };
-                WriteOp::PutKeyValue(new_rev, del_kv)
-            })
-            .collect()
-    }
 
-    /// Sync `DeleteRangeRequest` and return if kvstore is changed
-    fn sync_delete_range_request(
-        &self,
-        req: &DeleteRangeRequest,
-        revision: i64,
-        sub_revision: i64,
-    ) -> (Vec<WriteOp>, Vec<Event>) {
-        Self::delete_keys(
-            &self.inner.index,
-            &self.lease_collection,
-            &req.key,
-            &req.range_end,
-            revision,
-            sub_revision,
-        )
+                let key_revision = (
+                    del_kv.key.clone(),
+                    KeyRevision::new(
+                        del_kv.create_revision,
+                        del_kv.version,
+                        new_rev.revision(),
+                        new_rev.sub_revision(),
+                    ),
+                );
+                (WriteOp::PutKeyValue(new_rev, del_kv), key_revision)
+            })
+            .unzip()
     }
 
     /// Delete keys from index and detach them in lease collection, return all the write operations and events
-    pub(crate) fn delete_keys<'a>(
-        index: &Index,
-        lease_collection: &LeaseCollection,
+    pub(crate) fn delete_keys<T>(
+        txn_db: &T,
+        index: &dyn IndexOperate,
         key: &[u8],
         range_end: &[u8],
         revision: i64,
-        sub_revision: i64,
-    ) -> (Vec<WriteOp<'a>>, Vec<Event>) {
-        let mut ops = Vec::new();
-        let (revisions, keys) = index.delete(key, range_end, revision, sub_revision);
-        let mut del_ops = Self::mark_deletions(&revisions, &keys);
-        ops.append(&mut del_ops);
-        for k in &keys {
+        sub_revision: &mut i64,
+    ) -> Result<Vec<Vec<u8>>, ExecuteError>
+    where
+        T: XlineStorageOps,
+    {
+        let (revisions, keys) = index.delete(key, range_end, revision, *sub_revision);
+        let (del_ops, key_revisions) = Self::mark_deletions(&revisions, &keys);
+
+        index.insert(key_revisions);
+
+        *sub_revision = sub_revision.overflow_add(del_ops.len().numeric_cast());
+        for op in del_ops {
+            txn_db.write_op(op)?;
+        }
+
+        Ok(keys)
+    }
+
+    /// Detaches the leases
+    pub(crate) fn detach_leases(keys: &[Vec<u8>], lease_collection: &LeaseCollection) {
+        for k in keys {
             let lease_id = lease_collection.get_lease(k);
             lease_collection
                 .detach(lease_id, k)
                 .unwrap_or_else(|e| warn!("Failed to detach lease from a key, error: {:?}", e));
         }
-        let events = Self::new_deletion_events(revision, keys);
-        (ops, events)
+    }
+}
+
+impl KvStore {
+    /// Gets the index
+    pub(crate) fn index(&self) -> Arc<Index> {
+        Arc::clone(&self.inner.index)
     }
 
-    /// Insert the given pairs (key, `KeyRevision`) into the index
-    #[inline]
-    pub(crate) fn insert_index(&self, key_revisions: Vec<(Vec<u8>, KeyRevision)>) {
-        self.inner.index.insert(key_revisions);
+    /// Gets the general revision generator
+    pub(crate) fn revision_gen(&self) -> Arc<RevisionNumberGenerator> {
+        Arc::clone(&self.revision)
     }
 }
 
@@ -945,7 +1271,7 @@ mod test {
 
     const CHANNEL_SIZE: usize = 1024;
 
-    struct StoreWrapper(Option<Arc<KvStore<DB>>>, Arc<TaskManager>);
+    struct StoreWrapper(Option<Arc<KvStore>>, Arc<TaskManager>);
 
     impl Drop for StoreWrapper {
         fn drop(&mut self) {
@@ -959,7 +1285,7 @@ mod test {
     }
 
     impl std::ops::Deref for StoreWrapper {
-        type Target = Arc<KvStore<DB>>;
+        type Target = Arc<KvStore>;
 
         fn deref(&self) -> &Self::Target {
             self.0.as_ref().unwrap()
@@ -995,7 +1321,7 @@ mod test {
                 value: val.into(),
                 ..Default::default()
             });
-            exe_as_and_flush(&store, &req, revision.next()).await?;
+            exe_as_and_flush(&store, &req).await?;
         }
         Ok((store, revision))
     }
@@ -1035,17 +1361,23 @@ mod test {
     }
 
     async fn exe_as_and_flush(
-        store: &Arc<KvStore<DB>>,
+        store: &Arc<KvStore>,
         request: &RequestWrapper,
-        revision: i64,
     ) -> Result<(), ExecuteError> {
-        let (_sync_res, ops) = store.after_sync(request, revision).await?;
-        let key_revs = store.inner.db.flush_ops(ops)?;
-        store.insert_index(key_revs);
+        let txn_db = store.db().transaction();
+        let index = store.index();
+        let index_state = index.state();
+        let rev_gen_state = store.revision.state();
+        let _res = store
+            .after_sync(request, &txn_db, &index_state, &rev_gen_state, false)
+            .await?;
+        txn_db.commit().unwrap();
+        index_state.commit();
+        rev_gen_state.commit();
         Ok(())
     }
 
-    fn index_compact(store: &Arc<KvStore<DB>>, at_rev: i64) -> Vec<Vec<u8>> {
+    fn index_compact(store: &Arc<KvStore>, at_rev: i64) -> Vec<Vec<u8>> {
         store
             .inner
             .index
@@ -1066,7 +1398,9 @@ mod test {
             keys_only: true,
             ..Default::default()
         };
-        let response = store.handle_range_request(&request)?;
+        let txn_db = store.inner.db.transaction();
+        let index = store.inner.index.state();
+        let response = store.execute_range(&txn_db, &index, &request)?;
         assert_eq!(response.kvs.len(), 6);
         for kv in response.kvs {
             assert!(kv.value.is_empty());
@@ -1086,7 +1420,9 @@ mod test {
             keys_only: true,
             ..Default::default()
         };
-        let response = store.handle_range_request(&request)?;
+        let txn_db = store.inner.db.transaction();
+        let index = store.inner.index.state();
+        let response = store.execute_range(&txn_db, &index, &request)?;
         assert_eq!(response.kvs.len(), 0);
         assert_eq!(response.count, 0);
         Ok(())
@@ -1107,7 +1443,9 @@ mod test {
             min_mod_revision: 2,
             ..Default::default()
         };
-        let response = store.handle_range_request(&request)?;
+        let txn_db = store.inner.db.transaction();
+        let index = store.inner.index.state();
+        let response = store.execute_range(&txn_db, &index, &request)?;
         assert_eq!(response.count, 6);
         assert_eq!(response.kvs.len(), 2);
         assert_eq!(response.kvs[0].create_revision, 2);
@@ -1131,7 +1469,9 @@ mod test {
                 SortTarget::Mod,
                 SortTarget::Value,
             ] {
-                let response = store.handle_range_request(&sort_req(order, target))?;
+                let txn_db = store.inner.db.transaction();
+                let index = store.inner.index.state();
+                let response = store.execute_range(&txn_db, &index, &sort_req(order, target))?;
                 assert_eq!(response.count, 6);
                 assert_eq!(response.kvs.len(), 6);
                 let expected: [&str; 6] = match order {
@@ -1152,7 +1492,10 @@ mod test {
             }
         }
         for order in [SortOrder::Ascend, SortOrder::Descend, SortOrder::None] {
-            let response = store.handle_range_request(&sort_req(order, SortTarget::Version))?;
+            let txn_db = store.inner.db.transaction();
+            let index = store.inner.index.state();
+            let response =
+                store.execute_range(&txn_db, &index, &sort_req(order, SortTarget::Version))?;
             assert_eq!(response.count, 6);
             assert_eq!(response.kvs.len(), 6);
             let expected = match order {
@@ -1178,7 +1521,7 @@ mod test {
     async fn test_recover() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
         let ops = vec![WriteOp::PutScheduledCompactRevision(8)];
-        db.flush_ops(ops)?;
+        db.write_ops(ops)?;
         let (store, _rev_gen) = init_store(Arc::clone(&db)).await?;
         assert_eq!(store.inner.index.get_from_rev(b"z", b"", 5).len(), 3);
 
@@ -1189,13 +1532,18 @@ mod test {
             range_end: vec![],
             ..Default::default()
         };
-        let res = new_store.handle_range_request(&range_req)?;
+
+        let txn_db = new_store.inner.db.transaction();
+        let index = new_store.inner.index.state();
+        let res = new_store.execute_range(&txn_db, &index, &range_req)?;
         assert_eq!(res.kvs.len(), 0);
         assert_eq!(new_store.compacted_revision(), -1);
 
         new_store.recover().await?;
 
-        let res = new_store.handle_range_request(&range_req)?;
+        let txn_db_recovered = new_store.inner.db.transaction();
+        let index_recovered = new_store.inner.index.state();
+        let res = store.execute_range(&txn_db_recovered, &index_recovered, &range_req)?;
         assert_eq!(res.kvs.len(), 1);
         assert_eq!(res.kvs[0].key, b"a");
         assert_eq!(new_store.compacted_revision(), 8);
@@ -1243,15 +1591,19 @@ mod test {
                 })),
             }],
         });
-        let db = DB::open(&EngineConfig::Memory)?;
-        let (store, rev) = init_store(db).await?;
-        exe_as_and_flush(&store, &txn_req, rev.next()).await?;
+        let path = tempfile::tempdir().unwrap();
+        let db = DB::open(&EngineConfig::RocksDB(path.path().to_path_buf()))?;
+        let (store, _rev) = init_store(db).await?;
+        exe_as_and_flush(&store, &txn_req).await?;
         let request = RangeRequest {
             key: "success".into(),
             range_end: vec![],
             ..Default::default()
         };
-        let response = store.handle_range_request(&request)?;
+
+        let txn_db = store.inner.db.transaction();
+        let index = store.inner.index.state();
+        let response = store.execute_range(&txn_db, &index, &request)?;
         assert_eq!(response.count, 1);
         assert_eq!(response.kvs.len(), 1);
         assert_eq!(response.kvs[0].value, "1".as_bytes());
@@ -1263,7 +1615,7 @@ mod test {
     #[abort_on_panic]
     async fn test_kv_store_index_available() {
         let db = DB::open(&EngineConfig::Memory).unwrap();
-        let (store, revision) = init_store(Arc::clone(&db)).await.unwrap();
+        let (store, _revision) = init_store(Arc::clone(&db)).await.unwrap();
         let handle = tokio::spawn({
             let store = Arc::clone(&store);
             async move {
@@ -1273,15 +1625,13 @@ mod test {
                         value: vec![i],
                         ..Default::default()
                     });
-                    exe_as_and_flush(&store, &req, revision.next())
-                        .await
-                        .unwrap();
+                    exe_as_and_flush(&store, &req).await.unwrap();
                 }
             }
         });
         tokio::time::sleep(std::time::Duration::from_micros(50)).await;
         let revs = store.inner.index.get_from_rev(b"foo", b"", 1);
-        let kvs = store.inner.get_values(&revs).unwrap();
+        let kvs = KvStoreInner::get_values(&db.transaction(), &revs).unwrap();
         assert_eq!(
             kvs.len(),
             revs.len(),
@@ -1291,10 +1641,10 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::too_many_lines)] // TODO: splits this test
     async fn test_compaction() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
         let store = init_empty_store(db);
-        let revision = RevisionNumberGenerator::default();
         // sample requests: (a, 1) (b, 2) (a, 3) (del a)
         // their revisions:     2      3      4       5
         let requests = vec![
@@ -1320,20 +1670,25 @@ mod test {
         ];
 
         for req in requests {
-            exe_as_and_flush(&store, &req, revision.next())
-                .await
-                .unwrap();
+            exe_as_and_flush(&store, &req).await.unwrap();
         }
 
         let target_revisions = index_compact(&store, 3);
         store.compact(target_revisions.as_ref())?;
+
+        let txn_db = store.inner.db.transaction();
+        let index = store.inner.index.state();
         assert_eq!(
-            store.inner.get_range(b"a", b"", 2).unwrap().len(),
+            KvStoreInner::get_range(&txn_db, &index, b"a", b"", 2)
+                .unwrap()
+                .len(),
             1,
             "(a, 1) should not be removed"
         );
         assert_eq!(
-            store.inner.get_range(b"b", b"", 3).unwrap().len(),
+            KvStoreInner::get_range(&txn_db, &index, b"b", b"", 3)
+                .unwrap()
+                .len(),
             1,
             "(b, 2) should not be removed"
         );
@@ -1341,16 +1696,22 @@ mod test {
         let target_revisions = index_compact(&store, 4);
         store.compact(target_revisions.as_ref())?;
         assert!(
-            store.inner.get_range(b"a", b"", 2).unwrap().is_empty(),
+            KvStoreInner::get_range(&txn_db, &index, b"a", b"", 2)
+                .unwrap()
+                .is_empty(),
             "(a, 1) should be removed"
         );
         assert_eq!(
-            store.inner.get_range(b"b", b"", 3).unwrap().len(),
+            KvStoreInner::get_range(&txn_db, &index, b"b", b"", 3)
+                .unwrap()
+                .len(),
             1,
             "(b, 2) should not be removed"
         );
         assert_eq!(
-            store.inner.get_range(b"a", b"", 4).unwrap().len(),
+            KvStoreInner::get_range(&txn_db, &index, b"a", b"", 4)
+                .unwrap()
+                .len(),
             1,
             "(a, 3) should not be removed"
         );
@@ -1358,20 +1719,28 @@ mod test {
         let target_revisions = index_compact(&store, 5);
         store.compact(target_revisions.as_ref())?;
         assert!(
-            store.inner.get_range(b"a", b"", 2).unwrap().is_empty(),
+            KvStoreInner::get_range(&txn_db, &index, b"a", b"", 2)
+                .unwrap()
+                .is_empty(),
             "(a, 1) should be removed"
         );
         assert_eq!(
-            store.inner.get_range(b"b", b"", 3).unwrap().len(),
+            KvStoreInner::get_range(&txn_db, &index, b"b", b"", 3)
+                .unwrap()
+                .len(),
             1,
             "(b, 2) should not be removed"
         );
         assert!(
-            store.inner.get_range(b"a", b"", 4).unwrap().is_empty(),
+            KvStoreInner::get_range(&txn_db, &index, b"a", b"", 4)
+                .unwrap()
+                .is_empty(),
             "(a, 3) should be removed"
         );
         assert!(
-            store.inner.get_range(b"a", b"", 5).unwrap().is_empty(),
+            KvStoreInner::get_range(&txn_db, &index, b"a", b"", 5)
+                .unwrap()
+                .is_empty(),
             "(a, 4) should be removed"
         );
 

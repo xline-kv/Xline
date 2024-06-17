@@ -12,11 +12,7 @@ use utils::{
 };
 use xlineapi::{command::Command, execute_error::ExecuteError, RequestWrapper};
 
-use super::{
-    index::{Index, IndexOperate},
-    storage_api::StorageApi,
-    KvStore,
-};
+use super::{index::Index, KvStore};
 use crate::{revision_number::RevisionNumberGenerator, rpc::CompactionRequest};
 
 /// mod revision compactor;
@@ -58,7 +54,7 @@ impl Compactable
             revision,
             physical: false,
         });
-        let cmd = Command::new(request.keys(), request);
+        let cmd = Command::new(request);
         let err = match self.propose(&cmd, None, true).await? {
             Ok(_) => return Ok(revision),
             Err(err) => err,
@@ -97,16 +93,15 @@ pub(crate) async fn auto_compactor<C: Compactable>(
 
 /// background compact executor
 #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // introduced bt tokio::select! macro
-pub(crate) async fn compact_bg_task<DB>(
-    kv_store: Arc<KvStore<DB>>,
+#[allow(clippy::arithmetic_side_effects)] // introduced bt tokio::select! macro
+pub(crate) async fn compact_bg_task(
+    kv_store: Arc<KvStore>,
     index: Arc<Index>,
     batch_limit: usize,
     interval: Duration,
     mut compact_task_rx: Receiver<(i64, Option<Arc<Event>>)>,
     shutdown_listener: Listener,
-) where
-    DB: StorageApi,
-{
+) {
     loop {
         let (revision, listener) = tokio::select! {
             recv = compact_task_rx.recv() => {

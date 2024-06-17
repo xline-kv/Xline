@@ -6,12 +6,13 @@ use std::{
     time::Duration,
 };
 
-use curp::rpc::ReadState;
+use curp::{rpc::ReadState, InflightId};
 use dashmap::DashMap;
 use event_listener::Event;
 use futures::future::{join_all, Either};
 use tokio::time::timeout;
 use tracing::{debug, instrument};
+use utils::barrier::IdBarrier;
 use xlineapi::{
     command::{Command, CommandResponse, CurpClient, SyncResponse},
     execute_error::ExecuteError,
@@ -19,7 +20,7 @@ use xlineapi::{
     AuthInfo, ResponseWrapper,
 };
 
-use super::barriers::{IdBarrier, IndexBarrier};
+use super::barriers::IndexBarrier;
 use crate::{
     metrics,
     revision_check::RevisionCheck,
@@ -28,22 +29,19 @@ use crate::{
         PutRequest, PutResponse, RangeRequest, RangeResponse, RequestWrapper, Response, ResponseOp,
         TxnRequest, TxnResponse,
     },
-    storage::{storage_api::StorageApi, AuthStore, KvStore},
+    storage::{AuthStore, KvStore},
 };
 
 /// KV Server
-pub(crate) struct KvServer<S>
-where
-    S: StorageApi,
-{
+pub(crate) struct KvServer {
     /// KV storage
-    kv_storage: Arc<KvStore<S>>,
+    kv_storage: Arc<KvStore>,
     /// Auth storage
-    auth_storage: Arc<AuthStore<S>>,
+    auth_storage: Arc<AuthStore>,
     /// Barrier for applied index
     index_barrier: Arc<IndexBarrier>,
     /// Barrier for propose id
-    id_barrier: Arc<IdBarrier>,
+    id_barrier: Arc<IdBarrier<InflightId>>,
     /// Range request retry timeout
     range_retry_timeout: Duration,
     /// Compact timeout
@@ -56,17 +54,14 @@ where
     next_compact_id: AtomicU64,
 }
 
-impl<S> KvServer<S>
-where
-    S: StorageApi,
-{
+impl KvServer {
     /// New `KvServer`
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        kv_storage: Arc<KvStore<S>>,
-        auth_storage: Arc<AuthStore<S>>,
+        kv_storage: Arc<KvStore>,
+        auth_storage: Arc<AuthStore>,
         index_barrier: Arc<IndexBarrier>,
-        id_barrier: Arc<IdBarrier>,
+        id_barrier: Arc<IdBarrier<InflightId>>,
         range_retry_timeout: Duration,
         compact_timeout: Duration,
         client: Arc<CurpClient>,
@@ -98,7 +93,7 @@ where
     fn do_serializable(&self, command: &Command) -> Result<Response, tonic::Status> {
         self.auth_storage
             .check_permission(command.request(), command.auth_info())?;
-        let cmd_res = self.kv_storage.execute(command.request())?;
+        let cmd_res = self.kv_storage.execute(command.request(), None)?;
         Ok(Self::parse_response_op(cmd_res.into_inner().into()))
     }
 
@@ -113,7 +108,7 @@ where
         T: Into<RequestWrapper>,
     {
         let request = request.into();
-        let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
+        let cmd = Command::new_with_auth_info(request, auth_info);
         let res = self.client.propose(&cmd, None, use_fast_path).await??;
         Ok(res)
     }
@@ -193,10 +188,7 @@ where
 }
 
 #[tonic::async_trait]
-impl<S> Kv for KvServer<S>
-where
-    S: StorageApi,
-{
+impl Kv for KvServer {
     /// Range gets the keys in the range from the key-value store.
     #[instrument(skip_all)]
     async fn range(
@@ -214,7 +206,7 @@ where
         let range_required_revision = range_req.revision;
         let is_serializable = range_req.serializable;
         let request = RequestWrapper::from(request.into_inner());
-        let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
+        let cmd = Command::new_with_auth_info(request, auth_info);
         if !is_serializable {
             self.wait_read_state(&cmd).await?;
             // Double check whether the range request is compacted or not since the compaction request
@@ -313,7 +305,7 @@ where
             debug!("TxnRequest is read only");
             let is_serializable = txn_req.is_serializable();
             let request = RequestWrapper::from(request.into_inner());
-            let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
+            let cmd = Command::new_with_auth_info(request, auth_info);
             if !is_serializable {
                 self.wait_read_state(&cmd).await?;
             }
@@ -354,7 +346,7 @@ where
         let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let physical = req.physical;
         let request = RequestWrapper::from(request.into_inner());
-        let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
+        let cmd = Command::new_with_auth_info(request, auth_info);
         let compact_id = self.next_compact_id.fetch_add(1, Ordering::Relaxed);
         let compact_physical_fut = if physical {
             let event = Arc::new(Event::new());
