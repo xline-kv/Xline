@@ -10,7 +10,10 @@ use curp::{
     error::ServerError,
     members::{ClusterInfo, ServerId},
     rpc::{InnerProtocolServer, Member, ProtocolServer},
-    server::{Rpc, DB},
+    server::{
+        conflict::test_pools::{TestSpecPool, TestUncomPool},
+        Rpc, DB,
+    },
     LogIndex,
 };
 use curp_test_utils::{
@@ -22,13 +25,14 @@ use engine::{
     Engine, EngineType, MemorySnapshotAllocator, RocksSnapshotAllocator, Snapshot,
     SnapshotAllocator,
 };
-use futures::{future::join_all, Future};
+use futures::{future::join_all, stream::FuturesUnordered, Future};
 use itertools::Itertools;
 use tokio::{
     net::TcpListener,
     runtime::{Handle, Runtime},
     sync::{mpsc, watch},
     task::{block_in_place, JoinHandle},
+    time::timeout,
 };
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, ServerTlsConfig};
@@ -37,6 +41,7 @@ use utils::{
     build_endpoint,
     config::{
         default_quota, ClientConfig, CurpConfig, CurpConfigBuilder, EngineConfig, StorageConfig,
+        TEST_WAL_SEGMENT_SIZE,
     },
     task_manager::{tasks::TaskName, Listener, TaskManager},
 };
@@ -48,6 +53,17 @@ pub use commandpb::{
     protocol_client::ProtocolClient, FetchClusterRequest, FetchClusterResponse, ProposeRequest,
     ProposeResponse,
 };
+
+/// `BOTTOM_TASKS` are tasks which not dependent on other tasks in the task group.
+/// `CurpGroup` uses `BOTTOM_TASKS` to detect whether the curp group is closed or not.
+const BOTTOM_TASKS: [TaskName; 3] = [
+    TaskName::WatchTask,
+    TaskName::ConfChange,
+    TaskName::LogPersist,
+];
+
+/// The default shutdown timeout used in `wait_for_targets_shutdown`
+pub(crate) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(7);
 
 pub struct CurpNode {
     pub id: ServerId,
@@ -68,7 +84,14 @@ pub struct CurpGroup {
 impl CurpGroup {
     pub async fn new(n_nodes: usize) -> Self {
         let configs = (0..n_nodes)
-            .map(|i| (format!("S{i}"), Default::default()))
+            .map(|i| {
+                let path = tempfile::tempdir().unwrap().into_path();
+                let config = CurpConfigBuilder::default()
+                    .curp_db_dir(path)
+                    .build()
+                    .unwrap();
+                (format!("S{i}"), (Arc::new(config), Default::default()))
+            })
             .collect();
         Self::new_with_configs(configs, "S0".to_owned()).await
     }
@@ -79,7 +102,7 @@ impl CurpGroup {
                 let name = format!("S{i}");
                 let mut config = CurpConfig::default();
                 let dir = path.join(&name);
-                config.engine_cfg = EngineConfig::RocksDB(dir.join("curp"));
+                config.curp_db_dir = dir.join("curp");
                 let xline_storage_config = EngineConfig::RocksDB(dir.join("xline"));
                 (name, (Arc::new(config), xline_storage_config))
             })
@@ -124,7 +147,8 @@ impl CurpGroup {
 
             let role_change_cb = TestRoleChange::default();
             let role_change_arc = role_change_cb.get_inner_arc();
-            let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
+            let curp_storage =
+                Arc::new(DB::open(&config.curp_db_dir, TEST_WAL_SEGMENT_SIZE).unwrap());
             let server = Arc::new(
                 Rpc::new(
                     cluster_info,
@@ -136,6 +160,8 @@ impl CurpGroup {
                     curp_storage,
                     Arc::clone(&task_manager),
                     client_tls_config.clone(),
+                    vec![Box::<TestSpecPool>::default()],
+                    vec![Box::<TestUncomPool>::default()],
                 )
                 .await,
             );
@@ -187,16 +213,8 @@ impl CurpGroup {
             .collect()
     }
 
-    fn get_snapshot_allocator_from_cfg(config: &CurpConfig) -> Box<dyn SnapshotAllocator> {
-        match config.engine_cfg {
-            EngineConfig::Memory => {
-                Box::<MemorySnapshotAllocator>::default() as Box<dyn SnapshotAllocator>
-            }
-            EngineConfig::RocksDB(_) => {
-                Box::<RocksSnapshotAllocator>::default() as Box<dyn SnapshotAllocator>
-            }
-            _ => unreachable!(),
-        }
+    fn get_snapshot_allocator_from_cfg(_config: &CurpConfig) -> Box<dyn SnapshotAllocator> {
+        Box::<RocksSnapshotAllocator>::default() as Box<dyn SnapshotAllocator>
     }
 
     async fn run(
@@ -220,11 +238,17 @@ impl CurpGroup {
         name: String,
         cluster_info: Arc<ClusterInfo>,
     ) {
+        let dir = tempfile::tempdir().unwrap();
         self.run_node_with_config(
             listener,
             name,
             cluster_info,
-            Arc::new(CurpConfig::default()),
+            Arc::new(
+                CurpConfigBuilder::default()
+                    .curp_db_dir(dir.into_path())
+                    .build()
+                    .unwrap(),
+            ),
             EngineConfig::default(),
         )
         .await
@@ -254,7 +278,7 @@ impl CurpGroup {
         let id = cluster_info.self_id();
         let role_change_cb = TestRoleChange::default();
         let role_change_arc = role_change_cb.get_inner_arc();
-        let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
+        let curp_storage = Arc::new(DB::open(&config.curp_db_dir, TEST_WAL_SEGMENT_SIZE).unwrap());
         let server = Arc::new(
             Rpc::new(
                 cluster_info,
@@ -266,6 +290,8 @@ impl CurpGroup {
                 curp_storage,
                 Arc::clone(&task_manager),
                 self.client_tls_config.clone(),
+                vec![],
+                vec![],
             )
             .await,
         );
@@ -330,6 +356,44 @@ impl CurpGroup {
         self.nodes
             .values()
             .all(|node| node.task_manager.is_finished())
+    }
+
+    pub async fn wait_for_node_shutdown(&self, node_id: u64, duration: Duration) {
+        let node = self
+            .nodes
+            .get(&node_id)
+            .expect("{node_id} should exist in nodes");
+        let res = std::iter::once(node);
+        timeout(duration, Self::wait_for_targets_shutdown(res))
+            .await
+            .expect("wait for group to shutdown timeout");
+        assert!(
+            node.task_manager.is_finished(),
+            "The target node({node_id}) is not finished yet"
+        );
+    }
+
+    pub async fn wait_for_group_shutdown(&self, duration: Duration) {
+        timeout(
+            duration,
+            Self::wait_for_targets_shutdown(self.nodes.values()),
+        )
+        .await
+        .expect("wait for group to shutdown timeout");
+        assert!(self.is_finished(), "The group is not finished yet");
+    }
+
+    async fn wait_for_targets_shutdown(targets: impl Iterator<Item = &CurpNode>) {
+        let listeners = targets
+            .flat_map(|node| {
+                BOTTOM_TASKS
+                    .iter()
+                    .map(|task| node.task_manager.get_shutdown_listener(task.to_owned()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let waiters: Vec<_> = listeners.iter().map(|l| l.wait()).collect();
+        futures::future::join_all(waiters.into_iter()).await;
     }
 
     async fn stop(&mut self) {
@@ -435,6 +499,7 @@ impl CurpGroup {
     pub async fn fetch_cluster_info(&self, addrs: &[String], name: &str) -> ClusterInfo {
         let leader_id = self.get_leader().await.0;
         let mut connect = self.get_connect(&leader_id).await;
+        let client_urls: Vec<String> = vec![];
         let cluster_res_base = connect
             .fetch_cluster(tonic::Request::new(FetchClusterRequest {
                 linearizable: false,
@@ -454,7 +519,7 @@ impl CurpGroup {
             members,
             cluster_version: cluster_res_base.cluster_version,
         };
-        ClusterInfo::from_cluster(cluster_res, addrs, name)
+        ClusterInfo::from_cluster(cluster_res, addrs, client_urls.as_slice(), name)
     }
 }
 

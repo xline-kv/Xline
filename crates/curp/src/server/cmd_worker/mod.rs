@@ -5,6 +5,7 @@ use std::{fmt::Debug, iter, sync::Arc};
 
 use async_trait::async_trait;
 use clippy_utilities::NumericCast;
+use curp_external_api::cmd::AfterSyncCmd;
 #[cfg(test)]
 use mockall::automock;
 use tokio::sync::oneshot;
@@ -17,7 +18,7 @@ use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
     role_change::RoleChange,
-    rpc::ConfChangeType,
+    rpc::{ConfChangeType, PoolEntry},
     server::cmd_worker::conflict_checked_mpmc::TaskType,
     snapshot::{Snapshot, SnapshotMeta},
 };
@@ -120,8 +121,10 @@ async fn worker_exe<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             let er_ok = er.is_ok();
             cb.write().insert_er(entry.propose_id, er);
             if !er_ok {
-                sp.lock().remove(&entry.propose_id);
-                let _ig = ucp.lock().remove(&entry.propose_id);
+                sp.lock()
+                    .remove(PoolEntry::new(entry.propose_id, Arc::clone(cmd)));
+                ucp.lock()
+                    .remove(PoolEntry::new(entry.propose_id, Arc::clone(cmd)));
             }
             debug!(
                 "{id} cmd({}) is speculatively executed, exe status: {er_ok}",
@@ -135,12 +138,13 @@ async fn worker_exe<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         | EntryData::SetNodeState(_, _, _) => true,
     };
     if !success {
-        ce.trigger(entry.inflight_id(), entry.index);
+        ce.trigger(entry.inflight_id());
     }
     success
 }
 
 /// Cmd worker after sync handler
+#[allow(clippy::too_many_lines)] // TODO: split this to multiple fns
 async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     entry: Arc<LogEntry<C>>,
     prepare: Option<C::PR>,
@@ -151,14 +155,25 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     let id = curp.id();
     let success = match entry.entry_data {
         EntryData::Command(ref cmd) => {
-            let Some(prepare) = prepare else {
+            let Some(_prepare) = prepare else {
                 unreachable!("prepare should always be Some(_) when entry is a command");
             };
-            let asr = ce.after_sync(cmd.as_ref(), entry.index, prepare).await;
+            let asr = ce
+                .after_sync(vec![AfterSyncCmd::new(cmd.as_ref(), false)], entry.index)
+                .await
+                .map(|res| {
+                    let (asr, _) = res
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| unreachable!("the asr should always be Some"));
+                    asr
+                });
             let asr_ok = asr.is_ok();
             cb.write().insert_asr(entry.propose_id, asr);
-            sp.lock().remove(&entry.propose_id);
-            let _ig = ucp.lock().remove(&entry.propose_id);
+            sp.lock()
+                .remove(PoolEntry::new(entry.propose_id, Arc::clone(cmd)));
+            ucp.lock()
+                .remove(PoolEntry::new(entry.propose_id, Arc::clone(cmd)));
             debug!("{id} cmd({}) after sync is called", entry.propose_id);
             asr_ok
         }
@@ -184,8 +199,10 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             let shutdown_self =
                 change.change_type() == ConfChangeType::Remove && change.node_id == id;
             cb.write().insert_conf(entry.propose_id);
-            sp.lock().remove(&entry.propose_id);
-            let _ig = ucp.lock().remove(&entry.propose_id);
+            sp.lock()
+                .remove(PoolEntry::new(entry.propose_id, conf_change.clone()));
+            ucp.lock()
+                .remove(PoolEntry::new(entry.propose_id, conf_change.clone()));
             if shutdown_self {
                 if let Some(maybe_new_leader) = curp.pick_new_leader() {
                     info!(
@@ -234,7 +251,7 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         }
         EntryData::Empty => true,
     };
-    ce.trigger(entry.inflight_id(), entry.index);
+    ce.trigger(entry.inflight_id());
     success
 }
 

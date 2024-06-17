@@ -84,7 +84,7 @@ impl KvClient {
     #[inline]
     pub async fn put(&self, request: PutRequest) -> Result<PutResponse> {
         let request = RequestWrapper::from(xlineapi::PutRequest::from(request));
-        let cmd = Command::new(request.keys(), request);
+        let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client
             .propose(&cmd, self.token.as_ref(), true)
@@ -128,7 +128,7 @@ impl KvClient {
     #[inline]
     pub async fn range(&self, request: RangeRequest) -> Result<RangeResponse> {
         let request = RequestWrapper::from(xlineapi::RangeRequest::from(request));
-        let cmd = Command::new(request.keys(), request);
+        let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client
             .propose(&cmd, self.token.as_ref(), true)
@@ -165,7 +165,7 @@ impl KvClient {
     #[inline]
     pub async fn delete(&self, request: DeleteRangeRequest) -> Result<DeleteRangeResponse> {
         let request = RequestWrapper::from(xlineapi::DeleteRangeRequest::from(request));
-        let cmd = Command::new(request.keys(), request);
+        let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client
             .propose(&cmd, self.token.as_ref(), true)
@@ -213,7 +213,7 @@ impl KvClient {
     #[inline]
     pub async fn txn(&self, request: TxnRequest) -> Result<TxnResponse> {
         let request = RequestWrapper::from(xlineapi::TxnRequest::from(request));
-        let cmd = Command::new(request.keys(), request);
+        let cmd = Command::new(request);
         let (cmd_res, Some(sync_res)) = self
             .curp_client
             .propose(&cmd, self.token.as_ref(), false)
@@ -273,7 +273,7 @@ impl KvClient {
                 .map_err(Into::into);
         }
         let request = RequestWrapper::from(xlineapi::CompactionRequest::from(request));
-        let cmd = Command::new(request.keys(), request);
+        let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client
             .propose(&cmd, self.token.as_ref(), true)

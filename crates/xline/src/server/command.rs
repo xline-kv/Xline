@@ -2,27 +2,31 @@ use std::{fmt::Debug, sync::Arc};
 
 use clippy_utilities::OverflowArithmetic;
 use curp::{
-    cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor},
+    cmd::{AfterSyncCmd, Command as CurpCommand, CommandExecutor as CurpCommandExecutor},
     members::ServerId,
     InflightId, LogIndex,
 };
 use dashmap::DashMap;
-use engine::Snapshot;
+use engine::{Snapshot, TransactionApi};
 use event_listener::Event;
 use parking_lot::RwLock;
 use tracing::warn;
-use utils::table_names::META_TABLE;
+use utils::{barrier::IdBarrier, table_names::META_TABLE};
 use xlineapi::{
     command::{Command, CurpClient},
     execute_error::ExecuteError,
     AlarmAction, AlarmRequest, AlarmType,
 };
 
-use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
-    revision_number::RevisionNumberGenerator,
+    revision_number::RevisionNumberGeneratorState,
     rpc::{RequestBackend, RequestWrapper},
-    storage::{db::WriteOp, storage_api::StorageApi, AlarmStore, AuthStore, KvStore, LeaseStore},
+    storage::{
+        db::{WriteOp, DB},
+        index::IndexOperate,
+        storage_api::XlineStorageOps,
+        AlarmStore, AuthStore, KvStore, LeaseStore,
+    },
 };
 
 /// Key of applied index
@@ -59,28 +63,19 @@ impl RangeType {
 
 /// Command Executor
 #[derive(Debug)]
-pub(crate) struct CommandExecutor<S>
-where
-    S: StorageApi,
-{
+pub(crate) struct CommandExecutor {
     /// Kv Storage
-    kv_storage: Arc<KvStore<S>>,
+    kv_storage: Arc<KvStore>,
     /// Auth Storage
-    auth_storage: Arc<AuthStore<S>>,
+    auth_storage: Arc<AuthStore>,
     /// Lease Storage
-    lease_storage: Arc<LeaseStore<S>>,
+    lease_storage: Arc<LeaseStore>,
     /// Alarm Storage
-    alarm_storage: Arc<AlarmStore<S>>,
+    alarm_storage: Arc<AlarmStore>,
     /// persistent storage
-    persistent: Arc<S>,
-    /// Barrier for applied index
-    index_barrier: Arc<IndexBarrier>,
+    persistent: Arc<DB>,
     /// Barrier for propose id
-    id_barrier: Arc<IdBarrier>,
-    /// Revision Number generator for KV request and Lease request
-    general_rev: Arc<RevisionNumberGenerator>,
-    /// Revision Number generator for Auth request
-    auth_rev: Arc<RevisionNumberGenerator>,
+    id_barrier: Arc<IdBarrier<InflightId>>,
     /// Compact events
     compact_events: Arc<DashMap<u64, Arc<Event>>>,
     /// Quota checker
@@ -97,14 +92,11 @@ pub(crate) trait QuotaChecker: Sync + Send + Debug {
 
 /// Quota checker for `Command`
 #[derive(Debug)]
-struct CommandQuotaChecker<S>
-where
-    S: StorageApi,
-{
+struct CommandQuotaChecker {
     /// Quota size
     quota: u64,
     /// persistent storage
-    persistent: Arc<S>,
+    persistent: Arc<DB>,
 }
 
 /// functions used to estimate request write size
@@ -160,20 +152,14 @@ mod size_estimate {
     }
 }
 
-impl<S> CommandQuotaChecker<S>
-where
-    S: StorageApi,
-{
+impl CommandQuotaChecker {
     /// Create a new `CommandQuotaChecker`
-    fn new(quota: u64, persistent: Arc<S>) -> Self {
+    fn new(quota: u64, persistent: Arc<DB>) -> Self {
         Self { quota, persistent }
     }
 }
 
-impl<S> QuotaChecker for CommandQuotaChecker<S>
-where
-    S: StorageApi,
-{
+impl QuotaChecker for CommandQuotaChecker {
     fn check(&self, cmd: &Command) -> bool {
         if !cmd.need_check_quota() {
             return true;
@@ -219,28 +205,22 @@ impl Alarmer {
     /// Propose alarm request to other nodes
     async fn alarm(&self, action: AlarmAction, alarm: AlarmType) -> Result<(), tonic::Status> {
         let request = RequestWrapper::from(AlarmRequest::new(action, self.id, alarm));
-        let cmd = Command::new(request.keys(), request);
+        let cmd = Command::new(request);
         let _ig = self.client.propose(&cmd, None, true).await?;
         Ok(())
     }
 }
 
-impl<S> CommandExecutor<S>
-where
-    S: StorageApi,
-{
+impl CommandExecutor {
     /// New `CommandExecutor`
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        kv_storage: Arc<KvStore<S>>,
-        auth_storage: Arc<AuthStore<S>>,
-        lease_storage: Arc<LeaseStore<S>>,
-        alarm_storage: Arc<AlarmStore<S>>,
-        persistent: Arc<S>,
-        index_barrier: Arc<IndexBarrier>,
-        id_barrier: Arc<IdBarrier>,
-        general_rev: Arc<RevisionNumberGenerator>,
-        auth_rev: Arc<RevisionNumberGenerator>,
+        kv_storage: Arc<KvStore>,
+        auth_storage: Arc<AuthStore>,
+        lease_storage: Arc<LeaseStore>,
+        alarm_storage: Arc<AlarmStore>,
+        persistent: Arc<DB>,
+        id_barrier: Arc<IdBarrier<InflightId>>,
         compact_events: Arc<DashMap<u64, Arc<Event>>>,
         quota: u64,
     ) -> Self {
@@ -252,10 +232,7 @@ where
             lease_storage,
             alarm_storage,
             persistent,
-            index_barrier,
             id_barrier,
-            general_rev,
-            auth_rev,
             compact_events,
             quota_checker,
             alarmer,
@@ -290,48 +267,95 @@ where
             _ => Ok(()),
         }
     }
+
+    /// After sync KV commands
+    async fn after_sync_kv<T>(
+        &self,
+        wrapper: &RequestWrapper,
+        txn_db: &T,
+        index: &(dyn IndexOperate + Send + Sync),
+        revision_gen: &RevisionNumberGeneratorState<'_>,
+        to_execute: bool,
+    ) -> Result<
+        (
+            <Command as CurpCommand>::ASR,
+            Option<<Command as CurpCommand>::ER>,
+        ),
+        ExecuteError,
+    >
+    where
+        T: XlineStorageOps + TransactionApi,
+    {
+        let (asr, er) = self
+            .kv_storage
+            .after_sync(wrapper, txn_db, index, revision_gen, to_execute)
+            .await?;
+        Ok((asr, er))
+    }
+
+    /// After sync other type of commands
+    async fn after_sync_others<T>(
+        &self,
+        wrapper: &RequestWrapper,
+        txn_db: &T,
+        general_revision: &RevisionNumberGeneratorState<'_>,
+        auth_revision: &RevisionNumberGeneratorState<'_>,
+        to_execute: bool,
+    ) -> Result<
+        (
+            <Command as CurpCommand>::ASR,
+            Option<<Command as CurpCommand>::ER>,
+        ),
+        ExecuteError,
+    >
+    where
+        T: XlineStorageOps + TransactionApi,
+    {
+        let er = to_execute
+            .then(|| match wrapper.backend() {
+                RequestBackend::Auth => self.auth_storage.execute(wrapper),
+                RequestBackend::Lease => self.lease_storage.execute(wrapper),
+                RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
+                RequestBackend::Kv => unreachable!("Should not execute kv commands"),
+            })
+            .transpose()?;
+
+        let (asr, wr_ops) = match wrapper.backend() {
+            RequestBackend::Auth => self.auth_storage.after_sync(wrapper, auth_revision)?,
+            RequestBackend::Lease => {
+                self.lease_storage
+                    .after_sync(wrapper, general_revision)
+                    .await?
+            }
+            RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, general_revision),
+            RequestBackend::Kv => unreachable!("Should not sync kv commands"),
+        };
+
+        txn_db.write_ops(wr_ops)?;
+
+        Ok((asr, er))
+    }
 }
 
 #[async_trait::async_trait]
-impl<S> CurpCommandExecutor<Command> for CommandExecutor<S>
-where
-    S: StorageApi,
-{
+impl CurpCommandExecutor<Command> for CommandExecutor {
     fn prepare(
         &self,
-        cmd: &Command,
+        _cmd: &Command,
     ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
-        self.check_alarm(cmd)?;
-        let wrapper = cmd.request();
-        let auth_info = cmd.auth_info();
-        self.auth_storage.check_permission(wrapper, auth_info)?;
-        let revision = match wrapper.backend() {
-            RequestBackend::Auth => {
-                if wrapper.skip_auth_revision() {
-                    -1
-                } else {
-                    self.auth_rev.next()
-                }
-            }
-            RequestBackend::Kv | RequestBackend::Lease => {
-                if wrapper.skip_general_revision() {
-                    -1
-                } else {
-                    self.general_rev.next()
-                }
-            }
-            RequestBackend::Alarm => -1,
-        };
-        Ok(revision)
+        Ok(-1)
     }
 
     async fn execute(
         &self,
         cmd: &Command,
     ) -> Result<<Command as CurpCommand>::ER, <Command as CurpCommand>::Error> {
+        self.check_alarm(cmd)?;
+        let auth_info = cmd.auth_info();
         let wrapper = cmd.request();
+        self.auth_storage.check_permission(wrapper, auth_info)?;
         match wrapper.backend() {
-            RequestBackend::Kv => self.kv_storage.execute(wrapper),
+            RequestBackend::Kv => self.kv_storage.execute(wrapper, None),
             RequestBackend::Auth => self.auth_storage.execute(wrapper),
             RequestBackend::Lease => self.lease_storage.execute(wrapper),
             RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
@@ -340,39 +364,91 @@ where
 
     async fn after_sync(
         &self,
-        cmd: &Command,
-        index: LogIndex,
-        revision: i64,
-    ) -> Result<<Command as CurpCommand>::ASR, <Command as CurpCommand>::Error> {
-        let quota_enough = self.quota_checker.check(cmd);
-        let mut ops = vec![WriteOp::PutAppliedIndex(index)];
-        let wrapper = cmd.request();
-        let (res, mut wr_ops) = match wrapper.backend() {
-            RequestBackend::Kv => self.kv_storage.after_sync(wrapper, revision).await?,
-            RequestBackend::Auth => self.auth_storage.after_sync(wrapper, revision)?,
-            RequestBackend::Lease => self.lease_storage.after_sync(wrapper, revision).await?,
-            RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, revision),
-        };
-        if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
-            if compact_req.physical {
-                if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
-                    let _ignore = n.notify(usize::MAX);
-                }
-            }
-        };
-        if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
-            if compact_req.physical {
-                if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
-                    let _ignore = n.notify(usize::MAX);
-                }
-            }
-        };
-        ops.append(&mut wr_ops);
-        let key_revisions = self.persistent.flush_ops(ops)?;
-        if !key_revisions.is_empty() {
-            self.kv_storage.insert_index(key_revisions);
+        cmds: Vec<AfterSyncCmd<'_, Command>>,
+        highest_index: LogIndex,
+    ) -> Result<
+        Vec<(
+            <Command as CurpCommand>::ASR,
+            Option<<Command as CurpCommand>::ER>,
+        )>,
+        <Command as CurpCommand>::Error,
+    > {
+        if cmds.is_empty() {
+            return Ok(Vec::new());
         }
-        self.lease_storage.mark_lease_synced(wrapper);
+        cmds.iter()
+            .map(AfterSyncCmd::cmd)
+            .try_for_each(|c| self.check_alarm(c))?;
+        let quota_enough = cmds
+            .iter()
+            .map(AfterSyncCmd::cmd)
+            .all(|c| self.quota_checker.check(c));
+        cmds.iter().map(AfterSyncCmd::cmd).try_for_each(|c| {
+            self.auth_storage
+                .check_permission(c.request(), c.auth_info())
+        })?;
+
+        let index = self.kv_storage.index();
+        let index_state = index.state();
+        let general_revision_gen = self.kv_storage.revision_gen();
+        let auth_revision_gen = self.auth_storage.revision_gen();
+        let general_revision_state = general_revision_gen.state();
+        let auth_revision_state = auth_revision_gen.state();
+
+        let txn_db = self.persistent.transaction();
+        txn_db.write_op(WriteOp::PutAppliedIndex(highest_index))?;
+
+        let mut resps = Vec::with_capacity(cmds.len());
+        for (cmd, to_execute) in cmds.into_iter().map(AfterSyncCmd::into_parts) {
+            let wrapper = cmd.request();
+            let (asr, er) = match wrapper.backend() {
+                RequestBackend::Kv => {
+                    self.after_sync_kv(
+                        wrapper,
+                        &txn_db,
+                        &index_state,
+                        &general_revision_state,
+                        to_execute,
+                    )
+                    .await
+                }
+                RequestBackend::Auth | RequestBackend::Lease | RequestBackend::Alarm => {
+                    self.after_sync_others(
+                        wrapper,
+                        &txn_db,
+                        &general_revision_state,
+                        &auth_revision_state,
+                        to_execute,
+                    )
+                    .await
+                }
+            }?;
+            resps.push((asr, er));
+
+            if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
+                if compact_req.physical {
+                    if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
+                        let _ignore = n.notify(usize::MAX);
+                    }
+                }
+            };
+            if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
+                if compact_req.physical {
+                    if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
+                        let _ignore = n.notify(usize::MAX);
+                    }
+                }
+            };
+
+            self.lease_storage.mark_lease_synced(wrapper);
+        }
+        txn_db
+            .commit()
+            .map_err(|e| ExecuteError::DbError(e.to_string()))?;
+        index_state.commit();
+        general_revision_state.commit();
+        auth_revision_state.commit();
+
         if !quota_enough {
             if let Some(alarmer) = self.alarmer.read().clone() {
                 let _ig = tokio::spawn(async move {
@@ -385,7 +461,8 @@ where
                 });
             }
         }
-        Ok(res)
+
+        Ok(resps)
     }
 
     async fn reset(
@@ -393,9 +470,8 @@ where
         snapshot: Option<(Snapshot, LogIndex)>,
     ) -> Result<(), <Command as CurpCommand>::Error> {
         let s = if let Some((snapshot, index)) = snapshot {
-            _ = self
-                .persistent
-                .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
+            self.persistent
+                .write_ops(vec![WriteOp::PutAppliedIndex(index)])?;
             Some(snapshot)
         } else {
             None
@@ -409,9 +485,8 @@ where
     }
 
     fn set_last_applied(&self, index: LogIndex) -> Result<(), <Command as CurpCommand>::Error> {
-        _ = self
-            .persistent
-            .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
+        self.persistent
+            .write_ops(vec![WriteOp::PutAppliedIndex(index)])?;
         Ok(())
     }
 
@@ -425,9 +500,8 @@ where
         Ok(u64::from_le_bytes(buf))
     }
 
-    fn trigger(&self, id: InflightId, index: LogIndex) {
-        self.id_barrier.trigger(id);
-        self.index_barrier.trigger(index);
+    fn trigger(&self, id: InflightId) {
+        self.id_barrier.trigger(&id);
     }
 }
 

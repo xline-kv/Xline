@@ -12,7 +12,7 @@ categories = ["KV"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.82"
+anyhow = "1.0.83"
 async-stream = "0.3.5"
 async-trait = "0.1.80"
 axum = "0.6.20"
@@ -45,12 +45,12 @@ opentelemetry-otlp = { version = "0.15.0", features = [
 ] }
 opentelemetry-prometheus = { version = "0.15.0" }
 opentelemetry_sdk = { version = "0.22.1", features = ["metrics", "rt-tokio"] }
-parking_lot = "0.12.2"
+parking_lot = "0.12.3"
 pbkdf2 = { version = "0.12.2", features = ["simple"] }
 priority-queue = "2.0.2"
 prometheus = "0.13.4"
 prost = "0.12.3"
-serde = { version = "1.0.199", features = ["derive"] }
+serde = { version = "1.0.203", features = ["derive"] }
 sha2 = "0.10.6"
 tokio = { version = "0.2.25", package = "madsim-tokio", features = [
   "rt-multi-thread",
@@ -79,11 +79,12 @@ xlineapi = { path = "../xlineapi" }
 tonic-build = { version = "0.4.3", package = "madsim-tonic-build" }
 
 [dev-dependencies]
-etcd-client = { version = "0.12.5", features = ["tls"] }
+etcd-client = { version = "0.13.0", features = ["tls"] }
 mockall = "0.12.1"
 rand = "0.8.5"
 strum = "0.26"
 strum_macros = "0.26.2"
+tempfile = "3"
 test-macros = { path = "../test-macros" }
 xline-client = { path = "../xline-client" }
 xline-test-utils = { path = "../xline-test-utils" }

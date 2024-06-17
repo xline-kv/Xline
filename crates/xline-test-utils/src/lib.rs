@@ -10,8 +10,9 @@ use tokio::{
 };
 use tonic::transport::ClientTlsConfig;
 use utils::config::{
-    default_quota, AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState,
-    LogConfig, MetricsConfig, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
+    default_quota, AuthConfig, ClusterConfig, ClusterConfigBuilder, CompactConfig,
+    CurpConfigBuilder, EngineConfig, InitialClusterState, LogConfig, MetricsConfig, StorageConfig,
+    TlsConfig, TraceConfig, XlineServerConfig, TEST_WAL_SEGMENT_SIZE,
 };
 use xline::server::XlineServer;
 use xline_client::types::auth::{
@@ -39,9 +40,12 @@ pub struct Cluster {
 impl Cluster {
     /// New `Cluster`
     pub async fn new(size: usize) -> Self {
-        let configs = iter::repeat_with(XlineServerConfig::default)
-            .take(size)
-            .collect();
+        let configs = iter::repeat_with(|| {
+            let path = temp_dir().join(random_id());
+            Self::default_config_with_curp_db_path(path)
+        })
+        .take(size)
+        .collect();
         Self::new_with_configs(configs).await
     }
 
@@ -136,7 +140,17 @@ impl Cluster {
     }
 
     pub async fn run_node(&mut self, xline_listener: TcpListener, curp_listener: TcpListener) {
-        let config = XlineServerConfig::default();
+        let curp_path = tempfile::tempdir().unwrap();
+        let config = XlineServerConfig::new(
+            Cluster::cluster_config_with_path(curp_path.into_path()),
+            StorageConfig::default(),
+            LogConfig::default(),
+            TraceConfig::default(),
+            AuthConfig::default(),
+            CompactConfig::default(),
+            TlsConfig::default(),
+            MetricsConfig::default(),
+        );
         self.run_node_with_config(xline_listener, curp_listener, config)
             .await;
     }
@@ -243,7 +257,7 @@ impl Cluster {
         path: PathBuf,
         quota: u64,
     ) -> XlineServerConfig {
-        let cluster = ClusterConfig::default();
+        let cluster = Self::cluster_config_with_path(path.clone());
         let storage = StorageConfig::new(EngineConfig::RocksDB(path), quota);
         let log = LogConfig::default();
         let trace = TraceConfig::default();
@@ -266,6 +280,31 @@ impl Cluster {
     pub fn default_quota_config(quota: u64) -> XlineServerConfig {
         let path = temp_dir().join(random_id());
         Self::default_config_with_quota_and_rocks_path(path, quota)
+    }
+
+    pub fn default_config_with_curp_db_path(path: PathBuf) -> XlineServerConfig {
+        let cluster = Self::cluster_config_with_path(path);
+        let storage = StorageConfig::default();
+        let log = LogConfig::default();
+        let trace = TraceConfig::default();
+        let auth = AuthConfig::default();
+        let compact = CompactConfig::default();
+        let tls = TlsConfig::default();
+        let metrics = MetricsConfig::default();
+        XlineServerConfig::new(cluster, storage, log, trace, auth, compact, tls, metrics)
+    }
+
+    pub fn cluster_config_with_path(mut path: PathBuf) -> ClusterConfig {
+        path.push("curp");
+        let curp_cfg = CurpConfigBuilder::default()
+            .curp_db_dir(path)
+            .wal_segment_size(TEST_WAL_SEGMENT_SIZE)
+            .build()
+            .unwrap();
+        ClusterConfigBuilder::default()
+            .curp_config(curp_cfg)
+            .build()
+            .unwrap()
     }
 
     fn merge_config(
@@ -318,10 +357,8 @@ impl Drop for Cluster {
                     h.await.unwrap();
                 }
                 for cfg in &self.configs {
-                    if let EngineConfig::RocksDB(ref path) = cfg.cluster().curp_config().engine_cfg
-                    {
-                        let _ignore = tokio::fs::remove_dir_all(path).await;
-                    }
+                    let _ignore =
+                        tokio::fs::remove_dir_all(&cfg.cluster().curp_config().curp_db_dir).await;
                     if let EngineConfig::RocksDB(ref path) = cfg.storage().engine {
                         let _ignore = tokio::fs::remove_dir_all(path).await;
                     }

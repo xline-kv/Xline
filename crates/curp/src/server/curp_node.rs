@@ -28,10 +28,13 @@ use utils::{
 use super::{
     cmd_board::{CmdBoardRef, CommandBoard},
     cmd_worker::{conflict_checked_mpmc, start_cmd_workers},
-    gc::{gc_cmd_board, gc_spec_pool},
+    conflict::{
+        spec_pool_new::{SpObject, SpeculativePool},
+        uncommitted_pool::{UcpObject, UncommittedPool},
+    },
+    gc::gc_cmd_board,
     lease_manager::LeaseManager,
-    raw_curp::{AppendEntries, RawCurp, UncommittedPool, Vote},
-    spec_pool::{SpecPoolRef, SpeculativePool},
+    raw_curp::{AppendEntries, RawCurp, Vote},
     storage::StorageApi,
 };
 use crate::{
@@ -59,8 +62,6 @@ use crate::{
 pub(super) struct CurpNode<C: Command, RC: RoleChange> {
     /// `RawCurp` state machine
     curp: Arc<RawCurp<C, RC>>,
-    /// The speculative cmd pool, shared with executor
-    spec_pool: SpecPoolRef<C>,
     /// Cmd watch board for tracking the cmd sync results
     cmd_board: CmdBoardRef<C>,
     /// CE event tx,
@@ -175,7 +176,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     }
 
     /// Handle `Vote` requests
-    pub(super) async fn vote(&self, req: VoteRequest) -> Result<VoteResponse, CurpError> {
+    pub(super) fn vote(&self, req: &VoteRequest) -> Result<VoteResponse, CurpError> {
         let result = if req.is_pre_vote {
             self.curp.handle_pre_vote(
                 req.term,
@@ -195,7 +196,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         let resp = match result {
             Ok((term, sp)) => {
                 if !req.is_pre_vote {
-                    self.storage.flush_voted_for(term, req.candidate_id).await?;
+                    self.storage.flush_voted_for(term, req.candidate_id)?;
                 }
                 VoteResponse::new_accept(term, sp)?
             }
@@ -266,7 +267,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         &self,
         req_stream: impl Stream<Item = Result<InstallSnapshotRequest, E>>,
     ) -> Result<InstallSnapshotResponse, CurpError> {
-        metrics::get().apply_snapshot_in_progress.observe(1, &[]);
+        metrics::get().apply_snapshot_in_progress.add(1, &[]);
         let start = Instant::now();
         pin_mut!(req_stream);
         let mut snapshot = self
@@ -316,7 +317,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                             "failed to reset the command executor by snapshot, {err}"
                         ))
                     })?;
-                metrics::get().apply_snapshot_in_progress.observe(0, &[]);
+                metrics::get().apply_snapshot_in_progress.add(-1, &[]);
                 metrics::get()
                     .snapshot_install_total_duration_seconds
                     .record(start.elapsed().as_secs(), &[]);
@@ -336,7 +337,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     ) -> Result<FetchReadStateResponse, CurpError> {
         self.check_cluster_version(req.cluster_version)?;
         let cmd = req.cmd()?;
-        let state = self.curp.handle_fetch_read_state(&cmd);
+        let state = self.curp.handle_fetch_read_state(Arc::new(cmd));
         Ok(FetchReadStateResponse::new(state))
     }
 
@@ -585,7 +586,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                     let Some(e) = e else {
                         return;
                     };
-                    if let Err(err) = storage.put_log_entry(e.as_ref()).await {
+                    if let Err(err) = storage.put_log_entries(&[e.as_ref()]) {
                         error!("storage error, {err}");
                     }
                 }
@@ -593,7 +594,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
             }
         }
         while let Ok(e) = log_rx.try_recv() {
-            if let Err(err) = storage.put_log_entry(e.as_ref()).await {
+            if let Err(err) = storage.put_log_entries(&[e.as_ref()]) {
                 error!("storage error, {err}");
             }
         }
@@ -616,6 +617,8 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         storage: Arc<DB<C>>,
         task_manager: Arc<TaskManager>,
         client_tls_config: Option<ClientTlsConfig>,
+        sps: Vec<SpObject<C>>,
+        ucps: Vec<UcpObject<C>>,
     ) -> Result<Self, CurpError> {
         let sync_events = cluster_info
             .peers_ids()
@@ -628,9 +631,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
             .collect();
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
-        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let last_applied = cmd_executor
             .last_applied()
             .map_err(|e| CurpError::internal(format!("get applied index error, {e}")))?;
@@ -639,15 +640,13 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         let ce_event_tx: Arc<dyn CEEventTxApi<C>> = Arc::new(ce_event_tx);
 
         // create curp state machine
-        let (voted_for, entries) = storage.recover().await?;
+        let (voted_for, entries) = storage.recover()?;
         let curp = Arc::new(
             RawCurp::builder()
                 .cluster_info(Arc::clone(&cluster_info))
                 .is_leader(is_leader)
                 .cmd_board(Arc::clone(&cmd_board))
-                .spec_pool(Arc::clone(&spec_pool))
                 .lease_manager(lease_manager)
-                .uncommitted_pool(uncommitted_pool)
                 .cfg(Arc::clone(&curp_cfg))
                 .cmd_tx(Arc::clone(&ce_event_tx))
                 .sync_events(sync_events)
@@ -660,6 +659,8 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 .entries(entries)
                 .curp_storage(Arc::clone(&storage))
                 .client_tls_config(client_tls_config)
+                .spec_pool(Arc::new(Mutex::new(SpeculativePool::new(sps))))
+                .uncommitted_pool(Arc::new(Mutex::new(UncommittedPool::new(ucps))))
                 .build_raw_curp()
                 .map_err(|e| CurpError::internal(format!("build raw curp failed, {e}")))?,
         );
@@ -671,15 +672,11 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         task_manager.spawn(TaskName::GcCmdBoard, |n| {
             gc_cmd_board(Arc::clone(&cmd_board), curp_cfg.gc_interval, n)
         });
-        task_manager.spawn(TaskName::GcSpecPool, |n| {
-            gc_spec_pool(Arc::clone(&spec_pool), curp_cfg.gc_interval, n)
-        });
 
         Self::run_bg_tasks(Arc::clone(&curp), Arc::clone(&storage), log_rx);
 
         Ok(Self {
             curp,
-            spec_pool,
             cmd_board,
             ce_event_tx,
             storage,
@@ -979,7 +976,6 @@ impl<C: Command, RC: RoleChange> Debug for CurpNode<C, RC> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CurpNode")
             .field("raw_curp", &self.curp)
-            .field("spec_pool", &self.spec_pool)
             .field("cmd_board", &self.cmd_board)
             .finish()
     }

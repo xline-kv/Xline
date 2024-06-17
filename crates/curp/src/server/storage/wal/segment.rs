@@ -18,7 +18,7 @@ use tokio::{
 use tokio_stream::StreamExt;
 
 use super::{
-    codec::{DataFrame, WAL},
+    codec::{DataFrame, DataFrameOwned, WAL},
     error::{CorruptType, WALError},
     framed::{Decoder, Encoder},
     util::{get_checksum, parse_u64, validate_data, LockedFile},
@@ -27,7 +27,7 @@ use super::{
 use crate::log_entry::LogEntry;
 
 /// The size of wal file header in bytes
-const WAL_HEADER_SIZE: usize = 56;
+pub(super) const WAL_HEADER_SIZE: usize = 56;
 
 /// A segment of WAL
 #[derive(Debug)]
@@ -96,17 +96,21 @@ impl WALSegment {
         &mut self,
     ) -> Result<impl Iterator<Item = LogEntry<C>>, WALError>
     where
-        C: Serialize + DeserializeOwned + 'static,
+        C: Serialize + DeserializeOwned + 'static + std::fmt::Debug,
     {
         let frame_batches = self.read_all(WAL::<C>::new())?;
+        let frame_batches_filtered: Vec<_> = frame_batches
+            .into_iter()
+            .filter(|b| !b.is_empty())
+            .collect();
         // The highest_index of this segment
         let mut highest_index = u64::MAX;
         // We get the last frame batch to check it's type
-        if let Some(frames) = frame_batches.last() {
+        if let Some(frames) = frame_batches_filtered.last() {
             let frame = frames
                 .last()
                 .unwrap_or_else(|| unreachable!("a batch should contains at least one frame"));
-            if let DataFrame::SealIndex(index) = *frame {
+            if let DataFrameOwned::SealIndex(index) = *frame {
                 highest_index = index;
             }
         }
@@ -115,13 +119,16 @@ impl WALSegment {
         self.update_seal_index(highest_index);
 
         // Get log entries that index is no larger than `highest_index`
-        Ok(frame_batches.into_iter().flatten().filter_map(move |f| {
-            if let DataFrame::Entry(e) = f {
-                (e.index <= highest_index).then_some(e)
-            } else {
-                None
-            }
-        }))
+        Ok(frame_batches_filtered
+            .into_iter()
+            .flatten()
+            .filter_map(move |f| {
+                if let DataFrameOwned::Entry(e) = f {
+                    (e.index <= highest_index).then_some(e)
+                } else {
+                    None
+                }
+            }))
     }
 
     /// Seal the current segment
@@ -185,7 +192,7 @@ impl WALSegment {
 
     /// Updates the seal index
     pub(super) fn update_seal_index(&mut self, index: LogIndex) {
-        self.seal_index = self.seal_index.max(index);
+        self.seal_index = index;
     }
 
     /// Get the size of the segment
@@ -369,7 +376,7 @@ mod tests {
 
         let frames: Vec<_> = (0..100)
             .map(|i| {
-                DataFrame::Entry(LogEntry::new(
+                DataFrameOwned::Entry(LogEntry::new(
                     i,
                     1,
                     crate::rpc::ProposeId(0, 0),
@@ -377,7 +384,11 @@ mod tests {
                 ))
             })
             .collect();
-        segment.write_sync(frames.clone(), WAL::new());
+
+        segment.write_sync(
+            frames.iter().map(DataFrameOwned::get_ref).collect(),
+            WAL::new(),
+        );
 
         drop(segment);
 
@@ -386,7 +397,7 @@ mod tests {
         let recovered: Vec<_> = segment
             .recover_segment_logs::<TestCommand>()
             .unwrap()
-            .map(|e| DataFrame::Entry(e))
+            .map(|e| DataFrameOwned::Entry(e))
             .collect();
         assert_eq!(frames, recovered);
     }

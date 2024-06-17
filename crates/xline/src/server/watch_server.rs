@@ -17,10 +17,7 @@ use crate::{
         RequestUnion, ResponseHeader, Watch, WatchCancelRequest, WatchCreateRequest,
         WatchProgressRequest, WatchRequest, WatchResponse,
     },
-    storage::{
-        kvwatcher::{KvWatcher, KvWatcherOps, WatchEvent, WatchId, WatchIdGenerator},
-        storage_api::StorageApi,
-    },
+    storage::kvwatcher::{KvWatcher, KvWatcherOps, WatchEvent, WatchId, WatchIdGenerator},
 };
 
 /// Default channel size
@@ -28,12 +25,9 @@ pub(crate) const CHANNEL_SIZE: usize = 1024;
 
 /// Watch Server
 #[derive(Debug)]
-pub(crate) struct WatchServer<S>
-where
-    S: StorageApi,
-{
+pub(crate) struct WatchServer {
     /// KV watcher
-    watcher: Arc<KvWatcher<S>>,
+    watcher: Arc<KvWatcher>,
     /// Watch ID generator
     next_id_gen: Arc<WatchIdGenerator>,
     /// Header Generator
@@ -44,13 +38,10 @@ where
     task_manager: Arc<TaskManager>,
 }
 
-impl<S> WatchServer<S>
-where
-    S: StorageApi,
-{
+impl WatchServer {
     /// New `WatchServer`
     pub(crate) fn new(
-        watcher: Arc<KvWatcher<S>>,
+        watcher: Arc<KvWatcher>,
         header_gen: Arc<HeaderGenerator>,
         watch_progress_notify_interval: Duration,
         task_manager: Arc<TaskManager>,
@@ -387,10 +378,7 @@ where
 }
 
 #[tonic::async_trait]
-impl<S> Watch for WatchServer<S>
-where
-    S: StorageApi,
-{
+impl Watch for WatchServer {
     ///Server streaming response type for the Watch method.
     type WatchStream = ReceiverStream<Result<WatchResponse, tonic::Status>>;
 
@@ -455,21 +443,24 @@ mod test {
             && wr.header.as_ref().map_or(false, |h| h.revision != 0)
     }
 
-    async fn put(
-        store: &KvStore<DB>,
-        db: &DB,
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        revision: i64,
-    ) {
+    async fn put(store: &KvStore, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
         let req = RequestWrapper::from(PutRequest {
             key: key.into(),
             value: value.into(),
             ..Default::default()
         });
-        let (_sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
-        let key_revisions = db.flush_ops(ops).unwrap();
-        store.insert_index(key_revisions);
+
+        let txn = store.db().transaction();
+        store
+            .after_sync(
+                &req,
+                &txn,
+                &store.index().state(),
+                &store.revision_gen().state(),
+                false,
+            )
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -490,7 +481,7 @@ mod test {
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
         let n = task_manager.get_shutdown_listener(TaskName::WatchTask);
-        let handle = tokio::spawn(WatchServer::<DB>::task(
+        let handle = tokio::spawn(WatchServer::task(
             next_id,
             Arc::clone(&watcher),
             res_tx,
@@ -545,7 +536,7 @@ mod test {
         let req_stream1: ReceiverStream<Result<WatchRequest, tonic::Status>> =
             ReceiverStream::new(req_rx1);
         task_manager.spawn(TaskName::WatchTask, |n| {
-            WatchServer::<DB>::task(
+            WatchServer::task(
                 Arc::clone(&next_id_gen),
                 Arc::clone(&kv_watcher),
                 res_tx1,
@@ -561,7 +552,7 @@ mod test {
         let req_stream2: ReceiverStream<Result<WatchRequest, tonic::Status>> =
             ReceiverStream::new(req_rx2);
         task_manager.spawn(TaskName::WatchTask, |n| {
-            WatchServer::<DB>::task(
+            WatchServer::task(
                 next_id_gen,
                 kv_watcher,
                 res_tx2,
@@ -614,8 +605,8 @@ mod test {
             Duration::from_millis(10),
             &task_manager,
         );
-        put(&kv_store, &db, "foo", "old_bar", 2).await;
-        put(&kv_store, &db, "foo", "bar", 3).await;
+        put(&kv_store, "foo", "old_bar").await;
+        put(&kv_store, "foo", "bar").await;
 
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
         let req_stream = ReceiverStream::new(req_rx);
@@ -632,7 +623,7 @@ mod test {
         req_tx.send(Ok(create_watch_req(2, true))).await.unwrap();
         let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
         task_manager.spawn(TaskName::WatchTask, |n| {
-            WatchServer::<DB>::task(
+            WatchServer::task(
                 Arc::clone(&next_id_gen),
                 Arc::clone(&kv_watcher),
                 res_tx,
@@ -679,7 +670,7 @@ mod test {
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
         task_manager.spawn(TaskName::WatchTask, |n| {
-            WatchServer::<DB>::task(
+            WatchServer::task(
                 next_id,
                 Arc::clone(&watcher),
                 res_tx,
@@ -742,7 +733,7 @@ mod test {
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
         let n = task_manager.get_shutdown_listener(TaskName::WatchTask);
-        let handle = tokio::spawn(WatchServer::<DB>::task(
+        let handle = tokio::spawn(WatchServer::task(
             next_id,
             Arc::clone(&watcher),
             res_tx,
@@ -800,9 +791,9 @@ mod test {
             Duration::from_millis(10),
             &task_manager,
         );
-        put(&kv_store, &db, "foo", "old_bar", 2).await;
-        put(&kv_store, &db, "foo", "bar", 3).await;
-        put(&kv_store, &db, "foo", "new_bar", 4).await;
+        put(&kv_store, "foo", "old_bar").await;
+        put(&kv_store, "foo", "bar").await;
+        put(&kv_store, "foo", "new_bar").await;
 
         kv_store.update_compacted_revision(3);
 
@@ -819,7 +810,7 @@ mod test {
         req_tx.send(Ok(create_watch_req(1, 2))).await.unwrap();
         let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
         task_manager.spawn(TaskName::WatchTask, |n| {
-            WatchServer::<DB>::task(
+            WatchServer::task(
                 Arc::clone(&next_id_gen),
                 Arc::clone(&kv_watcher),
                 res_tx,

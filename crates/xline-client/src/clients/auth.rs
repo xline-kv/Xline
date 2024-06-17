@@ -721,7 +721,7 @@ impl AuthClient {
         use_fast_path: bool,
     ) -> Result<Res> {
         let request = request.into();
-        let cmd = Command::new(request.keys(), request);
+        let cmd = Command::new(request);
 
         let res_wrapper = if use_fast_path {
             let (cmd_res, _sync_error) = self

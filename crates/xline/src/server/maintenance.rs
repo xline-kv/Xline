@@ -23,7 +23,7 @@ use crate::{
         StatusResponse,
     },
     state::State,
-    storage::{storage_api::StorageApi, AlarmStore, AuthStore, KvStore},
+    storage::{db::DB, AlarmStore, AuthStore, KvStore},
 };
 
 /// Minimum page size
@@ -32,16 +32,13 @@ const MIN_PAGE_SIZE: u64 = 512;
 pub(crate) const MAINTENANCE_SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
 
 /// Maintenance Server
-pub(crate) struct MaintenanceServer<S>
-where
-    S: StorageApi,
-{
+pub(crate) struct MaintenanceServer {
     /// Kv Storage
-    kv_store: Arc<KvStore<S>>,
+    kv_store: Arc<KvStore>,
     /// Auth Storage
-    auth_store: Arc<AuthStore<S>>,
+    auth_store: Arc<AuthStore>,
     /// persistent storage
-    persistent: Arc<S>, // TODO: `persistent` is not a good name, rename it in a better way
+    persistent: Arc<DB>, // TODO: `persistent` is not a good name, rename it in a better way
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// Consensus client
@@ -49,29 +46,26 @@ where
     /// cluster information
     cluster_info: Arc<ClusterInfo>,
     /// Raw curp
-    raw_curp: Arc<RawCurp<Command, State<S, Arc<CurpClient>>>>,
+    raw_curp: Arc<RawCurp<Command, State<Arc<CurpClient>>>>,
     /// Command executor
-    ce: Arc<CommandExecutor<S>>,
+    ce: Arc<CommandExecutor>,
     /// Alarm store
-    alarm_store: Arc<AlarmStore<S>>,
+    alarm_store: Arc<AlarmStore>,
 }
 
-impl<S> MaintenanceServer<S>
-where
-    S: StorageApi,
-{
+impl MaintenanceServer {
     /// New `MaintenanceServer`
     #[allow(clippy::too_many_arguments)] // Consistent with other servers
     pub(crate) fn new(
-        kv_store: Arc<KvStore<S>>,
-        auth_store: Arc<AuthStore<S>>,
+        kv_store: Arc<KvStore>,
+        auth_store: Arc<AuthStore>,
         client: Arc<CurpClient>,
-        persistent: Arc<S>,
+        persistent: Arc<DB>,
         header_gen: Arc<HeaderGenerator>,
         cluster_info: Arc<ClusterInfo>,
-        raw_curp: Arc<RawCurp<Command, State<S, Arc<CurpClient>>>>,
-        ce: Arc<CommandExecutor<S>>,
-        alarm_store: Arc<AlarmStore<S>>,
+        raw_curp: Arc<RawCurp<Command, State<Arc<CurpClient>>>>,
+        ce: Arc<CommandExecutor>,
+        alarm_store: Arc<AlarmStore>,
     ) -> Self {
         Self {
             kv_store,
@@ -97,17 +91,14 @@ where
     {
         let auth_info = self.auth_store.try_get_auth_info_from_request(&request)?;
         let request = request.into_inner().into();
-        let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
+        let cmd = Command::new_with_auth_info(request, auth_info);
         let res = self.client.propose(&cmd, None, use_fast_path).await??;
         Ok(res)
     }
 }
 
 #[tonic::async_trait]
-impl<S> Maintenance for MaintenanceServer<S>
-where
-    S: StorageApi,
-{
+impl Maintenance for MaintenanceServer {
     async fn alarm(
         &self,
         request: tonic::Request<AlarmRequest>,
@@ -229,9 +220,9 @@ where
 }
 
 /// Generate snapshot stream
-fn snapshot_stream<S: StorageApi>(
+fn snapshot_stream(
     header_gen: &HeaderGenerator,
-    persistent: &S,
+    persistent: &DB,
 ) -> Result<impl Stream<Item = Result<SnapshotResponse, tonic::Status>>, tonic::Status> {
     let tmp_path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());
     let mut snapshot = persistent.get_snapshot(tmp_path).map_err(|e| {

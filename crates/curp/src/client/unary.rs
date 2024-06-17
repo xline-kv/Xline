@@ -9,7 +9,7 @@ use tracing::{debug, warn};
 use super::{state::State, ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
 use crate::{
     members::ServerId,
-    quorum,
+    quorum, recover_quorum,
     rpc::{
         connect::ConnectApi, ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse,
         FetchReadStateRequest, Member, MoveLeaderRequest, ProposeConfChangeRequest, ProposeId,
@@ -97,18 +97,26 @@ impl<C: Command> Unary<C> {
             })
             .await;
         let super_quorum = super_quorum(responses.len());
+        let recover_quorum = recover_quorum(responses.len());
 
         let mut err: Option<CurpError> = None;
         let mut execute_result: Option<C::ER> = None;
-        let mut ok_cnt = 0;
+        let (mut ok_cnt, mut key_conflict_cnt) = (0, 0);
 
         while let Some((id, resp)) = responses.next().await {
+            if key_conflict_cnt >= recover_quorum {
+                return Err(CurpError::KeyConflict(()));
+            }
+
             let resp = match resp {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
                     warn!("propose cmd({propose_id}) to server({id}) error: {e:?}");
                     if e.should_abort_fast_round() {
                         return Err(e);
+                    }
+                    if matches!(e, CurpError::KeyConflict(())) {
+                        key_conflict_cnt.add_assign(1);
                     }
                     if let Some(old_err) = err.as_ref() {
                         if old_err.priority() <= e.priority() {

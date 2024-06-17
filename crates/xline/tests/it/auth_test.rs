@@ -2,8 +2,8 @@ use std::{error::Error, iter, path::PathBuf};
 
 use test_macros::abort_on_panic;
 use utils::config::{
-    AuthConfig, ClusterConfig, CompactConfig, LogConfig, MetricsConfig, StorageConfig, TlsConfig,
-    TraceConfig, XlineServerConfig,
+    AuthConfig, CompactConfig, LogConfig, MetricsConfig, StorageConfig, TlsConfig, TraceConfig,
+    XlineServerConfig,
 };
 use xline_test_utils::{
     enable_auth, set_user,
@@ -233,8 +233,9 @@ fn configs_with_auth(size: usize) -> Vec<XlineServerConfig> {
         )
     })
     .map(|(auth_public_key, auth_private_key)| {
+        let path = tempfile::tempdir().unwrap().into_path();
         XlineServerConfig::new(
-            ClusterConfig::default(),
+            Cluster::cluster_config_with_path(path),
             StorageConfig::default(),
             LogConfig::default(),
             TraceConfig::default(),

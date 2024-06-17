@@ -11,13 +11,13 @@ categories = ["Client"]
 keywords = ["Client", "Xline", "RPC"]
 
 [dependencies]
-anyhow = "1.0.82"
+anyhow = "1.0.83"
 clippy-utilities = "0.2.0"
 curp = { path = "../curp" }
 futures = "0.3.25"
 getrandom = "0.2"
 http = "0.2.9"
-thiserror = "1.0.58"
+thiserror = "1.0.61"
 tokio = { version = "0.2.25", package = "madsim-tokio", features = ["sync"] }
 tonic = { version = "0.4.2", package = "madsim-tonic" }
 tower = { version = "0.4", features = ["discover"] }

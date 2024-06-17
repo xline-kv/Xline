@@ -39,7 +39,7 @@ trait FrameEncoder {
 #[derive(Debug)]
 pub(super) struct WAL<C, H = Sha256> {
     /// Frames stored in decoding
-    frames: Vec<DataFrame<C>>,
+    frames: Vec<DataFrameOwned<C>>,
     /// The hasher state for decoding
     hasher: H,
 }
@@ -48,7 +48,7 @@ pub(super) struct WAL<C, H = Sha256> {
 #[derive(Debug)]
 enum WALFrame<C> {
     /// Data frame type
-    Data(DataFrame<C>),
+    Data(DataFrameOwned<C>),
     /// Commit frame type
     Commit(CommitFrame),
 }
@@ -58,9 +58,21 @@ enum WALFrame<C> {
 /// Contains either a log entry or a seal index
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq))]
-pub(crate) enum DataFrame<C> {
+pub(crate) enum DataFrameOwned<C> {
     /// A Frame containing a log entry
     Entry(LogEntry<C>),
+    /// A Frame containing the sealed index
+    SealIndex(LogIndex),
+}
+
+/// The data frame
+///
+/// Contains either a log entry or a seal index
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
+pub(crate) enum DataFrame<'a, C> {
+    /// A Frame containing a log entry
+    Entry(&'a LogEntry<C>),
     /// A Frame containing the sealed index
     SealIndex(LogIndex),
 }
@@ -98,15 +110,18 @@ impl<C> WAL<C> {
     }
 }
 
-impl<C> Encoder<Vec<DataFrame<C>>> for WAL<C>
+impl<C> Encoder<Vec<DataFrame<'_, C>>> for WAL<C>
 where
     C: Serialize,
 {
     type Error = io::Error;
 
     /// Encodes a frame
-    fn encode(&mut self, frames: Vec<DataFrame<C>>) -> Result<Vec<u8>, Self::Error> {
-        let mut frame_data: Vec<_> = frames.into_iter().flat_map(|f| f.encode()).collect();
+    fn encode(&mut self, frames: Vec<DataFrame<'_, C>>) -> Result<Vec<u8>, Self::Error> {
+        let mut frame_data = Vec::new();
+        for frame in frames {
+            frame_data.extend_from_slice(&frame.encode());
+        }
         let commit_frame = CommitFrame::new_from_data(&frame_data);
         frame_data.extend_from_slice(&commit_frame.encode());
 
@@ -118,7 +133,7 @@ impl<C> Decoder for WAL<C>
 where
     C: Serialize + DeserializeOwned,
 {
-    type Item = Vec<DataFrame<C>>;
+    type Item = Vec<DataFrameOwned<C>>;
 
     type Error = WALError;
 
@@ -208,14 +223,14 @@ where
         let entry: LogEntry<C> = bincode::deserialize(payload)
             .map_err(|e| WALError::Corrupted(CorruptType::Codec(e.to_string())))?;
 
-        Ok(Some((Self::Data(DataFrame::Entry(entry)), 8 + len)))
+        Ok(Some((Self::Data(DataFrameOwned::Entry(entry)), 8 + len)))
     }
 
     /// Decodes an seal index frame from source
     fn decode_seal_index(header: [u8; 8]) -> Result<Option<(Self, usize)>, WALError> {
         let index = Self::decode_u64_from_header(header);
 
-        Ok(Some((Self::Data(DataFrame::SealIndex(index)), 8)))
+        Ok(Some((Self::Data(DataFrameOwned::SealIndex(index)), 8)))
     }
 
     /// Decodes a commit frame from source
@@ -239,7 +254,17 @@ where
     }
 }
 
-impl<C> FrameType for DataFrame<C> {
+impl<C> DataFrameOwned<C> {
+    /// Converts `DataFrameOwned` to `DataFrame`
+    pub(super) fn get_ref(&self) -> DataFrame<'_, C> {
+        match *self {
+            DataFrameOwned::Entry(ref entry) => DataFrame::Entry(entry),
+            DataFrameOwned::SealIndex(index) => DataFrame::SealIndex(index),
+        }
+    }
+}
+
+impl<C> FrameType for DataFrame<'_, C> {
     fn frame_type(&self) -> u8 {
         match *self {
             DataFrame::Entry(_) => ENTRY,
@@ -248,11 +273,14 @@ impl<C> FrameType for DataFrame<C> {
     }
 }
 
-impl<C> FrameEncoder for DataFrame<C>
+impl<C> FrameEncoder for DataFrame<'_, C>
 where
     C: Serialize,
 {
-    #[allow(clippy::arithmetic_side_effects)] // The integer shift is safe
+    #[allow(
+        clippy::arithmetic_side_effects,  // The integer shift is safe
+        clippy::indexing_slicing // The slicing is checked
+    )]
     fn encode(&self) -> Vec<u8> {
         match *self {
             DataFrame::Entry(ref entry) => {
@@ -260,17 +288,18 @@ where
                     .unwrap_or_else(|_| unreachable!("serialization should never fail"));
                 let len = entry_bytes.len();
                 assert_eq!(len >> 56, 0, "log entry length: {len} too large");
-                let len_bytes = len.to_le_bytes().into_iter().take(7);
-                let header = std::iter::once(self.frame_type()).chain(len_bytes);
-                header.chain(entry_bytes).collect()
+                let mut bytes = Vec::with_capacity(1 + 7 + entry_bytes.len());
+                bytes.push(self.frame_type());
+                bytes.extend_from_slice(&len.to_le_bytes()[..7]);
+                bytes.extend_from_slice(&entry_bytes);
+                bytes
             }
             DataFrame::SealIndex(index) => {
                 assert_eq!(index >> 56, 0, "log index: {index} too large");
-                // use the first 7 bytes
-                let index_bytes = index.to_le_bytes().into_iter().take(7);
-                std::iter::once(self.frame_type())
-                    .chain(index_bytes)
-                    .collect()
+                let mut bytes = index.to_le_bytes();
+                bytes.rotate_right(1);
+                bytes[0] = self.frame_type();
+                bytes.to_vec()
             }
         }
     }
@@ -297,9 +326,16 @@ impl FrameType for CommitFrame {
 }
 
 impl FrameEncoder for CommitFrame {
+    #[allow(
+        clippy::arithmetic_side_effects,  // Add won't overflow
+        clippy::indexing_slicing // The slicing is checked
+    )]
     fn encode(&self) -> Vec<u8> {
-        let header = std::iter::once(self.frame_type()).chain([0u8; 7]);
-        header.chain(self.checksum.clone()).collect()
+        let mut bytes = Vec::with_capacity(8 + self.checksum.len());
+        bytes.extend_from_slice(&[0; 8]);
+        bytes[0] = self.frame_type();
+        bytes.extend_from_slice(&self.checksum);
+        bytes
     }
 }
 
@@ -322,31 +358,31 @@ mod tests {
     async fn frame_encode_decode_is_ok() {
         let mut codec = WAL::<TestCommand>::new();
         let entry = LogEntry::<TestCommand>::new(1, 1, ProposeId(1, 2), EntryData::Empty);
-        let data_frame = DataFrame::Entry(entry.clone());
-        let seal_frame = DataFrame::<TestCommand>::SealIndex(1);
-        let mut encoded = codec.encode(vec![data_frame]).unwrap();
-        encoded.extend_from_slice(&codec.encode(vec![seal_frame]).unwrap());
+        let data_frame = DataFrameOwned::Entry(entry.clone());
+        let seal_frame = DataFrameOwned::<TestCommand>::SealIndex(1);
+        let mut encoded = codec.encode(vec![data_frame.get_ref()]).unwrap();
+        encoded.extend_from_slice(&codec.encode(vec![seal_frame.get_ref()]).unwrap());
 
         let (data_frame_get, len) = codec.decode(&encoded).unwrap();
         let (seal_frame_get, _) = codec.decode(&encoded[len..]).unwrap();
-        let DataFrame::Entry(ref entry_get) = data_frame_get[0] else {
+        let DataFrameOwned::Entry(ref entry_get) = data_frame_get[0] else {
             panic!("frame should be type: DataFrame::Entry");
         };
-        let DataFrame::SealIndex(ref index) = seal_frame_get[0] else {
+        let DataFrameOwned::SealIndex(index) = seal_frame_get[0] else {
             panic!("frame should be type: DataFrame::Entry");
         };
 
         assert_eq!(*entry_get, entry);
-        assert_eq!(*index, 1);
+        assert_eq!(index, 1);
     }
 
     #[tokio::test]
     async fn frame_zero_write_will_be_detected() {
         let mut codec = WAL::<TestCommand>::new();
         let entry = LogEntry::<TestCommand>::new(1, 1, ProposeId(1, 2), EntryData::Empty);
-        let data_frame = DataFrame::Entry(entry.clone());
-        let seal_frame = DataFrame::<TestCommand>::SealIndex(1);
-        let mut encoded = codec.encode(vec![data_frame]).unwrap();
+        let data_frame = DataFrameOwned::Entry(entry.clone());
+        let seal_frame = DataFrameOwned::<TestCommand>::SealIndex(1);
+        let mut encoded = codec.encode(vec![data_frame.get_ref()]).unwrap();
         encoded[0] = 0;
 
         let err = codec.decode(&encoded).unwrap_err();
@@ -357,9 +393,9 @@ mod tests {
     async fn frame_corrupt_will_be_detected() {
         let mut codec = WAL::<TestCommand>::new();
         let entry = LogEntry::<TestCommand>::new(1, 1, ProposeId(1, 2), EntryData::Empty);
-        let data_frame = DataFrame::Entry(entry.clone());
-        let seal_frame = DataFrame::<TestCommand>::SealIndex(1);
-        let mut encoded = codec.encode(vec![data_frame]).unwrap();
+        let data_frame = DataFrameOwned::Entry(entry.clone());
+        let seal_frame = DataFrameOwned::<TestCommand>::SealIndex(1);
+        let mut encoded = codec.encode(vec![data_frame.get_ref()]).unwrap();
         encoded[1] = 0;
 
         let err = codec.decode(&encoded).unwrap_err();

@@ -1,3 +1,5 @@
+#![allow(clippy::multiple_inherent_impl)]
+
 use std::{
     collections::HashMap,
     sync::{
@@ -16,15 +18,12 @@ use xlineapi::{
     AlarmAction, AlarmMember, AlarmResponse, AlarmType, RequestWrapper, ResponseWrapper,
 };
 
-use super::{db::WriteOp, storage_api::StorageApi};
-use crate::header_gen::HeaderGenerator;
+use super::db::{WriteOp, DB};
+use crate::{header_gen::HeaderGenerator, revision_number::RevisionNumberGeneratorState};
 
 /// Alarm store
 #[derive(Debug)]
-pub(crate) struct AlarmStore<DB>
-where
-    DB: StorageApi,
-{
+pub(crate) struct AlarmStore {
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// Persistent storage
@@ -35,10 +34,7 @@ where
     current_alarm: AtomicI32,
 }
 
-impl<DB> AlarmStore<DB>
-where
-    DB: StorageApi,
-{
+impl AlarmStore {
     /// execute a alarm request
     pub(crate) fn execute(&self, request: &RequestWrapper) -> CommandResponse {
         #[allow(clippy::wildcard_enum_match_arm)]
@@ -68,7 +64,7 @@ where
     pub(crate) fn after_sync(
         &self,
         request: &RequestWrapper,
-        revision: i64,
+        revision_gen: &RevisionNumberGeneratorState<'_>,
     ) -> (SyncResponse, Vec<WriteOp>) {
         #[allow(clippy::wildcard_enum_match_arm)]
         let ops = match *request {
@@ -81,7 +77,7 @@ where
                 unreachable!("Other request should not be sent to this store");
             }
         };
-        (SyncResponse::new(revision), ops)
+        (SyncResponse::new(revision_gen.get()), ops)
     }
 
     /// Recover data form persistent storage
@@ -98,10 +94,7 @@ where
     }
 }
 
-impl<DB> AlarmStore<DB>
-where
-    DB: StorageApi,
-{
+impl AlarmStore {
     /// Create a new alarm store
     pub(crate) fn new(header_gen: Arc<HeaderGenerator>, db: Arc<DB>) -> Self {
         Self {
