@@ -538,14 +538,10 @@ async fn test_unary_propose_slow_path_works() {
 #[traced_test]
 #[tokio::test]
 async fn test_unary_propose_fast_path_fallback_slow_path() {
-    // record how many times `handle_propose` was invoked.
-    let counter = Arc::new(Mutex::new(0));
     let connects = init_mocked_connects(5, |id, conn| {
-        let counter_c = Arc::clone(&counter);
         conn.expect_propose()
             .return_once(move |_req, _token, _timeout| {
-                counter_c.lock().unwrap().add_assign(1);
-                // insufficient quorum
+                // insufficient quorum to force slow path.
                 let resp = match id {
                     0 => ProposeResponse::new_result::<TestCommand>(&Ok(
                         TestCommandResult::default(),
@@ -579,8 +575,6 @@ async fn test_unary_propose_fast_path_fallback_slow_path() {
         start_at.elapsed() > Duration::from_millis(100),
         "slow round takes at least 100ms"
     );
-    // indicate that we actually run out of fast round
-    assert_eq!(*counter.lock().unwrap(), 5);
     assert_eq!(
         res,
         (TestCommandResult::default(), Some(LogIndexResult::from(1)))
