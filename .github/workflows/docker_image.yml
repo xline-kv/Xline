@@ -47,7 +47,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Setup Custom Image for ${{ matrix.job.cross_image }}
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ci/cross
           file: ci/cross/Dockerfile.${{ matrix.job.target }}
@@ -87,7 +87,7 @@ jobs:
 
       - name: Build Docker Image
         id: build_image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./scripts
           platforms: ${{ matrix.job.platform }}
