@@ -1,5 +1,6 @@
 use std::{fmt::Debug, sync::Arc};
 
+use await_tree::InstrumentAwait;
 use engine::SnapshotAllocator;
 use tokio::sync::broadcast;
 #[cfg(not(madsim))]
@@ -84,7 +85,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
     ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.propose(request.into_inner()).await?,
+            self.inner
+                .propose(request.into_inner())
+                .instrument_await("curp_propose")
+                .await?,
         ))
     }
 
@@ -95,7 +99,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
     ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status> {
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.shutdown(request.into_inner()).await?,
+            self.inner
+                .shutdown(request.into_inner())
+                .instrument_await("curp_shutdown")
+                .await?,
         ))
     }
 
@@ -106,7 +113,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
     ) -> Result<tonic::Response<ProposeConfChangeResponse>, tonic::Status> {
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.propose_conf_change(request.into_inner()).await?,
+            self.inner
+                .propose_conf_change(request.into_inner())
+                .instrument_await("curp_propose_conf_change")
+                .await?,
         ))
     }
 
@@ -128,7 +138,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
     ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.wait_synced(request.into_inner()).await?,
+            self.inner
+                .wait_synced(request.into_inner())
+                .instrument_await("curp_wait_synced")
+                .await?,
         ))
     }
 
@@ -158,7 +171,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
         request: tonic::Request<MoveLeaderRequest>,
     ) -> Result<tonic::Response<MoveLeaderResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.move_leader(request.into_inner()).await?,
+            self.inner
+                .move_leader(request.into_inner())
+                .instrument_await("curp_move_leader")
+                .await?,
         ))
     }
 
@@ -170,7 +186,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
     ) -> Result<tonic::Response<LeaseKeepAliveMsg>, tonic::Status> {
         let req_stream = request.into_inner();
         Ok(tonic::Response::new(
-            self.inner.lease_keep_alive(req_stream).await?,
+            self.inner
+                .lease_keep_alive(req_stream)
+                .instrument_await("lease_keep_alive")
+                .await?,
         ))
     }
 }
@@ -193,7 +212,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
         request: tonic::Request<VoteRequest>,
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.vote(request.into_inner()).await?,
+            self.inner
+                .vote(request.into_inner())
+                .instrument_await("curp_vote")
+                .await?,
         ))
     }
 
@@ -214,7 +236,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
     ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status> {
         let req_stream = request.into_inner();
         Ok(tonic::Response::new(
-            self.inner.install_snapshot(req_stream).await?,
+            self.inner
+                .install_snapshot(req_stream)
+                .instrument_await("curp_install_snapshot")
+                .await?,
         ))
     }
 
@@ -224,7 +249,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
         request: tonic::Request<TryBecomeLeaderNowRequest>,
     ) -> Result<tonic::Response<TryBecomeLeaderNowResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.try_become_leader_now(request.get_ref()).await?,
+            self.inner
+                .try_become_leader_now(request.get_ref())
+                .instrument_await("curp_try_become_leader_now")
+                .await?,
         ))
     }
 }
