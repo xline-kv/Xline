@@ -9,14 +9,16 @@ use std::{
 
 use async_trait::async_trait;
 use curp_external_api::{
-    cmd::{Command, CommandExecutor, ConflictCheck, PbCodec},
+    cmd::{AfterSyncCmd, AfterSyncOk, Command, CommandExecutor, ConflictCheck, PbCodec},
     InflightId, LogIndex,
 };
-use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine, WriteOperation};
+use engine::{
+    Engine, EngineType, Snapshot, SnapshotApi, StorageEngine, StorageOps, WriteOperation,
+};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{sync::mpsc, time::sleep};
+use tokio::sync::mpsc;
 use tracing::debug;
 use utils::config::EngineConfig;
 
@@ -188,8 +190,8 @@ impl Command for TestCommand {
 
     type ASR = LogIndexResult;
 
-    fn keys(&self) -> &[Self::K] {
-        &self.keys
+    fn keys(&self) -> Vec<Self::K> {
+        self.keys.clone()
     }
 
     fn is_read_only(&self) -> bool {
@@ -237,32 +239,11 @@ pub struct TestCE {
 
 #[async_trait]
 impl CommandExecutor<TestCommand> for TestCE {
-    fn prepare(
-        &self,
-        cmd: &TestCommand,
-    ) -> Result<<TestCommand as Command>::PR, <TestCommand as Command>::Error> {
-        let rev = if let TestCommandType::Put(_) = cmd.cmd_type {
-            let rev = self.revision.fetch_add(1, Ordering::Relaxed);
-            let wr_ops = vec![WriteOperation::new_put(
-                META_TABLE,
-                LAST_REVISION_KEY.into(),
-                rev.to_le_bytes().to_vec(),
-            )];
-            self.store
-                .write_batch(wr_ops, true)
-                .map_err(|e| ExecuteError(e.to_string()))?;
-            rev
-        } else {
-            -1
-        };
-        Ok(rev)
-    }
-
-    async fn execute(
+    fn execute(
         &self,
         cmd: &TestCommand,
     ) -> Result<<TestCommand as Command>::ER, <TestCommand as Command>::Error> {
-        sleep(cmd.exe_dur).await;
+        std::thread::sleep(cmd.exe_dur);
         if cmd.exe_should_fail {
             return Err(ExecuteError("fail".to_owned()));
         }
@@ -303,53 +284,85 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(result)
     }
 
-    async fn after_sync(
+    fn after_sync(
         &self,
-        cmd: &TestCommand,
-        index: LogIndex,
-        revision: <TestCommand as Command>::PR,
-    ) -> Result<<TestCommand as Command>::ASR, <TestCommand as Command>::Error> {
-        sleep(cmd.as_dur).await;
-        if cmd.as_should_fail {
-            return Err(ExecuteError("fail".to_owned()));
+        cmds: Vec<AfterSyncCmd<'_, TestCommand>>,
+        highest_index: LogIndex,
+    ) -> Vec<Result<AfterSyncOk<TestCommand>, <TestCommand as Command>::Error>> {
+        let as_duration = cmds
+            .iter()
+            .fold(Duration::default(), |acc, c| acc + c.cmd().as_dur);
+        std::thread::sleep(as_duration);
+        let total = cmds.len();
+        for (i, cmd) in cmds.iter().enumerate() {
+            let index = highest_index - (total - i - 1) as u64;
+            self.after_sync_sender
+                .send((cmd.cmd().clone(), index))
+                .expect("failed to send after sync msg");
         }
-        self.after_sync_sender
-            .send((cmd.clone(), index))
-            .expect("failed to send after sync msg");
         let mut wr_ops = vec![WriteOperation::new_put(
             META_TABLE,
             APPLIED_INDEX_KEY.into(),
-            index.to_le_bytes().to_vec(),
+            highest_index.to_le_bytes().to_vec(),
         )];
-        if let TestCommandType::Put(v) = cmd.cmd_type {
-            debug!("cmd {:?}-{:?} revision is {}", cmd.cmd_type, cmd, revision);
-            let value = v.to_le_bytes().to_vec();
-            let keys = cmd
-                .keys
-                .iter()
-                .map(|k| k.to_le_bytes().to_vec())
-                .collect_vec();
-            wr_ops.extend(
-                keys.clone()
-                    .into_iter()
-                    .map(|key| WriteOperation::new_put(TEST_TABLE, key, value.clone()))
-                    .chain(keys.into_iter().map(|key| {
-                        WriteOperation::new_put(
-                            REVISION_TABLE,
-                            key,
-                            revision.to_le_bytes().to_vec(),
-                        )
-                    })),
+
+        let mut asrs = Vec::new();
+        for (i, (cmd, to_execute)) in cmds.iter().map(AfterSyncCmd::into_parts).enumerate() {
+            let index = highest_index - (total - i - 1) as u64;
+            if cmd.as_should_fail {
+                asrs.push(Err(ExecuteError("fail".to_owned())));
+                continue;
+            }
+            if let TestCommandType::Put(v) = cmd.cmd_type {
+                let revision = match self.next_revision(cmd) {
+                    Ok(rev) => rev,
+                    Err(e) => {
+                        asrs.push(Err(e));
+                        continue;
+                    }
+                };
+
+                debug!("cmd {:?}-{:?} revision is {}", cmd.cmd_type, cmd, revision);
+                let value = v.to_le_bytes().to_vec();
+                let keys = cmd
+                    .keys
+                    .iter()
+                    .map(|k| k.to_le_bytes().to_vec())
+                    .collect_vec();
+                wr_ops.extend(
+                    keys.clone()
+                        .into_iter()
+                        .map(|key| WriteOperation::new_put(TEST_TABLE, key, value.clone()))
+                        .chain(keys.into_iter().map(|key| {
+                            WriteOperation::new_put(
+                                REVISION_TABLE,
+                                key,
+                                revision.to_le_bytes().to_vec(),
+                            )
+                        })),
+                );
+            }
+            match to_execute.then(|| self.execute(cmd)).transpose() {
+                Ok(er) => {
+                    asrs.push(Ok(AfterSyncOk::new(LogIndexResult(index), er)));
+                }
+                Err(e) => asrs.push(Err(e)),
+            }
+            debug!(
+                "{} after sync cmd({:?} - {:?}), index: {index}",
+                self.server_name, cmd.cmd_type, cmd
             );
-            self.store
-                .write_batch(wr_ops, true)
-                .map_err(|e| ExecuteError(e.to_string()))?;
         }
-        debug!(
-            "{} after sync cmd({:?} - {:?}), index: {index}",
-            self.server_name, cmd.cmd_type, cmd
-        );
-        Ok(index.into())
+
+        if let Err(e) = self
+            .store
+            .write_multi(wr_ops, true)
+            .map_err(|e| ExecuteError(e.to_string()))
+        {
+            return std::iter::repeat(e).map(Err).take(cmds.len()).collect();
+        }
+
+        asrs
     }
 
     fn set_last_applied(&self, index: LogIndex) -> Result<(), <TestCommand as Command>::Error> {
@@ -359,7 +372,7 @@ impl CommandExecutor<TestCommand> for TestCE {
             index.to_le_bytes().to_vec(),
         )];
         self.store
-            .write_batch(ops, true)
+            .write_multi(ops, true)
             .map_err(|e| ExecuteError(e.to_string()))?;
         Ok(())
     }
@@ -392,7 +405,7 @@ impl CommandExecutor<TestCommand> for TestCE {
                 WriteOperation::new_delete(META_TABLE, APPLIED_INDEX_KEY.as_ref()),
             ];
             self.store
-                .write_batch(ops, true)
+                .write_multi(ops, true)
                 .map_err(|e| ExecuteError(e.to_string()))?;
             return Ok(());
         };
@@ -402,7 +415,7 @@ impl CommandExecutor<TestCommand> for TestCE {
             index.to_le_bytes().to_vec(),
         )];
         self.store
-            .write_batch(ops, true)
+            .write_multi(ops, true)
             .map_err(|e| ExecuteError(e.to_string()))?;
         snapshot.rewind().unwrap();
         self.store
@@ -412,7 +425,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(())
     }
 
-    fn trigger(&self, _id: InflightId, _index: LogIndex) {}
+    fn trigger(&self, _id: InflightId) {}
 }
 
 impl TestCE {
@@ -441,5 +454,23 @@ impl TestCE {
             exe_sender,
             after_sync_sender,
         }
+    }
+
+    fn next_revision(&self, cmd: &TestCommand) -> Result<i64, <TestCommand as Command>::Error> {
+        let rev = if let TestCommandType::Put(_) = cmd.cmd_type {
+            let rev = self.revision.fetch_add(1, Ordering::Relaxed);
+            let wr_ops = vec![WriteOperation::new_put(
+                META_TABLE,
+                LAST_REVISION_KEY.into(),
+                rev.to_le_bytes().to_vec(),
+            )];
+            self.store
+                .write_multi(wr_ops, true)
+                .map_err(|e| ExecuteError(e.to_string()))?;
+            rev
+        } else {
+            -1
+        };
+        Ok(rev)
     }
 }

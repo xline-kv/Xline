@@ -26,9 +26,11 @@ curp-external-api = { path = "../curp-external-api" }
 dashmap = "5.5.3"
 engine = { path = "../engine" }
 event-listener = "5.3.0"
+flume = "0.11.0"
 futures = "0.3.25"
 hyper = "0.14.27"
 itertools = "0.12"
+jemallocator = "0.5.4"
 jsonwebtoken = "9.3.0"
 log = "0.4.21"
 merged_range = "0.1.0"
@@ -84,6 +86,7 @@ mockall = "0.12.1"
 rand = "0.8.5"
 strum = "0.26"
 strum_macros = "0.26.2"
+tempfile = "3"
 test-macros = { path = "../test-macros" }
 xline-client = { path = "../xline-client" }
 xline-test-utils = { path = "../xline-test-utils" }

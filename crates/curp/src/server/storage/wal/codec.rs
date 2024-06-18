@@ -118,7 +118,10 @@ where
 
     /// Encodes a frame
     fn encode(&mut self, frames: Vec<DataFrame<'_, C>>) -> Result<Vec<u8>, Self::Error> {
-        let mut frame_data: Vec<_> = frames.into_iter().flat_map(|f| f.encode()).collect();
+        let mut frame_data = Vec::new();
+        for frame in frames {
+            frame_data.extend_from_slice(&frame.encode());
+        }
         let commit_frame = CommitFrame::new_from_data(&frame_data);
         frame_data.extend_from_slice(&commit_frame.encode());
 
@@ -274,7 +277,10 @@ impl<C> FrameEncoder for DataFrame<'_, C>
 where
     C: Serialize,
 {
-    #[allow(clippy::arithmetic_side_effects)] // The integer shift is safe
+    #[allow(
+        clippy::arithmetic_side_effects,  // The integer shift is safe
+        clippy::indexing_slicing // The slicing is checked
+    )]
     fn encode(&self) -> Vec<u8> {
         match *self {
             DataFrame::Entry(ref entry) => {
@@ -282,17 +288,18 @@ where
                     .unwrap_or_else(|_| unreachable!("serialization should never fail"));
                 let len = entry_bytes.len();
                 assert_eq!(len >> 56, 0, "log entry length: {len} too large");
-                let len_bytes = len.to_le_bytes().into_iter().take(7);
-                let header = std::iter::once(self.frame_type()).chain(len_bytes);
-                header.chain(entry_bytes).collect()
+                let mut bytes = Vec::with_capacity(1 + 7 + entry_bytes.len());
+                bytes.push(self.frame_type());
+                bytes.extend_from_slice(&len.to_le_bytes()[..7]);
+                bytes.extend_from_slice(&entry_bytes);
+                bytes
             }
             DataFrame::SealIndex(index) => {
                 assert_eq!(index >> 56, 0, "log index: {index} too large");
-                // use the first 7 bytes
-                let index_bytes = index.to_le_bytes().into_iter().take(7);
-                std::iter::once(self.frame_type())
-                    .chain(index_bytes)
-                    .collect()
+                let mut bytes = index.to_le_bytes();
+                bytes.rotate_right(1);
+                bytes[0] = self.frame_type();
+                bytes.to_vec()
             }
         }
     }
@@ -319,9 +326,16 @@ impl FrameType for CommitFrame {
 }
 
 impl FrameEncoder for CommitFrame {
+    #[allow(
+        clippy::arithmetic_side_effects,  // Add won't overflow
+        clippy::indexing_slicing // The slicing is checked
+    )]
     fn encode(&self) -> Vec<u8> {
-        let header = std::iter::once(self.frame_type()).chain([0u8; 7]);
-        header.chain(self.checksum.clone()).collect()
+        let mut bytes = Vec::with_capacity(8 + self.checksum.len());
+        bytes.extend_from_slice(&[0; 8]);
+        bytes[0] = self.frame_type();
+        bytes.extend_from_slice(&self.checksum);
+        bytes
     }
 }
 

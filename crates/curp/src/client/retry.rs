@@ -3,7 +3,7 @@ use std::{ops::SubAssign, time::Duration};
 use async_trait::async_trait;
 use futures::Future;
 use tokio::task::JoinHandle;
-use tracing::warn;
+use tracing::{info, warn};
 
 use super::{ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
 use crate::{
@@ -110,6 +110,7 @@ pub(super) struct Retry<Api> {
 impl<Api> Drop for Retry<Api> {
     fn drop(&mut self) {
         if let Some(handle) = self.bg_handle.as_ref() {
+            info!("stopping background task");
             handle.abort();
         }
     }
@@ -177,6 +178,13 @@ where
                 CurpError::Redirect(Redirect { leader_id, term }) => {
                     let _ig = self.inner.update_leader(leader_id, term).await;
                 }
+
+                // update the cluster state if got Zombie
+                CurpError::Zombie(()) => {
+                    if let Err(e) = self.inner.fetch_cluster(true).await {
+                        warn!("fetch cluster failed, error {e:?}");
+                    }
+                }
             }
 
             #[cfg(feature = "client-metrics")]
@@ -218,7 +226,7 @@ where
     ) -> Result<ProposeResponse<Self::Cmd>, tonic::Status> {
         let propose_id = self.inner.gen_propose_id()?;
         self.retry::<_, _>(|client| {
-            RepeatableClientApi::propose(client, propose_id, cmd, token, use_fast_path)
+            RepeatableClientApi::propose(client, *propose_id, cmd, token, use_fast_path)
         })
         .await
     }
@@ -231,7 +239,7 @@ where
         let propose_id = self.inner.gen_propose_id()?;
         self.retry::<_, _>(|client| {
             let changes_c = changes.clone();
-            RepeatableClientApi::propose_conf_change(client, propose_id, changes_c)
+            RepeatableClientApi::propose_conf_change(client, *propose_id, changes_c)
         })
         .await
     }
@@ -239,7 +247,7 @@ where
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), tonic::Status> {
         let propose_id = self.inner.gen_propose_id()?;
-        self.retry::<_, _>(|client| RepeatableClientApi::propose_shutdown(client, propose_id))
+        self.retry::<_, _>(|client| RepeatableClientApi::propose_shutdown(client, *propose_id))
             .await
     }
 
@@ -256,7 +264,7 @@ where
             let node_client_urls_c = node_client_urls.clone();
             RepeatableClientApi::propose_publish(
                 client,
-                propose_id,
+                *propose_id,
                 node_id,
                 name_c,
                 node_client_urls_c,

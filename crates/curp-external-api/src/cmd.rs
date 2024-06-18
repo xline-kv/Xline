@@ -26,9 +26,9 @@ impl<T> pri::Serializable for T where T: pri::ThreadSafe + Clone + Serialize + D
 
 /// Command to execute on the server side
 #[async_trait]
-pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
+pub trait Command: pri::Serializable + ConflictCheck + PbCodec + Unpin {
     /// Error type
-    type Error: pri::Serializable + PbCodec + std::error::Error;
+    type Error: pri::Serializable + PbCodec + std::error::Error + Clone;
 
     /// K (key) is used to tell confliction
     /// The key can be a single key or a key range
@@ -44,50 +44,21 @@ pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
     type ASR: pri::Serializable + PbCodec;
 
     /// Get keys of the command
-    fn keys(&self) -> &[Self::K];
+    fn keys(&self) -> Vec<Self::K>;
 
     /// Returns `true` if the command is read-only
     fn is_read_only(&self) -> bool;
-
-    /// Prepare the command
-    ///
-    /// # Errors
-    /// Return `Self::Error` when `CommandExecutor::prepare` goes wrong
-    #[inline]
-    fn prepare<E>(&self, e: &E) -> Result<Self::PR, Self::Error>
-    where
-        E: CommandExecutor<Self> + Send + Sync,
-    {
-        <E as CommandExecutor<Self>>::prepare(e, self)
-    }
 
     /// Execute the command according to the executor
     ///
     /// # Errors
     /// Return `Self::Error` when `CommandExecutor::execute` goes wrong
     #[inline]
-    async fn execute<E>(&self, e: &E) -> Result<Self::ER, Self::Error>
+    fn execute<E>(&self, e: &E) -> Result<Self::ER, Self::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
-        <E as CommandExecutor<Self>>::execute(e, self).await
-    }
-
-    /// Execute the command after_sync callback
-    ///
-    /// # Errors
-    /// Return `Self::Error` when `CommandExecutor::after_sync` goes wrong
-    #[inline]
-    async fn after_sync<E>(
-        &self,
-        e: &E,
-        index: LogIndex,
-        prepare_res: Self::PR,
-    ) -> Result<Self::ASR, Self::Error>
-    where
-        E: CommandExecutor<Self> + Send + Sync,
-    {
-        <E as CommandExecutor<Self>>::after_sync(e, self, index, prepare_res).await
+        <E as CommandExecutor<Self>>::execute(e, self)
     }
 }
 
@@ -122,28 +93,18 @@ pub trait CommandExecutor<C>: pri::ThreadSafe
 where
     C: Command,
 {
-    /// Prepare the command
-    ///
-    /// # Errors
-    /// This function may return an error if there is a problem preparing the command.
-    fn prepare(&self, cmd: &C) -> Result<C::PR, C::Error>;
-
     /// Execute the command
     ///
     /// # Errors
     /// This function may return an error if there is a problem executing the command.
-    async fn execute(&self, cmd: &C) -> Result<C::ER, C::Error>;
+    fn execute(&self, cmd: &C) -> Result<C::ER, C::Error>;
 
-    /// Execute the after_sync callback
-    ///
-    /// # Errors
-    /// This function may return an error if there is a problem executing the after_sync callback.
-    async fn after_sync(
+    /// Batch execute the after_sync callback
+    fn after_sync(
         &self,
-        cmd: &C,
-        index: LogIndex,
-        prepare_res: C::PR,
-    ) -> Result<C::ASR, C::Error>;
+        cmds: Vec<AfterSyncCmd<'_, C>>,
+        highest_index: LogIndex,
+    ) -> Vec<Result<AfterSyncOk<C>, C::Error>>;
 
     /// Set the index of the last log entry that has been successfully applied to the command executor
     ///
@@ -170,7 +131,7 @@ where
     async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), C::Error>;
 
     /// Trigger the barrier of the given trigger id (based on propose id) and log index.
-    fn trigger(&self, id: InflightId, index: LogIndex);
+    fn trigger(&self, id: InflightId);
 }
 
 /// Codec for encoding and decoding data into/from the Protobuf format
@@ -201,5 +162,61 @@ impl From<DecodeError> for PbSerializeError {
     #[inline]
     fn from(err: DecodeError) -> Self {
         PbSerializeError::RpcDecode(err)
+    }
+}
+
+#[allow(clippy::module_name_repetitions)]
+/// After sync command type
+#[derive(Debug)]
+pub struct AfterSyncCmd<'a, C> {
+    /// The command
+    cmd: &'a C,
+    /// Whether the command needs to be executed in after sync stage
+    to_exectue: bool,
+}
+
+impl<'a, C> AfterSyncCmd<'a, C> {
+    /// Creates a new `AfterSyncCmd`
+    #[inline]
+    pub fn new(cmd: &'a C, to_exectue: bool) -> Self {
+        Self { cmd, to_exectue }
+    }
+
+    /// Gets the command
+    #[inline]
+    #[must_use]
+    pub fn cmd(&self) -> &'a C {
+        self.cmd
+    }
+
+    /// Convert self into parts
+    #[inline]
+    #[must_use]
+    pub fn into_parts(&'a self) -> (&'a C, bool) {
+        (self.cmd, self.to_exectue)
+    }
+}
+
+/// Ok type of the after sync result
+#[derive(Debug)]
+pub struct AfterSyncOk<C: Command> {
+    /// After Sync Result
+    asr: C::ASR,
+    /// Optional Execution Result
+    er_opt: Option<C::ER>,
+}
+
+impl<C: Command> AfterSyncOk<C> {
+    /// Creates a new [`AfterSyncOk<C>`].
+    #[inline]
+    pub fn new(asr: C::ASR, er_opt: Option<C::ER>) -> Self {
+        Self { asr, er_opt }
+    }
+
+    /// Decomposes `AfterSyncOk` into its constituent parts.
+    #[inline]
+    pub fn into_parts(self) -> (C::ASR, Option<C::ER>) {
+        let Self { asr, er_opt } = self;
+        (asr, er_opt)
     }
 }

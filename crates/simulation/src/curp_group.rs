@@ -9,8 +9,8 @@ use curp::{
     cmd::Command,
     members::{ClusterInfo, ServerId},
     rpc::{
-        ConfChange, FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ReadState,
+        ConfChange, FetchClusterRequest, FetchClusterResponse, Member, OpResponse,
+        ProposeConfChangeRequest, ProposeConfChangeResponse, ReadState,
     },
     server::{
         conflict::test_pools::{TestSpecPool, TestUncomPool},
@@ -29,7 +29,7 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::debug;
 use utils::{
-    config::{ClientConfig, CurpConfigBuilder, EngineConfig},
+    config::{ClientConfig, CurpConfigBuilder, EngineConfig, TEST_WAL_SEGMENT_SIZE},
     task_manager::TaskManager,
 };
 
@@ -89,8 +89,8 @@ impl CurpGroup {
                     .map(|(k, mut v)| (k, v.pop().unwrap()))
                     .collect();
                 let id = cluster_info.self_id();
-                let engine_cfg = EngineConfig::RocksDB(storage_path.clone());
                 let store_c = Arc::clone(&store);
+                let curp_dir = storage_path.clone();
                 let role_change_cb = TestRoleChange::default();
                 let role_change_arc = role_change_cb.get_inner_arc();
 
@@ -112,12 +112,14 @@ impl CurpGroup {
                         let is_leader = false;
                         let curp_config = Arc::new(
                             CurpConfigBuilder::default()
-                                .engine_cfg(engine_cfg.clone())
+                                .curp_db_dir(curp_dir.clone())
                                 .log_entries_cap(10)
                                 .build()
                                 .unwrap(),
                         );
-                        let curp_storage = Arc::new(DB::open(&curp_config.engine_cfg).unwrap());
+                        let curp_storage = Arc::new(
+                            DB::open(&curp_config.curp_db_dir, TEST_WAL_SEGMENT_SIZE).unwrap(),
+                        );
                         let cluster_info = match curp_storage.recover_cluster_info().unwrap() {
                             Some(cl) => Arc::new(cl),
                             None => Arc::clone(&cluster_info),
@@ -400,15 +402,15 @@ pub struct SimProtocolClient {
 
 impl SimProtocolClient {
     #[inline]
-    pub async fn propose(
+    pub async fn propose_stream(
         &mut self,
         cmd: impl tonic::IntoRequest<ProposeRequest> + 'static + Send,
-    ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<tonic::Streaming<OpResponse>>, tonic::Status> {
         let addr = self.addr.clone();
         self.handle
             .spawn(async move {
                 let mut client = ProtocolClient::connect(addr).await.unwrap();
-                client.propose(cmd).await
+                client.propose_stream(cmd).await
             })
             .await
             .unwrap()

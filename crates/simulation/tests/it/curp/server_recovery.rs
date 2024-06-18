@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration, vec};
 
 use curp::rpc::{ConfChange, ProposeConfChangeRequest};
 use curp_test_utils::{init_logger, sleep_secs, test_cmd::TestCommand, TEST_TABLE};
-use engine::StorageEngine;
+use engine::{StorageEngine, StorageOps};
 use itertools::Itertools;
 use simulation::curp_group::{CurpGroup, PbProposeId, ProposeRequest};
 use tonic::Code;
@@ -193,6 +193,9 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
         }),
         command: bincode::serialize(&cmd1).unwrap(),
         cluster_version: 0,
+        term: 1,
+        slow_path: false,
+        first_incomplete: 0,
     };
     for id in group
         .all_members
@@ -201,7 +204,7 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
         .take(4)
     {
         let mut connect = group.get_connect(id).await;
-        connect.propose(req1.clone()).await.unwrap();
+        connect.propose_stream(req1.clone()).await.unwrap();
     }
 
     // 2: disable leader1 and wait election
@@ -304,9 +307,12 @@ async fn old_leader_will_keep_original_states() {
         }),
         command: bincode::serialize(&cmd1).unwrap(),
         cluster_version: 0,
+        term: 1,
+        slow_path: false,
+        first_incomplete: 0,
     };
     let mut leader1_connect = group.get_connect(&leader1).await;
-    leader1_connect.propose(req1).await.unwrap();
+    leader1_connect.propose_stream(req1).await.unwrap();
 
     // 3: recover all others and disable leader, a new leader will be elected
     group.disable_node(leader1);

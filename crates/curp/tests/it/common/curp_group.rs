@@ -41,6 +41,7 @@ use utils::{
     build_endpoint,
     config::{
         default_quota, ClientConfig, CurpConfig, CurpConfigBuilder, EngineConfig, StorageConfig,
+        TEST_WAL_SEGMENT_SIZE,
     },
     task_manager::{tasks::TaskName, Listener, TaskManager},
 };
@@ -55,11 +56,7 @@ pub use commandpb::{
 
 /// `BOTTOM_TASKS` are tasks which not dependent on other tasks in the task group.
 /// `CurpGroup` uses `BOTTOM_TASKS` to detect whether the curp group is closed or not.
-const BOTTOM_TASKS: [TaskName; 3] = [
-    TaskName::WatchTask,
-    TaskName::ConfChange,
-    TaskName::LogPersist,
-];
+const BOTTOM_TASKS: [TaskName; 2] = [TaskName::WatchTask, TaskName::ConfChange];
 
 /// The default shutdown timeout used in `wait_for_targets_shutdown`
 pub(crate) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(7);
@@ -83,7 +80,14 @@ pub struct CurpGroup {
 impl CurpGroup {
     pub async fn new(n_nodes: usize) -> Self {
         let configs = (0..n_nodes)
-            .map(|i| (format!("S{i}"), Default::default()))
+            .map(|i| {
+                let path = tempfile::tempdir().unwrap().into_path();
+                let config = CurpConfigBuilder::default()
+                    .curp_db_dir(path)
+                    .build()
+                    .unwrap();
+                (format!("S{i}"), (Arc::new(config), Default::default()))
+            })
             .collect();
         Self::new_with_configs(configs, "S0".to_owned()).await
     }
@@ -94,7 +98,7 @@ impl CurpGroup {
                 let name = format!("S{i}");
                 let mut config = CurpConfig::default();
                 let dir = path.join(&name);
-                config.engine_cfg = EngineConfig::RocksDB(dir.join("curp"));
+                config.curp_db_dir = dir.join("curp");
                 let xline_storage_config = EngineConfig::RocksDB(dir.join("xline"));
                 (name, (Arc::new(config), xline_storage_config))
             })
@@ -139,7 +143,8 @@ impl CurpGroup {
 
             let role_change_cb = TestRoleChange::default();
             let role_change_arc = role_change_cb.get_inner_arc();
-            let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
+            let curp_storage =
+                Arc::new(DB::open(&config.curp_db_dir, TEST_WAL_SEGMENT_SIZE).unwrap());
             let server = Arc::new(
                 Rpc::new(
                     cluster_info,
@@ -204,20 +209,12 @@ impl CurpGroup {
             .collect()
     }
 
-    fn get_snapshot_allocator_from_cfg(config: &CurpConfig) -> Box<dyn SnapshotAllocator> {
-        match config.engine_cfg {
-            EngineConfig::Memory => {
-                Box::<MemorySnapshotAllocator>::default() as Box<dyn SnapshotAllocator>
-            }
-            EngineConfig::RocksDB(_) => {
-                Box::<RocksSnapshotAllocator>::default() as Box<dyn SnapshotAllocator>
-            }
-            _ => unreachable!(),
-        }
+    fn get_snapshot_allocator_from_cfg(_config: &CurpConfig) -> Box<dyn SnapshotAllocator> {
+        Box::<RocksSnapshotAllocator>::default() as Box<dyn SnapshotAllocator>
     }
 
     async fn run(
-        server: Arc<Rpc<TestCommand, TestRoleChange>>,
+        server: Arc<Rpc<TestCommand, TestCE, TestRoleChange>>,
         listener: TcpListener,
         shutdown_listener: Listener,
     ) -> Result<(), tonic::transport::Error> {
@@ -237,11 +234,17 @@ impl CurpGroup {
         name: String,
         cluster_info: Arc<ClusterInfo>,
     ) {
+        let dir = tempfile::tempdir().unwrap();
         self.run_node_with_config(
             listener,
             name,
             cluster_info,
-            Arc::new(CurpConfig::default()),
+            Arc::new(
+                CurpConfigBuilder::default()
+                    .curp_db_dir(dir.into_path())
+                    .build()
+                    .unwrap(),
+            ),
             EngineConfig::default(),
         )
         .await
@@ -271,7 +274,7 @@ impl CurpGroup {
         let id = cluster_info.self_id();
         let role_change_cb = TestRoleChange::default();
         let role_change_arc = role_change_cb.get_inner_arc();
-        let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
+        let curp_storage = Arc::new(DB::open(&config.curp_db_dir, TEST_WAL_SEGMENT_SIZE).unwrap());
         let server = Arc::new(
             Rpc::new(
                 cluster_info,

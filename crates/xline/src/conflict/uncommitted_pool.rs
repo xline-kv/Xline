@@ -4,7 +4,7 @@
 
 use std::collections::{hash_map, HashMap};
 
-use curp::server::conflict::CommandEntry;
+use curp::rpc::PoolEntry;
 use curp_external_api::conflict::{ConflictPoolOp, UncommittedPoolOp};
 use itertools::Itertools;
 use utils::interval_map::IntervalMap;
@@ -23,7 +23,7 @@ pub(crate) struct KvUncomPool {
 }
 
 impl ConflictPoolOp for KvUncomPool {
-    type Entry = CommandEntry<Command>;
+    type Entry = PoolEntry<Command>;
 
     fn remove(&mut self, entry: Self::Entry) {
         let Some(entry) = filter_kv(entry) else {
@@ -99,7 +99,7 @@ pub(crate) struct LeaseUncomPool {
 }
 
 impl ConflictPoolOp for LeaseUncomPool {
-    type Entry = CommandEntry<Command>;
+    type Entry = PoolEntry<Command>;
 
     fn remove(&mut self, entry: Self::Entry) {
         let ids = get_lease_ids(entry.request());
@@ -172,7 +172,7 @@ pub(crate) struct ExclusiveUncomPool {
 }
 
 impl ConflictPoolOp for ExclusiveUncomPool {
-    type Entry = CommandEntry<Command>;
+    type Entry = PoolEntry<Command>;
 
     fn all(&self) -> Vec<Self::Entry> {
         self.conflicts.all()
@@ -220,19 +220,19 @@ struct Commands {
     ///
     /// As we may need to insert multiple commands with the same
     /// set of keys, we store a vector of commands as the value.
-    cmds: Vec<CommandEntry<Command>>,
+    cmds: Vec<PoolEntry<Command>>,
 }
 
 impl Commands {
     /// Appends a cmd to the value
-    fn push_cmd(&mut self, cmd: CommandEntry<Command>) {
+    fn push_cmd(&mut self, cmd: PoolEntry<Command>) {
         self.cmds.push(cmd);
     }
 
     /// Removes a cmd from the value
     ///
     /// Returns `true` if the value is empty
-    fn remove_cmd(&mut self, cmd: &CommandEntry<Command>) -> bool {
+    fn remove_cmd(&mut self, cmd: &PoolEntry<Command>) -> bool {
         let Some(idx) = self.cmds.iter().position(|c| c == cmd) else {
             return self.is_empty();
         };
@@ -246,7 +246,7 @@ impl Commands {
     }
 
     /// Gets all commands
-    fn all(&self) -> Vec<CommandEntry<Command>> {
+    fn all(&self) -> Vec<PoolEntry<Command>> {
         self.cmds.clone()
     }
 

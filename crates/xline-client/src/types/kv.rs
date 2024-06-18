@@ -114,10 +114,14 @@ impl From<PutRequest> for xlineapi::PutRequest {
 }
 
 /// Request type for `Range`
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct RangeRequest {
     /// Inner request
     inner: xlineapi::RangeRequest,
+    /// Whether to use fast path
+    ///
+    /// When the range requests contains revisions, it must use slow path
+    pub(crate) fast_path: bool,
 }
 
 impl RangeRequest {
@@ -131,6 +135,7 @@ impl RangeRequest {
                 key: key.into(),
                 ..Default::default()
             },
+            fast_path: true,
         }
     }
 
@@ -182,6 +187,7 @@ impl RangeRequest {
     #[must_use]
     pub fn with_revision(mut self, revision: i64) -> Self {
         self.inner.revision = revision;
+        self.fast_path = false;
         self
     }
 
@@ -238,6 +244,7 @@ impl RangeRequest {
     #[must_use]
     pub fn with_min_mod_revision(mut self, min_mod_revision: i64) -> Self {
         self.inner.min_mod_revision = min_mod_revision;
+        self.fast_path = false;
         self
     }
 
@@ -247,6 +254,7 @@ impl RangeRequest {
     #[must_use]
     pub fn with_max_mod_revision(mut self, max_mod_revision: i64) -> Self {
         self.inner.max_mod_revision = max_mod_revision;
+        self.fast_path = false;
         self
     }
 
@@ -256,6 +264,7 @@ impl RangeRequest {
     #[must_use]
     pub fn with_min_create_revision(mut self, min_create_revision: i64) -> Self {
         self.inner.min_create_revision = min_create_revision;
+        self.fast_path = false;
         self
     }
 
@@ -265,6 +274,7 @@ impl RangeRequest {
     #[must_use]
     pub fn with_max_create_revision(mut self, max_create_revision: i64) -> Self {
         self.inner.max_create_revision = max_create_revision;
+        self.fast_path = false;
         self
     }
 
@@ -367,6 +377,13 @@ impl From<RangeRequest> for xlineapi::RangeRequest {
     }
 }
 
+impl PartialEq for RangeRequest {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.inner.eq(&other.inner)
+    }
+}
+
 /// Request type for `DeleteRange`
 #[derive(Debug, PartialEq)]
 pub struct DeleteRangeRequest {
@@ -463,8 +480,13 @@ impl From<DeleteRangeRequest> for xlineapi::DeleteRangeRequest {
 }
 
 /// Transaction comparison.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Compare(xlineapi::Compare);
+#[derive(Clone, Debug)]
+pub struct Compare {
+    /// The inner compare type
+    inner: xlineapi::Compare,
+    /// Whether to use fast path
+    fast_path: bool,
+}
 
 impl Compare {
     /// Creates a new `Compare`.
@@ -479,14 +501,18 @@ impl Compare {
         cmp: CompareResult,
         target: CompareTarget,
         target_union: TargetUnion,
+        fast_path: bool,
     ) -> Self {
-        Self(xlineapi::Compare {
-            result: cmp.into(),
-            target: target.into(),
-            key: key.into(),
-            range_end: Vec::new(),
-            target_union: Some(target_union),
-        })
+        Self {
+            inner: xlineapi::Compare {
+                result: cmp.into(),
+                target: target.into(),
+                key: key.into(),
+                range_end: Vec::new(),
+                target_union: Some(target_union),
+            },
+            fast_path,
+        }
     }
 
     /// Compares the version of the given key.
@@ -497,6 +523,7 @@ impl Compare {
             cmp,
             CompareTarget::Version,
             TargetUnion::Version(version),
+            true,
         )
     }
 
@@ -508,6 +535,7 @@ impl Compare {
             cmp,
             CompareTarget::Create,
             TargetUnion::CreateRevision(revision),
+            false,
         )
     }
 
@@ -519,6 +547,7 @@ impl Compare {
             cmp,
             CompareTarget::Mod,
             TargetUnion::ModRevision(revision),
+            false,
         )
     }
 
@@ -530,20 +559,27 @@ impl Compare {
             cmp,
             CompareTarget::Value,
             TargetUnion::Value(value.into()),
+            true,
         )
     }
 
     /// Compares the lease id of the given key.
     #[inline]
     pub fn lease(key: impl Into<Vec<u8>>, cmp: CompareResult, lease: i64) -> Self {
-        Self::new(key, cmp, CompareTarget::Lease, TargetUnion::Lease(lease))
+        Self::new(
+            key,
+            cmp,
+            CompareTarget::Lease,
+            TargetUnion::Lease(lease),
+            true,
+        )
     }
 
     /// Sets the comparison to scan the range [key, end).
     #[inline]
     #[must_use]
     pub fn with_range(mut self, end: impl Into<Vec<u8>>) -> Self {
-        self.0.range_end = end.into();
+        self.inner.range_end = end.into();
         self
     }
 
@@ -551,16 +587,25 @@ impl Compare {
     #[inline]
     #[must_use]
     pub fn with_prefix(mut self) -> Self {
-        self.0.range_end = KeyRange::get_prefix(&self.0.key);
+        self.inner.range_end = KeyRange::get_prefix(&self.inner.key);
         self
     }
 }
 
+impl PartialEq for Compare {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.inner.eq(&other.inner)
+    }
+}
+
 /// Transaction operation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct TxnOp {
     /// The inner txn op request
     inner: xlineapi::Request,
+    /// Whether to use fast path
+    fast_path: bool,
 }
 
 impl TxnOp {
@@ -570,6 +615,7 @@ impl TxnOp {
     pub fn put(request: PutRequest) -> Self {
         TxnOp {
             inner: xlineapi::Request::RequestPut(request.into()),
+            fast_path: true,
         }
     }
 
@@ -578,6 +624,7 @@ impl TxnOp {
     #[must_use]
     pub fn range(request: RangeRequest) -> Self {
         TxnOp {
+            fast_path: request.fast_path,
             inner: xlineapi::Request::RequestRange(request.into()),
         }
     }
@@ -588,6 +635,7 @@ impl TxnOp {
     pub fn delete(request: DeleteRangeRequest) -> Self {
         TxnOp {
             inner: xlineapi::Request::RequestDeleteRange(request.into()),
+            fast_path: true,
         }
     }
 
@@ -597,6 +645,7 @@ impl TxnOp {
     pub fn txn(txn: TxnRequest) -> Self {
         TxnOp {
             inner: xlineapi::Request::RequestTxn(txn.into()),
+            fast_path: true,
         }
     }
 }
@@ -608,8 +657,16 @@ impl From<TxnOp> for xlineapi::Request {
     }
 }
 
+impl PartialEq for TxnOp {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.inner.eq(&other.inner)
+    }
+}
+
 /// Transaction of multiple operations.
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)] // Bools used as flags
 pub struct TxnRequest {
     /// the inner txn request
     pub(crate) inner: xlineapi::TxnRequest,
@@ -619,6 +676,8 @@ pub struct TxnRequest {
     c_then: bool,
     /// If `else` have be set
     c_else: bool,
+    /// Whether to use fast path
+    pub(crate) fast_path: bool,
 }
 
 impl TxnRequest {
@@ -635,6 +694,7 @@ impl TxnRequest {
             c_when: false,
             c_then: false,
             c_else: false,
+            fast_path: true,
         }
     }
 
@@ -653,8 +713,9 @@ impl TxnRequest {
         assert!(!self.c_else, "cannot call when after or_else");
 
         let compares_vec: Vec<Compare> = compares.into();
+        self.fast_path &= compares_vec.iter().all(|cmp| cmp.fast_path);
         self.c_when = true;
-        self.inner.compare = compares_vec.into_iter().map(|c| c.0).collect();
+        self.inner.compare = compares_vec.into_iter().map(|c| c.inner).collect();
         self
     }
 
@@ -670,9 +731,10 @@ impl TxnRequest {
         assert!(!self.c_then, "cannot call and_then twice");
         assert!(!self.c_else, "cannot call and_then after or_else");
 
+        let operations_vec: Vec<_> = operations.into();
+        self.fast_path &= operations_vec.iter().all(|op| op.fast_path);
         self.c_then = true;
-        self.inner.success = operations
-            .into()
+        self.inner.success = operations_vec
             .into_iter()
             .map(|op| xlineapi::RequestOp {
                 request: Some(op.into()),
@@ -692,9 +754,10 @@ impl TxnRequest {
     pub fn or_else(mut self, operations: impl Into<Vec<TxnOp>>) -> Self {
         assert!(!self.c_else, "cannot call or_else twice");
 
+        let operations_vec: Vec<_> = operations.into();
+        self.fast_path &= operations_vec.iter().all(|op| op.fast_path);
         self.c_else = true;
-        self.inner.failure = operations
-            .into()
+        self.inner.failure = operations_vec
             .into_iter()
             .map(|op| xlineapi::RequestOp {
                 request: Some(op.into()),

@@ -5,7 +5,7 @@ use madsim::runtime::NodeHandle;
 use tonic::transport::Channel;
 use tracing::debug;
 use utils::config::{
-    AuthConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfig, InitialClusterState,
+    AuthConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder, InitialClusterState,
     ServerTimeout, StorageConfig, TlsConfig,
 };
 use xline::server::XlineServer;
@@ -48,6 +48,7 @@ impl XlineGroup {
                 let name = format!("S{i}");
                 let client_url = format!("192.168.1.{}:2379", i + 1);
                 let peer_url = format!("192.168.1.{}:2380", i + 1);
+                let curp_dir = tempfile::tempdir().unwrap().into_path();
                 let cluster_config = ClusterConfig::new(
                     name.clone(),
                     vec!["0.0.0.0:2380".to_owned()],
@@ -56,7 +57,10 @@ impl XlineGroup {
                     vec![format!("192.168.1.{}:2379", i + 1)],
                     all.clone(),
                     false,
-                    CurpConfig::default(),
+                    CurpConfigBuilder::default()
+                        .curp_db_dir(curp_dir.clone())
+                        .build()
+                        .unwrap(),
                     ClientConfig::default(),
                     ServerTimeout::default(),
                     InitialClusterState::New,

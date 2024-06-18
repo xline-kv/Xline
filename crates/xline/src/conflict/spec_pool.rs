@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use curp::server::conflict::CommandEntry;
+use curp::rpc::PoolEntry;
 use curp_external_api::conflict::{ConflictPoolOp, SpeculativePoolOp};
 use utils::interval_map::IntervalMap;
 use xlineapi::{
@@ -18,11 +18,11 @@ use super::{filter_kv, intervals, is_exclusive_cmd};
 #[derive(Debug, Default)]
 pub(crate) struct KvSpecPool {
     /// Interval map for keys overlap detection
-    map: IntervalMap<BytesAffine, CommandEntry<Command>>,
+    map: IntervalMap<BytesAffine, PoolEntry<Command>>,
 }
 
 impl ConflictPoolOp for KvSpecPool {
-    type Entry = CommandEntry<Command>;
+    type Entry = PoolEntry<Command>;
 
     fn remove(&mut self, entry: Self::Entry) {
         let Some(entry) = filter_kv(entry) else {
@@ -70,11 +70,11 @@ impl SpeculativePoolOp for KvSpecPool {
 #[derive(Debug, Default)]
 pub(crate) struct LeaseSpecPool {
     /// Stores leases in the pool
-    leases: HashMap<i64, CommandEntry<Command>>,
+    leases: HashMap<i64, PoolEntry<Command>>,
 }
 
 impl ConflictPoolOp for LeaseSpecPool {
-    type Entry = CommandEntry<Command>;
+    type Entry = PoolEntry<Command>;
 
     fn is_empty(&self) -> bool {
         self.leases.is_empty()
@@ -119,11 +119,11 @@ impl SpeculativePoolOp for LeaseSpecPool {
 #[derive(Debug, Default)]
 pub(crate) struct ExclusiveSpecPool {
     /// Stores the command
-    conflict: Option<CommandEntry<Command>>,
+    conflict: Option<PoolEntry<Command>>,
 }
 
 impl ConflictPoolOp for ExclusiveSpecPool {
-    type Entry = CommandEntry<Command>;
+    type Entry = PoolEntry<Command>;
 
     fn is_empty(&self) -> bool {
         self.conflict.is_none()
