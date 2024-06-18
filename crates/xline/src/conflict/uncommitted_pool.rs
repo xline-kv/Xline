@@ -2,24 +2,39 @@
 //! CURP requires that a master will only execute client operations speculatively,
 //! if that operation is commutative with every other unsynced operation.
 
-use std::collections::{hash_map, HashMap};
+use std::{
+    collections::{hash_map, HashMap},
+    sync::Arc,
+};
 
 use curp::server::conflict::CommandEntry;
 use curp_external_api::conflict::{ConflictPoolOp, UncommittedPoolOp};
 use itertools::Itertools;
 use utils::interval_map::IntervalMap;
-use xlineapi::{
-    command::{get_lease_ids, Command},
-    interval::BytesAffine,
-};
+use xlineapi::{command::Command, interval::BytesAffine};
 
-use super::{filter_kv, intervals, is_exclusive_cmd};
+use crate::storage::lease_store::LeaseCollection;
+
+use super::{all_leases, filter_kv, intervals, is_exclusive_cmd};
 
 /// Uncommitted pool for KV commands.
-#[derive(Debug, Default)]
+#[derive(Debug)]
+#[cfg_attr(test, derive(Default))]
 pub(crate) struct KvUncomPool {
     /// Interval map for keys overlap detection
     map: IntervalMap<BytesAffine, Commands>,
+    /// Lease collection
+    lease_collection: Arc<LeaseCollection>,
+}
+
+impl KvUncomPool {
+    /// Creates a new [`KvUncomPool`].
+    pub(crate) fn new(lease_collection: Arc<LeaseCollection>) -> Self {
+        Self {
+            map: IntervalMap::new(),
+            lease_collection,
+        }
+    }
 }
 
 impl ConflictPoolOp for KvUncomPool {
@@ -29,7 +44,7 @@ impl ConflictPoolOp for KvUncomPool {
         let Some(entry) = filter_kv(entry) else {
             return;
         };
-        let intervals = intervals(&entry);
+        let intervals = intervals(&self.lease_collection, &entry);
         for interval in intervals {
             if self
                 .map
@@ -68,7 +83,7 @@ impl UncommittedPoolOp for KvUncomPool {
             return false;
         };
 
-        let intervals = intervals(&entry);
+        let intervals = intervals(&self.lease_collection, &entry);
         let conflict = intervals.iter().any(|i| self.map.overlap(i));
         for interval in intervals {
             let e = self.map.entry(interval).or_insert(Commands::default());
@@ -81,7 +96,7 @@ impl UncommittedPoolOp for KvUncomPool {
         let Some(entry) = filter_kv(entry) else {
             return vec![];
         };
-        let intervals = intervals(entry);
+        let intervals = intervals(&self.lease_collection, entry);
         intervals
             .into_iter()
             .flat_map(|i| self.map.find_all_overlap(&i))
@@ -92,17 +107,30 @@ impl UncommittedPoolOp for KvUncomPool {
 }
 
 /// Lease uncommitted pool
-#[derive(Debug, Default)]
+#[derive(Debug)]
+#[cfg_attr(test, derive(Default))]
 pub(crate) struct LeaseUncomPool {
     /// Stores leases in the pool
     leases: HashMap<i64, Commands>,
+    /// Lease collection
+    lease_collection: Arc<LeaseCollection>,
+}
+
+impl LeaseUncomPool {
+    /// Creates a new [`LeaseUncomPool`].
+    pub(crate) fn new(lease_collection: Arc<LeaseCollection>) -> Self {
+        Self {
+            leases: HashMap::new(),
+            lease_collection,
+        }
+    }
 }
 
 impl ConflictPoolOp for LeaseUncomPool {
     type Entry = CommandEntry<Command>;
 
     fn remove(&mut self, entry: Self::Entry) {
-        let ids = get_lease_ids(entry.request());
+        let ids = all_leases(&self.lease_collection, &entry);
         for id in ids {
             if let hash_map::Entry::Occupied(mut e) = self.leases.entry(id) {
                 if e.get_mut().remove_cmd(&entry) {
@@ -140,7 +168,7 @@ impl ConflictPoolOp for LeaseUncomPool {
 impl UncommittedPoolOp for LeaseUncomPool {
     fn insert(&mut self, entry: Self::Entry) -> bool {
         let mut conflict = false;
-        let ids = get_lease_ids(entry.request());
+        let ids = all_leases(&self.lease_collection, &entry);
         for id in ids {
             match self.leases.entry(id) {
                 hash_map::Entry::Occupied(mut e) => {
@@ -157,7 +185,7 @@ impl UncommittedPoolOp for LeaseUncomPool {
     }
 
     fn all_conflict(&self, entry: &Self::Entry) -> Vec<Self::Entry> {
-        let ids = get_lease_ids(entry.request());
+        let ids = all_leases(&self.lease_collection, entry);
         ids.into_iter()
             .flat_map(|id| self.leases.get(&id).map(Commands::all).unwrap_or_default())
             .collect()

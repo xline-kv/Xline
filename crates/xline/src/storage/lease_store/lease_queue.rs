@@ -4,6 +4,7 @@ use priority_queue::PriorityQueue;
 
 /// Priority queue of lease
 #[derive(Debug)]
+#[cfg_attr(test, derive(Default))]
 pub(super) struct LeaseQueue {
     /// Inner queue of lease queue
     inner: PriorityQueue<i64, Reverse<Instant>>,
