@@ -330,37 +330,52 @@ pub enum RequestBackend {
     Alarm,
 }
 
-/// Get command keys from a Request for conflict check
-pub trait CommandKeys {
+/// Command attributes
+pub trait CommandAttr {
     /// Key ranges
     fn keys(&self) -> Vec<KeyRange>;
+
+    /// Lease ids
+    fn leases(&self) -> Vec<i64>;
 }
 
-impl CommandKeys for RangeRequest {
+impl CommandAttr for RangeRequest {
     fn keys(&self) -> Vec<KeyRange> {
         vec![KeyRange::new(
             self.key.as_slice(),
             self.range_end.as_slice(),
         )]
     }
+
+    fn leases(&self) -> Vec<i64> {
+        vec![]
+    }
 }
 
-impl CommandKeys for PutRequest {
+impl CommandAttr for PutRequest {
     fn keys(&self) -> Vec<KeyRange> {
         vec![KeyRange::new_one_key(self.key.as_slice())]
     }
+
+    fn leases(&self) -> Vec<i64> {
+        vec![self.lease]
+    }
 }
 
-impl CommandKeys for DeleteRangeRequest {
+impl CommandAttr for DeleteRangeRequest {
     fn keys(&self) -> Vec<KeyRange> {
         vec![KeyRange::new(
             self.key.as_slice(),
             self.range_end.as_slice(),
         )]
     }
+
+    fn leases(&self) -> Vec<i64> {
+        vec![]
+    }
 }
 
-impl CommandKeys for TxnRequest {
+impl CommandAttr for TxnRequest {
     fn keys(&self) -> Vec<KeyRange> {
         let mut keys: Vec<_> = self
             .compare
@@ -391,6 +406,26 @@ impl CommandKeys for TxnRequest {
 
         keys
     }
+
+    fn leases(&self) -> Vec<i64> {
+        let mut leases = Vec::new();
+        for op in self
+            .success
+            .iter()
+            .chain(self.failure.iter())
+            .map(|op| &op.request)
+            .flatten()
+        {
+            match *op {
+                Request::RequestPut(ref req) => {
+                    leases.push(req.lease);
+                }
+                Request::RequestTxn(ref req) => leases.append(&mut req.leases()),
+                Request::RequestDeleteRange(_) | Request::RequestRange(_) => {}
+            }
+        }
+        leases
+    }
 }
 
 impl RequestWrapper {
@@ -402,6 +437,19 @@ impl RequestWrapper {
             RequestWrapper::PutRequest(ref req) => req.keys(),
             RequestWrapper::DeleteRangeRequest(ref req) => req.keys(),
             RequestWrapper::TxnRequest(ref req) => req.keys(),
+            _ => vec![],
+        }
+    }
+
+    /// Get leases of the request
+    pub fn leases(&self) -> Vec<i64> {
+        match *self {
+            RequestWrapper::RangeRequest(ref req) => req.leases(),
+            RequestWrapper::PutRequest(ref req) => req.leases(),
+            RequestWrapper::DeleteRangeRequest(ref req) => req.leases(),
+            RequestWrapper::TxnRequest(ref req) => req.leases(),
+            RequestWrapper::LeaseGrantRequest(ref req) => vec![req.id],
+            RequestWrapper::LeaseRevokeRequest(ref req) => vec![req.id],
             _ => vec![],
         }
     }

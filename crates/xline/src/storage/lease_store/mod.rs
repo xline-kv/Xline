@@ -122,16 +122,6 @@ impl LeaseStore {
         self.lease_collection.find_expired_leases()
     }
 
-    /// Get keys attached to a lease
-    /// FIXME: use this in conflict pools
-    #[allow(unused)]
-    pub(crate) fn get_keys(&self, lease_id: i64) -> Vec<Vec<u8>> {
-        self.lease_collection
-            .look_up(lease_id)
-            .map(|l| l.keys())
-            .unwrap_or_default()
-    }
-
     /// Keep alive a lease
     pub(crate) fn keep_alive(&self, lease_id: i64) -> Result<i64, ExecuteError> {
         self.lease_collection.renew(lease_id)

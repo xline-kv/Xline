@@ -25,8 +25,8 @@ impl ConflictPoolOp for TestSpecPool {
     }
 
     #[inline]
-    fn remove(&mut self, entry: Self::Entry) {
-        if let Some(idx) = self.cmds.iter().position(|c| *c == entry) {
+    fn remove(&mut self, entry: &Self::Entry) {
+        if let Some(idx) = self.cmds.iter().position(|c| c == entry) {
             let _ignore = self.cmds.remove(idx);
         }
     }
@@ -77,8 +77,8 @@ impl ConflictPoolOp for TestUncomPool {
     }
 
     #[inline]
-    fn remove(&mut self, entry: Self::Entry) {
-        if let Some(idx) = self.cmds.iter().position(|c| *c == entry) {
+    fn remove(&mut self, entry: &Self::Entry) {
+        if let Some(idx) = self.cmds.iter().position(|c| c == entry) {
             let _ignore = self.cmds.remove(idx);
         }
     }

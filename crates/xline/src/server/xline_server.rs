@@ -459,7 +459,7 @@ impl XlineServer {
         let (kv_storage, lease_storage, auth_storage, alarm_storage, watcher) = self
             .construct_underlying_storages(
                 Arc::clone(&db),
-                lease_collection,
+                Arc::clone(&lease_collection),
                 Arc::clone(&header_gen),
                 key_pair,
             )
@@ -517,8 +517,8 @@ impl XlineServer {
             Arc::clone(&self.curp_storage),
             Arc::clone(&self.task_manager),
             self.client_tls_config.clone(),
-            XlineSpeculativePools::default().into_inner(),
-            XlineUncommittedPools::default().into_inner(),
+            XlineSpeculativePools::new(Arc::clone(&lease_collection)).into_inner(),
+            XlineUncommittedPools::new(lease_collection).into_inner(),
         )
         .await;
 

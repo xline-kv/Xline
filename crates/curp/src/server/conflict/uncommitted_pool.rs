@@ -53,11 +53,11 @@ impl<C> UncommittedPool<C> {
         match ConflictPoolEntry::from(entry) {
             ConflictPoolEntry::Command(c) => {
                 for cucp in &mut self.command_ucps {
-                    cucp.remove(c.clone());
+                    cucp.remove(&c);
                 }
             }
             ConflictPoolEntry::ConfChange(c) => {
-                self.conf_change_ucp.remove(c);
+                self.conf_change_ucp.remove(&c);
             }
         }
     }
@@ -135,8 +135,8 @@ impl ConflictPoolOp for ConfChangeUcp {
         self.conf_changes.is_empty()
     }
 
-    fn remove(&mut self, entry: Self::Entry) {
-        if let Some(pos) = self.conf_changes.iter().position(|x| *x == entry) {
+    fn remove(&mut self, entry: &Self::Entry) {
+        if let Some(pos) = self.conf_changes.iter().position(|x| x == entry) {
             let _ignore = self.conf_changes.remove(pos);
         }
     }

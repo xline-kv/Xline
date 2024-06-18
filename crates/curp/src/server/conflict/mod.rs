@@ -13,6 +13,8 @@ pub mod test_pools;
 
 use std::{ops::Deref, sync::Arc};
 
+use curp_external_api::conflict::EntryId;
+
 use crate::rpc::{ConfChange, PoolEntry, PoolEntryInner, ProposeId};
 
 // TODO: relpace `PoolEntry` with this
@@ -53,6 +55,15 @@ impl<C> CommandEntry<C> {
     #[inline]
     pub fn new(id: ProposeId, cmd: Arc<C>) -> Self {
         Self { id, cmd }
+    }
+}
+
+impl<C> EntryId for CommandEntry<C> {
+    type Id = ProposeId;
+
+    #[inline]
+    fn id(&self) -> Self::Id {
+        self.id
     }
 }
 
@@ -128,6 +139,14 @@ pub(super) struct ConfChangeEntry {
     id: ProposeId,
     /// The conf change entry
     conf_change: Vec<ConfChange>,
+}
+
+impl EntryId for ConfChangeEntry {
+    type Id = ProposeId;
+
+    fn id(&self) -> Self::Id {
+        self.id
+    }
 }
 
 impl<C> From<ConfChangeEntry> for PoolEntry<C> {
