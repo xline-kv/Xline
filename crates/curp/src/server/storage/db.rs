@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use async_trait::async_trait;
-use engine::{Engine, EngineType, StorageEngine, WriteOperation};
+use engine::{Engine, EngineType, StorageEngine, StorageOps, WriteOperation};
 use prost::Message;
 use utils::config::EngineConfig;
 
@@ -45,7 +45,7 @@ impl<C: Command> StorageApi for DB<C> {
     async fn flush_voted_for(&self, term: u64, voted_for: ServerId) -> Result<(), StorageError> {
         let bytes = bincode::serialize(&(term, voted_for))?;
         let op = WriteOperation::new_put(CF, VOTE_FOR.to_vec(), bytes);
-        self.db.write_batch(vec![op], true)?;
+        self.db.write_multi(vec![op], true)?;
 
         Ok(())
     }
@@ -54,7 +54,7 @@ impl<C: Command> StorageApi for DB<C> {
     async fn put_log_entry(&self, entry: &LogEntry<Self::Command>) -> Result<(), StorageError> {
         let bytes = bincode::serialize(entry)?;
         let op = WriteOperation::new_put(LOGS_CF, entry.index.to_le_bytes().to_vec(), bytes);
-        self.db.write_batch(vec![op], false)?;
+        self.db.write_multi(vec![op], false)?;
 
         Ok(())
     }
@@ -64,7 +64,7 @@ impl<C: Command> StorageApi for DB<C> {
         let id = member.id;
         let data = member.encode_to_vec();
         let op = WriteOperation::new_put(MEMBERS_CF, id.to_le_bytes().to_vec(), data);
-        self.db.write_batch(vec![op], true)?;
+        self.db.write_multi(vec![op], true)?;
         Ok(())
     }
 
@@ -72,7 +72,7 @@ impl<C: Command> StorageApi for DB<C> {
     fn remove_member(&self, id: ServerId) -> Result<(), StorageError> {
         let id_bytes = id.to_le_bytes();
         let op = WriteOperation::new_delete(MEMBERS_CF, &id_bytes);
-        self.db.write_batch(vec![op], true)?;
+        self.db.write_multi(vec![op], true)?;
         Ok(())
     }
 
@@ -96,7 +96,7 @@ impl<C: Command> StorageApi for DB<C> {
                 m.encode_to_vec(),
             ));
         }
-        self.db.write_batch(ops, true)?;
+        self.db.write_multi(ops, true)?;
         Ok(())
     }
 

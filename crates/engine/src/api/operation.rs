@@ -1,6 +1,7 @@
 use crate::EngineError;
 
 /// Storage operations
+/// TODO: refactor this trait, require `&mut self` for write operations
 pub trait StorageOps {
     /// Write an op to the transaction
     ///
@@ -17,8 +18,9 @@ pub trait StorageOps {
     /// # Errors
     /// Return `EngineError::TableNotFound` if the given table does not exist
     /// Return `EngineError` if met some errors
-    fn write_multi(&self, ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError>;
-
+    fn write_multi<'a, Ops>(&self, ops: Ops, sync: bool) -> Result<(), EngineError>
+    where
+        Ops: IntoIterator<Item = WriteOperation<'a>>;
     /// Get the value associated with a key value and the given table
     ///
     /// # Errors
@@ -41,7 +43,7 @@ pub trait StorageOps {
 /// Write operation
 #[allow(clippy::module_name_repetitions)]
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum WriteOperation<'a> {
     /// `Put` operation
     Put {

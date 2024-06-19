@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration, vec};
 
 use curp::rpc::{ConfChange, ProposeConfChangeRequest};
 use curp_test_utils::{init_logger, sleep_secs, test_cmd::TestCommand, TEST_TABLE};
-use engine::StorageEngine;
+use engine::{StorageEngine, StorageOps};
 use itertools::Itertools;
 use simulation::curp_group::{CurpGroup, PbProposeId, ProposeRequest};
 use tonic::Code;
