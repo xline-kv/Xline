@@ -394,6 +394,7 @@ impl CommandKeys for TxnRequest {
 }
 
 impl RequestWrapper {
+    // TODO: returns a reference type to avoid copying
     /// Get keys of the request
     pub fn keys(&self) -> Vec<KeyRange> {
         match *self {
