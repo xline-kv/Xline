@@ -28,8 +28,8 @@ pub(crate) trait IndexOperate {
         sub_revision: i64,
     ) -> (KeyRevision, Option<KeyRevision>);
 
-    /// Gets the previous revision of the key
-    fn prev_rev(&self, key: &[u8]) -> Option<KeyRevision>;
+    /// Gets the latest revision of the key
+    fn current_rev(&self, key: &[u8]) -> Option<KeyRevision>;
 
     /// Insert or update `KeyRevision`
     fn insert(&self, key_revisions: Vec<(Vec<u8>, KeyRevision)>);
@@ -318,7 +318,7 @@ impl IndexOperate for Index {
         )
     }
 
-    fn prev_rev(&self, key: &[u8]) -> Option<KeyRevision> {
+    fn current_rev(&self, key: &[u8]) -> Option<KeyRevision> {
         self.inner
             .get(key)
             .and_then(fmap_value(|revs| revs.last().copied()))
@@ -509,7 +509,7 @@ impl IndexState<'_> {
     }
 
     /// Reads an entry
-    #[allow(clippy::needless_pass_by_value)] // it's intended to comsume the entry
+    #[allow(clippy::needless_pass_by_value)] // it's intended to consume the entry
     fn entry_read(entry: Entry<Vec<u8>, RwLock<Vec<KeyRevision>>>) -> (Vec<u8>, Vec<KeyRevision>) {
         (entry.key().clone(), entry.value().read().clone())
     }
@@ -581,7 +581,7 @@ impl IndexOperate for IndexState<'_> {
         }
     }
 
-    fn prev_rev(&self, key: &[u8]) -> Option<KeyRevision> {
+    fn current_rev(&self, key: &[u8]) -> Option<KeyRevision> {
         let index = &self.index_ref.inner;
         let state = self.state.lock();
 
