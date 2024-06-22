@@ -159,6 +159,32 @@ watch_validation() {
     log::info "watch validation test passed"
 }
 
+# validate watch requests with commands
+watch_with_command_validation() {
+    log::info "watch validation test running..."
+
+    command="${ETCDCTL} watch watch_key -- echo watch event received"
+    log::info "running: ${command}"
+    want=("PUT" "watch_key" "value" "watch event received" "DELETE" "watch_key" "watch event received")
+    ${command} | while read line; do
+        log::debug ${line}
+        if [ "${line}" == "${want[0]}" ]; then
+            unset want[0]
+            want=("${want[@]}")
+        else
+            log::fatal "result not match pattern\n\tpattern: ${want[0]}\n\tresult: ${line}"
+        fi
+    done &
+    sleep 0.1 # wait watch
+    run "${ETCDCTL} put watch_key value"
+    check_positive "OK"
+    run "${ETCDCTL} del watch_key"
+    check_positive "1"
+    watch_progress_validation
+
+    log::info "watch validation test passed"
+}
+
 # validate lease requests
 lease_validation() {
     log::info "lease validation test running..."
@@ -324,6 +350,7 @@ cluster_validation() {
 compact_validation
 kv_validation
 watch_validation
+watch_with_command_validation
 lease_validation
 auth_validation
 lock_validation
