@@ -1,17 +1,21 @@
 use std::io;
+use std::{collections::HashMap, ffi::OsString};
 
 use anyhow::{anyhow, Result};
 use clap::{arg, value_parser, ArgMatches, Command};
+use std::process::Command as StdCommand;
 use xline_client::{
     error::XlineClientError,
     types::watch::{WatchRequest, Watcher},
     Client,
 };
 use xlineapi::command::Command as XlineCommand;
+use xlineapi::WatchResponse;
 
 use crate::utils::printer::Printer;
 
-/// Definition of `watch` command
+/// Definition of `watch` command :
+/// `WATCH [options] [key or prefix] [range_end] [--] [exec-command arg1 arg2 ...]`
 pub(crate) fn command() -> Command {
     Command::new("watch")
         .about("Watches events stream on keys or prefixes")
@@ -25,6 +29,12 @@ pub(crate) fn command() -> Command {
         .arg(arg!(--pre_kv "Get the previous key-value pair before the event happens"))
         .arg(arg!(--progress_notify "Get periodic watch progress notification from server"))
         .arg(arg!(--interactive "Interactive mode"))
+        .arg(
+            arg!(<exec_command> "command to execute after -- ")
+                .num_args(1..)
+                .required(false)
+                .last(true),
+        )
 }
 
 /// a function that builds a watch request with existing fields
@@ -67,20 +77,110 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
     if interactive {
         exec_interactive(client, matches).await?;
     } else {
-        let key = matches.get_one::<String>("key").expect("required");
-        let range_end = matches.get_one::<String>("range_end");
-        let request = build_request(matches)(key, range_end.map(String::as_str));
+        exec_non_interactive(client, matches).await?;
+    }
 
-        let (_watcher, mut stream) = client.watch_client().watch(request).await?;
-        while let Some(resp) = stream
-            .message()
-            .await
-            .map_err(|e| XlineClientError::<XlineCommand>::WatchError(e.to_string()))?
-        {
-            resp.print();
+    Ok(())
+}
+
+/// Execute the command in non-interactive mode
+async fn exec_non_interactive(client: &mut Client, matches: &ArgMatches) -> Result<()> {
+    let key = matches.get_one::<String>("key").expect("required");
+    let range_end = matches.get_one::<String>("range_end");
+    let request = build_request(matches)(key, range_end.map(String::as_str));
+
+    // extract the command provided by user
+    let command_to_execute: Vec<OsString> = matches
+        .get_many::<String>("exec_command")
+        .unwrap_or_default()
+        .map(OsString::from)
+        .collect();
+
+    let (_watcher, mut stream) = client.watch_client().watch(request).await?;
+    while let Some(resp) = stream
+        .message()
+        .await
+        .map_err(|e| XlineClientError::<XlineCommand>::WatchError(e.to_string()))?
+    {
+        resp.print();
+        if !command_to_execute.is_empty() {
+            execute_command_on_events(&command_to_execute, &resp)?;
         }
     }
 
+    Ok(())
+}
+
+/// Execute user command for each event. We wanna support things like:
+///
+/// ```shell
+/// ./xlinectl watch foo -- sh -c "env | grep ETCD_WATCH_"
+/// ```
+///
+/// Expected output format:
+/// ```plain
+/// PUT
+/// foo
+/// bar
+/// XLINE_WATCH_REVISION=11
+/// XLINE_WATCH_KEY="foo"
+/// XLINE_WATCH_EVENT_TYPE="PUT"
+/// XLINE_WATCH_VALUE="bar"
+/// ```
+///
+fn execute_command_on_events(command_to_execute: &[OsString], resp: &WatchResponse) -> Result<()> {
+    let watch_revision = resp
+        .header
+        .as_ref()
+        .map(|header| header.revision)
+        .unwrap_or_default();
+
+    for event in &resp.events {
+        let kv = event.kv.as_ref().expect("expected key-value pair");
+        let watch_key = String::from_utf8(kv.key.clone()).expect("expected valid UTF-8");
+        let watch_value = String::from_utf8(kv.value.clone()).expect("expected valid UTF-8");
+        let event_type = match event.r#type {
+            0 => "PUT",
+            1 => "DELETE",
+            _ => "UNKNOWN",
+        };
+
+        let envs = HashMap::from([
+            ("XLINE_WATCH_REVISION", watch_revision.to_string()),
+            ("XLINE_WATCH_KEY", watch_key),
+            ("XLINE_WATCH_EVENT_TYPE", event_type.to_owned()),
+            ("XLINE_WATCH_VALUE", watch_value),
+        ]);
+
+        execute_inner(command_to_execute, envs)?;
+    }
+
+    Ok(())
+}
+
+/// Actual executor responsible for the user command,
+/// command format: [exec-command arg1 arg2 ...]
+#[allow(clippy::indexing_slicing)] // this is safe 'cause we always check non-empty.
+#[allow(clippy::let_underscore_untyped)] // skip type annotation to make code clean, it's safe.
+fn execute_inner(command: &[OsString], envs: HashMap<&str, String>) -> Result<()> {
+    let mut cmd = StdCommand::new(&command[0]);
+
+    // adding environment variables
+    for (key, value) in envs {
+        let _ = cmd.env(key, value);
+    }
+
+    // collecting the args
+    if command.len() > 1 {
+        let _ = cmd.args(&command[1..]);
+    }
+    // executing the command
+    let output = cmd.output()?;
+    if !output.status.success() {
+        eprintln!("Command failed with status: {}", output.status);
+        eprintln!("Error details: {}", String::from_utf8_lossy(&output.stderr));
+    }
+    println!("{}", String::from_utf8_lossy(&output.stdout));
     Ok(())
 }
 
@@ -184,6 +284,28 @@ mod tests {
             let range_end = matches.get_one::<String>("range_end");
             let req = build_request(&matches)(key, range_end.map(String::as_str));
             assert_eq!(Some(req), self.req);
+            // Extract the command to execute from the matches
+            let command_to_execute: Vec<OsString> = matches
+                .get_many::<String>("exec_command")
+                .unwrap_or_default()
+                .map(OsString::from)
+                .collect();
+            // Execute the user command upon receiving an event
+            if !command_to_execute.is_empty() {
+                // Mock environment variables to be passed to the command
+                let mock_envs = HashMap::from([
+                    ("XLINE_WATCH_REVISION", "11".to_owned()),
+                    ("XLINE_WATCH_KEY", "mock_key".to_owned()),
+                    ("XLINE_WATCH_EVENT_TYPE", "PUT".to_owned()),
+                    ("XLINE_WATCH_VALUE", "mock_value".to_owned()),
+                ]);
+                // Here we ideally call a function to execute and capture the command output
+                // Since we are testing, we can check the command formation INSTEAD OF actual execution.
+                assert!(
+                    execute_inner(&command_to_execute, mock_envs).is_ok(),
+                    "Command execution failed"
+                );
+            }
         }
     }
 
@@ -205,6 +327,62 @@ mod tests {
             ),
             TestCase::new(
                 vec!["watch", "key1", "--prefix", "--progress_notify"],
+                Some(
+                    WatchRequest::new("key1")
+                        .with_prefix()
+                        .with_progress_notify(),
+                ),
+            ),
+            // newly added test case:
+            // testing command `-- echo watch event received`
+            TestCase::new(
+                vec![
+                    "watch",
+                    "key1",
+                    "--prefix",
+                    "--progress_notify",
+                    "--",
+                    "echo",
+                    "watch event received",
+                ],
+                Some(
+                    WatchRequest::new("key1")
+                        .with_prefix()
+                        .with_progress_notify(),
+                ),
+            ),
+            // newly added test case:
+            // testing command `-- sh -c ls`
+            TestCase::new(
+                vec![
+                    "watch",
+                    "key1",
+                    "--prefix",
+                    "--progress_notify",
+                    "--",
+                    "sh",
+                    "-c",
+                    "ls",
+                ],
+                Some(
+                    WatchRequest::new("key1")
+                        .with_prefix()
+                        .with_progress_notify(),
+                ),
+            ),
+            // newly added test case:
+            // testing command `-- sh -c "env | grep XLINE_WATCH_"`
+            TestCase::new(
+                vec![
+                    "watch",
+                    "key1",
+                    "--prefix",
+                    "--progress_notify",
+                    "--",
+                    "sh",
+                    "-c",
+                    "env | grep XLINE_WATCH_",
+                ],
                 Some(
                     WatchRequest::new("key1")
                         .with_prefix()
