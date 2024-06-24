@@ -22,7 +22,6 @@ either = { version = "1", default-features = false, features = ["use_std"] }
 futures-channel = { version = "0.3", features = ["sink"] }
 futures-util = { version = "0.3", features = ["channel", "io", "sink"] }
 getrandom = { version = "0.2", default-features = false, features = ["js", "rdrand", "std"] }
-itertools = { version = "0.12" }
 libc = { version = "0.2", features = ["extra_traits"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 madsim-tokio = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic", default-features = false, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
@@ -49,7 +48,7 @@ zeroize = { version = "1", features = ["derive"] }
 bytes = { version = "1" }
 cc = { version = "1", default-features = false, features = ["parallel"] }
 either = { version = "1", default-features = false, features = ["use_std"] }
-itertools = { version = "0.12" }
+itertools = { version = "0.12", default-features = false, features = ["use_alloc"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 memchr = { version = "2" }
