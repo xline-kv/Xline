@@ -1,0 +1,50 @@
+name: e2e test with kubernetes
+
+on:
+  workflow_call:
+    inputs:
+      k8s_version:
+        required: true
+        type: string
+
+jobs:
+
+  e2e:
+    name: E2E kube
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: xline
+
+      - name: Build kind node image with xline
+        run: |
+          docker build . -f ci/artifacts/kind-node-xline.Dockerfile -t ghcr.io/xline-kv/kind-node-xline:${{ inputs.k8s_version }}-master --build-arg K8S_VERSION=${{ inputs.k8s_version }}
+
+      - name: Create kubernetes cluster with kind
+        env:
+          K8S_VERSION: ${{ inputs.k8s_version }}
+        run: |
+          ./ci/scripts/kind.sh
+
+      - name: Get cluster status
+        run: |
+          kubectl run test --image httpd:2
+          kubectl wait --timeout=1m --for=condition=ready pods test
+          kubectl get pods -A -owide
+
+      - name: Export logs
+        if: failure()
+        run: |
+          mkdir -p _artifacts
+          docker ps
+          kind export logs  --loglevel=debug ./_artifacts/logs
+          ls _artifacts
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xline-kind-log-${{ inputs.k8s_version }}-${{ github.run_id }}
+          path: ./_artifacts/logs
