@@ -122,8 +122,10 @@ async fn worker_exe<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             if !er_ok {
                 sp.lock()
                     .remove(PoolEntry::new(entry.propose_id, Arc::clone(cmd)));
-                ucp.lock()
-                    .remove(PoolEntry::new(entry.propose_id, Arc::clone(cmd)));
+                if curp.is_leader() {
+                    ucp.lock()
+                        .remove(PoolEntry::new(entry.propose_id, Arc::clone(cmd)));
+                }
             }
             debug!(
                 "{id} cmd({}) is speculatively executed, exe status: {er_ok}",
@@ -161,8 +163,10 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             cb.write().insert_asr(entry.propose_id, asr);
             sp.lock()
                 .remove(PoolEntry::new(entry.propose_id, Arc::clone(cmd)));
-            ucp.lock()
-                .remove(PoolEntry::new(entry.propose_id, Arc::clone(cmd)));
+            if curp.is_leader() {
+                ucp.lock()
+                    .remove(PoolEntry::new(entry.propose_id, Arc::clone(cmd)));
+            }
             debug!("{id} cmd({}) after sync is called", entry.propose_id);
             asr_ok
         }
@@ -190,8 +194,10 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             cb.write().insert_conf(entry.propose_id);
             sp.lock()
                 .remove(PoolEntry::new(entry.propose_id, conf_change.clone()));
-            ucp.lock()
-                .remove(PoolEntry::new(entry.propose_id, conf_change.clone()));
+            if curp.is_leader() {
+                ucp.lock()
+                    .remove(PoolEntry::new(entry.propose_id, conf_change.clone()));
+            }
             if shutdown_self {
                 if let Some(maybe_new_leader) = curp.pick_new_leader() {
                     info!(
