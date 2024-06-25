@@ -318,6 +318,95 @@ fn ucp_revoke_then_kv_conflict_ok() {
     assert!(!ucp.insert(kv_delete.clone()));
 }
 
+/*
+The following test cases verify that insert and remove operations in a
+conflict pool are independent of any external state.
+
+Specifically, we need to query `LeaseCollection` for kv and lease requests
+and the `LeaseCollection` might be mutated sometime between a insert and
+a remove, potentially leading to an inconsist state in our conflict pool.
+*/
+
+#[test]
+fn kv_sp_mutation_no_side_effect() {
+    let lease_collection = Arc::new(LeaseCollection::new(60));
+    let mut sp = KvSpecPool::new(Arc::clone(&lease_collection));
+    let mut gen = EntryGenerator::default();
+
+    lease_collection.grant(1, 60, true);
+    lease_collection
+        .attach(1, "foo".as_bytes().to_vec())
+        .unwrap();
+    let kv_put = gen.gen_put("foo");
+    let lease_revoke = gen.gen_lease_revoke(1);
+
+    sp.insert_if_not_conflict(lease_revoke.clone());
+    assert!(sp.insert_if_not_conflict(kv_put.clone()).is_some());
+    lease_collection.detach(1, "foo".as_bytes()).unwrap();
+    sp.remove(&lease_revoke);
+    assert!(sp.insert_if_not_conflict(kv_put).is_none());
+}
+
+#[test]
+fn lease_sp_mutation_no_side_effect() {
+    let lease_collection = Arc::new(LeaseCollection::new(60));
+    let mut sp = LeaseSpecPool::new(Arc::clone(&lease_collection));
+    let mut gen = EntryGenerator::default();
+
+    lease_collection.grant(1, 60, true);
+    lease_collection
+        .attach(1, "foo".as_bytes().to_vec())
+        .unwrap();
+    let kv_put = gen.gen_put("foo");
+    let lease_revoke = gen.gen_lease_revoke(1);
+
+    sp.insert_if_not_conflict(kv_put.clone());
+    assert!(sp.insert_if_not_conflict(lease_revoke.clone()).is_some());
+    lease_collection.detach(1, "foo".as_bytes()).unwrap();
+    sp.remove(&kv_put);
+    assert!(sp.insert_if_not_conflict(kv_put).is_none());
+}
+
+#[test]
+fn kv_ucp_mutation_no_side_effect() {
+    let lease_collection = Arc::new(LeaseCollection::new(60));
+    let mut ucp = KvUncomPool::new(Arc::clone(&lease_collection));
+    let mut gen = EntryGenerator::default();
+
+    lease_collection.grant(1, 60, true);
+    lease_collection
+        .attach(1, "foo".as_bytes().to_vec())
+        .unwrap();
+    let kv_put = gen.gen_put("foo");
+    let lease_revoke = gen.gen_lease_revoke(1);
+
+    ucp.insert(lease_revoke.clone());
+    assert!(!ucp.all_conflict(&kv_put).is_empty());
+    lease_collection.detach(1, "foo".as_bytes()).unwrap();
+    ucp.remove(&lease_revoke);
+    assert!(ucp.all_conflict(&kv_put).is_empty());
+}
+
+#[test]
+fn lease_ucp_mutation_no_side_effect() {
+    let lease_collection = Arc::new(LeaseCollection::new(60));
+    let mut ucp = LeaseUncomPool::new(Arc::clone(&lease_collection));
+    let mut gen = EntryGenerator::default();
+
+    lease_collection.grant(1, 60, true);
+    lease_collection
+        .attach(1, "foo".as_bytes().to_vec())
+        .unwrap();
+    let kv_put = gen.gen_put("foo");
+    let lease_revoke = gen.gen_lease_revoke(1);
+
+    ucp.insert(kv_put.clone());
+    assert!(!ucp.all_conflict(&lease_revoke).is_empty());
+    lease_collection.detach(1, "foo".as_bytes()).unwrap();
+    ucp.remove(&kv_put);
+    assert!(ucp.all_conflict(&lease_revoke).is_empty());
+}
+
 fn compare_commands(mut a: Vec<CommandEntry<Command>>, mut b: Vec<CommandEntry<Command>>) {
     a.sort_unstable();
     b.sort_unstable();
