@@ -288,14 +288,14 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         let revision = match wrapper.backend() {
             RequestBackend::Auth => {
                 if wrapper.skip_auth_revision() {
-                    -1
+                    self.auth_rev.get()
                 } else {
                     self.auth_rev.next()
                 }
             }
             RequestBackend::Kv | RequestBackend::Lease => {
                 if wrapper.skip_general_revision() {
-                    -1
+                    self.general_rev.get()
                 } else {
                     self.general_rev.next()
                 }
