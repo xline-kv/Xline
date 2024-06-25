@@ -24,7 +24,7 @@ impl ConflictPoolOp for TestSp {
         self.entries.is_empty()
     }
 
-    fn remove(&mut self, entry: Self::Entry) {
+    fn remove(&mut self, entry: &Self::Entry) {
         if let Some(pos) = self
             .entries
             .iter()
@@ -73,7 +73,7 @@ impl ConflictPoolOp for TestUcp {
         self.entries.is_empty()
     }
 
-    fn remove(&mut self, entry: Self::Entry) {
+    fn remove(&mut self, entry: &Self::Entry) {
         if let Some(pos) = self
             .entries
             .iter()

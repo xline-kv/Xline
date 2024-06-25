@@ -34,11 +34,11 @@ fn kv_sp_operations_are_ok() {
         vec![entry1.clone(), entry2.clone(), entry4.clone()],
     );
     assert_eq!(sp.len(), 3);
-    sp.remove(entry1.clone());
+    sp.remove(&entry1.clone());
     assert!(sp.insert_if_not_conflict(entry3.clone()).is_some());
-    sp.remove(entry2.clone());
+    sp.remove(&entry2.clone());
     assert!(sp.insert_if_not_conflict(entry3.clone()).is_some());
-    sp.remove(entry4.clone());
+    sp.remove(&entry4.clone());
     assert!(sp.insert_if_not_conflict(entry3.clone()).is_none());
     sp.clear();
     assert!(sp.is_empty());
@@ -79,8 +79,8 @@ fn kv_ucp_operations_are_ok() {
         ucp.all_conflict(&entry6),
         vec![entry4.clone(), entry5.clone()],
     );
-    ucp.remove(entry4.clone());
-    ucp.remove(entry5.clone());
+    ucp.remove(&entry4.clone());
+    ucp.remove(&entry5.clone());
     assert!(!ucp.insert(entry6.clone()));
     ucp.clear();
     assert!(ucp.is_empty());
@@ -102,8 +102,8 @@ fn lease_sp_operations_are_ok() {
     assert!(sp.insert_if_not_conflict(entry4.clone()).is_some());
     compare_commands(sp.all(), vec![entry1.clone(), entry2.clone()]);
     assert_eq!(sp.len(), 2);
-    sp.remove(entry1);
-    sp.remove(entry2);
+    sp.remove(&entry1);
+    sp.remove(&entry2);
     assert!(sp.insert_if_not_conflict(entry3).is_none());
     assert!(sp.insert_if_not_conflict(entry4).is_none());
     sp.clear();
@@ -144,8 +144,8 @@ fn lease_ucp_operations_are_ok() {
         ucp.all_conflict(&entry3),
         vec![entry3.clone(), entry5.clone()],
     );
-    ucp.remove(entry3.clone());
-    ucp.remove(entry5.clone());
+    ucp.remove(&entry3.clone());
+    ucp.remove(&entry5.clone());
     assert!(!ucp.insert(entry5.clone()));
     ucp.clear();
     assert!(ucp.is_empty());
@@ -163,7 +163,7 @@ fn exclusive_sp_operations_are_ok() {
     assert!(sp.insert_if_not_conflict(entry2.clone()).is_some());
     compare_commands(sp.all(), vec![entry1.clone()]);
     assert_eq!(sp.len(), 1);
-    sp.remove(entry1);
+    sp.remove(&entry1);
     assert!(sp.insert_if_not_conflict(entry2).is_some());
     sp.clear();
     assert!(sp.is_empty());
@@ -184,8 +184,8 @@ fn exclusive_ucp_operations_are_ok() {
         vec![entry1.clone(), entry2.clone()],
     );
     assert_eq!(ucp.len(), 2);
-    ucp.remove(entry1.clone());
-    ucp.remove(entry2.clone());
+    ucp.remove(&entry1.clone());
+    ucp.remove(&entry2.clone());
     assert!(ucp.insert(entry1.clone()));
     ucp.clear();
     assert!(ucp.is_empty());
@@ -211,16 +211,16 @@ fn sp_kv_then_revoke_conflict_ok() {
     // put conflicts with lease revoke
     assert!(sp.insert_if_not_conflict(kv_put.clone()).is_none());
     assert!(sp.insert_if_not_conflict(lease_revoke.clone()).is_some());
-    sp.remove(kv_put);
+    sp.remove(&kv_put);
     assert!(sp.insert_if_not_conflict(lease_revoke.clone()).is_none());
-    sp.remove(lease_revoke.clone());
+    sp.remove(&lease_revoke.clone());
 
     // delete range conflicts with lease revoke
     assert!(sp.insert_if_not_conflict(kv_delete.clone()).is_none());
     assert!(sp.insert_if_not_conflict(lease_revoke.clone()).is_some());
-    sp.remove(kv_delete);
+    sp.remove(&kv_delete);
     assert!(sp.insert_if_not_conflict(lease_revoke.clone()).is_none());
-    sp.remove(lease_revoke);
+    sp.remove(&lease_revoke);
 }
 
 #[test]
@@ -242,16 +242,16 @@ fn sp_revoke_then_kv_conflict_ok() {
     // lease revoke conflicts with put
     assert!(sp.insert_if_not_conflict(lease_revoke.clone()).is_none());
     assert!(sp.insert_if_not_conflict(kv_put.clone()).is_some());
-    sp.remove(lease_revoke.clone());
+    sp.remove(&lease_revoke.clone());
     assert!(sp.insert_if_not_conflict(kv_put.clone()).is_none());
-    sp.remove(kv_put.clone());
+    sp.remove(&kv_put.clone());
 
     // lease revoke conflicts with delete range
     assert!(sp.insert_if_not_conflict(lease_revoke.clone()).is_none());
     assert!(sp.insert_if_not_conflict(kv_delete.clone()).is_some());
-    sp.remove(lease_revoke.clone());
+    sp.remove(&lease_revoke.clone());
     assert!(sp.insert_if_not_conflict(kv_delete.clone()).is_none());
-    sp.remove(kv_delete.clone());
+    sp.remove(&kv_delete.clone());
 }
 
 #[test]
@@ -273,16 +273,16 @@ fn ucp_kv_then_revoke_conflict_ok() {
     // put conflicts with lease revoke
     assert!(!ucp.insert(kv_put.clone()));
     assert!(ucp.insert(lease_revoke.clone()));
-    ucp.remove(kv_put);
-    ucp.remove(lease_revoke.clone());
+    ucp.remove(&kv_put);
+    ucp.remove(&lease_revoke.clone());
     assert!(!ucp.insert(lease_revoke.clone()));
-    ucp.remove(lease_revoke.clone());
+    ucp.remove(&lease_revoke.clone());
 
     // delete range conflicts with lease revoke
     assert!(!ucp.insert(kv_delete.clone()));
     assert!(ucp.insert(lease_revoke.clone()));
-    ucp.remove(kv_delete);
-    ucp.remove(lease_revoke.clone());
+    ucp.remove(&kv_delete);
+    ucp.remove(&lease_revoke.clone());
     assert!(!ucp.insert(lease_revoke.clone()));
 }
 
@@ -305,16 +305,16 @@ fn ucp_revoke_then_kv_conflict_ok() {
     // lease revoke conflicts with put
     assert!(!ucp.insert(lease_revoke.clone()));
     assert!(ucp.insert(kv_put.clone()));
-    ucp.remove(lease_revoke.clone());
-    ucp.remove(kv_put.clone());
+    ucp.remove(&lease_revoke.clone());
+    ucp.remove(&kv_put.clone());
     assert!(!ucp.insert(kv_put.clone()));
-    ucp.remove(kv_put.clone());
+    ucp.remove(&kv_put.clone());
 
     // lease revoke conflicts with delete range
     assert!(!ucp.insert(lease_revoke.clone()));
     assert!(ucp.insert(kv_delete.clone()));
-    ucp.remove(lease_revoke.clone());
-    ucp.remove(kv_delete.clone());
+    ucp.remove(&lease_revoke.clone());
+    ucp.remove(&kv_delete.clone());
     assert!(!ucp.insert(kv_delete.clone()));
 }
 

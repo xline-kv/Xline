@@ -5,13 +5,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use curp::server::conflict::CommandEntry;
-use curp_external_api::conflict::{ConflictPoolOp, SpeculativePoolOp};
-use utils::interval_map::IntervalMap;
+use curp_external_api::conflict::{ConflictPoolOp, EntryId, SpeculativePoolOp};
+use utils::interval_map::{Interval, IntervalMap};
 use xlineapi::{command::Command, interval::BytesAffine};
 
 use crate::storage::lease_store::LeaseCollection;
 
-use super::{all_leases, filter_kv, intervals, is_exclusive_cmd};
+use super::{all_leases, intervals, is_exclusive_cmd};
 
 /// Speculative pool for KV commands.
 #[derive(Debug)]
@@ -21,6 +21,9 @@ pub(crate) struct KvSpecPool {
     map: IntervalMap<BytesAffine, CommandEntry<Command>>,
     /// Lease collection
     lease_collection: Arc<LeaseCollection>,
+    /// Id to intervals map
+    intervals:
+        HashMap<<<Self as ConflictPoolOp>::Entry as EntryId>::Id, Vec<Interval<BytesAffine>>>,
 }
 
 impl KvSpecPool {
@@ -29,6 +32,7 @@ impl KvSpecPool {
         Self {
             map: IntervalMap::new(),
             lease_collection,
+            intervals: HashMap::new(),
         }
     }
 }
@@ -36,12 +40,8 @@ impl KvSpecPool {
 impl ConflictPoolOp for KvSpecPool {
     type Entry = CommandEntry<Command>;
 
-    fn remove(&mut self, entry: Self::Entry) {
-        let Some(entry) = filter_kv(entry) else {
-            return;
-        };
-
-        for interval in intervals(&self.lease_collection, &entry) {
+    fn remove(&mut self, entry: &Self::Entry) {
+        for interval in self.intervals.remove(&entry.id()).into_iter().flatten() {
             let _ignore = self.map.remove(&interval);
         }
     }
@@ -65,12 +65,16 @@ impl ConflictPoolOp for KvSpecPool {
 
 impl SpeculativePoolOp for KvSpecPool {
     fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry> {
-        let entry = filter_kv(entry)?;
-
         let intervals = intervals(&self.lease_collection, &entry);
         if intervals.iter().any(|i| self.map.overlap(i)) {
             return Some(entry);
         }
+        assert!(
+            self.intervals
+                .insert(entry.id(), intervals.clone())
+                .is_none(),
+            "duplicate entry id"
+        );
         for interval in intervals {
             let _ignore = self.map.insert(interval, entry.clone());
         }
@@ -86,6 +90,8 @@ pub(crate) struct LeaseSpecPool {
     leases: HashMap<i64, CommandEntry<Command>>,
     /// Lease collection
     lease_collection: Arc<LeaseCollection>,
+    /// Id to lease ids map
+    ids: HashMap<<<Self as ConflictPoolOp>::Entry as EntryId>::Id, Vec<i64>>,
 }
 
 impl LeaseSpecPool {
@@ -94,6 +100,7 @@ impl LeaseSpecPool {
         Self {
             leases: HashMap::new(),
             lease_collection,
+            ids: HashMap::new(),
         }
     }
 }
@@ -105,9 +112,8 @@ impl ConflictPoolOp for LeaseSpecPool {
         self.leases.is_empty()
     }
 
-    fn remove(&mut self, entry: Self::Entry) {
-        let ids = all_leases(&self.lease_collection, &entry);
-        for id in ids {
+    fn remove(&mut self, entry: &Self::Entry) {
+        for id in self.ids.remove(&entry.id()).into_iter().flatten() {
             let _ignore = self.leases.remove(&id);
         }
     }
@@ -133,6 +139,10 @@ impl SpeculativePoolOp for LeaseSpecPool {
                 return Some(entry);
             }
         }
+        assert!(
+            self.ids.insert(entry.id(), ids.clone()).is_none(),
+            "duplicate entry id"
+        );
         for id in ids {
             let _ignore = self.leases.insert(id, entry.clone());
         }
@@ -154,8 +164,8 @@ impl ConflictPoolOp for ExclusiveSpecPool {
         self.conflict.is_none()
     }
 
-    fn remove(&mut self, entry: Self::Entry) {
-        if is_exclusive_cmd(&entry) {
+    fn remove(&mut self, entry: &Self::Entry) {
+        if is_exclusive_cmd(entry) {
             self.conflict = None;
         }
     }

@@ -8,7 +8,7 @@ use utils::interval_map::Interval;
 use xlineapi::{
     command::{Command, KeyRange},
     interval::BytesAffine,
-    RequestBackend, RequestWrapper,
+    RequestWrapper,
 };
 
 use crate::storage::lease_store::{Lease, LeaseCollection};
@@ -32,28 +32,38 @@ fn intervals<C>(lease_collection: &LeaseCollection, entry: &C) -> Vec<Interval<B
 where
     C: AsRef<Command>,
 {
-    let intervals = entry.as_ref().keys().into_iter();
-    let lease_intervals = entry
-        .as_ref()
-        .leases()
+    intervals_kv(entry)
         .into_iter()
-        .filter_map(|id| lease_collection.look_up(id))
-        .flat_map(Lease::into_keys)
-        .map(KeyRange::new_one_key);
-
-    intervals.chain(lease_intervals).map(Into::into).collect()
+        .chain(intervals_lease(lease_collection, entry))
+        .collect()
 }
 
-/// Filter kv commands
-fn filter_kv<C>(entry: C) -> Option<C>
+/// Gets KV intervals of a kv request
+fn intervals_kv<C>(entry: &C) -> impl IntoIterator<Item = Interval<BytesAffine>>
 where
     C: AsRef<Command>,
 {
-    matches!(
-        entry.as_ref().request().backend(),
-        RequestBackend::Kv | RequestBackend::Lease
-    )
-    .then_some(entry)
+    entry.as_ref().keys().into_iter().map(Into::into)
+}
+
+/// Gets KV intervals of a lease request
+fn intervals_lease<C>(
+    lease_collection: &LeaseCollection,
+    entry: &C,
+) -> impl IntoIterator<Item = Interval<BytesAffine>>
+where
+    C: AsRef<Command>,
+{
+    let id = if let RequestWrapper::LeaseRevokeRequest(ref req) = *entry.as_ref().request() {
+        lease_collection.look_up(req.id)
+    } else {
+        None
+    };
+
+    id.into_iter()
+        .flat_map(Lease::into_keys)
+        .map(KeyRange::new_one_key)
+        .map(Into::into)
 }
 
 /// Returns `true` if this command conflicts with all other commands

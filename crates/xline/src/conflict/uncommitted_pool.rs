@@ -8,14 +8,14 @@ use std::{
 };
 
 use curp::server::conflict::CommandEntry;
-use curp_external_api::conflict::{ConflictPoolOp, UncommittedPoolOp};
+use curp_external_api::conflict::{ConflictPoolOp, EntryId, UncommittedPoolOp};
 use itertools::Itertools;
-use utils::interval_map::IntervalMap;
+use utils::interval_map::{Interval, IntervalMap};
 use xlineapi::{command::Command, interval::BytesAffine};
 
 use crate::storage::lease_store::LeaseCollection;
 
-use super::{all_leases, filter_kv, intervals, is_exclusive_cmd};
+use super::{all_leases, intervals, is_exclusive_cmd};
 
 /// Uncommitted pool for KV commands.
 #[derive(Debug)]
@@ -25,6 +25,9 @@ pub(crate) struct KvUncomPool {
     map: IntervalMap<BytesAffine, Commands>,
     /// Lease collection
     lease_collection: Arc<LeaseCollection>,
+    /// Id to intervals map
+    intervals:
+        HashMap<<<Self as ConflictPoolOp>::Entry as EntryId>::Id, Vec<Interval<BytesAffine>>>,
 }
 
 impl KvUncomPool {
@@ -33,6 +36,7 @@ impl KvUncomPool {
         Self {
             map: IntervalMap::new(),
             lease_collection,
+            intervals: HashMap::new(),
         }
     }
 }
@@ -40,16 +44,12 @@ impl KvUncomPool {
 impl ConflictPoolOp for KvUncomPool {
     type Entry = CommandEntry<Command>;
 
-    fn remove(&mut self, entry: Self::Entry) {
-        let Some(entry) = filter_kv(entry) else {
-            return;
-        };
-        let intervals = intervals(&self.lease_collection, &entry);
-        for interval in intervals {
+    fn remove(&mut self, entry: &Self::Entry) {
+        for interval in self.intervals.remove(&entry.id()).into_iter().flatten() {
             if self
                 .map
                 .get_mut(&interval)
-                .map_or(false, |m| m.remove_cmd(&entry))
+                .map_or(false, |m| m.remove_cmd(entry))
             {
                 let _ignore = self.map.remove(&interval);
             }
@@ -79,11 +79,8 @@ impl ConflictPoolOp for KvUncomPool {
 
 impl UncommittedPoolOp for KvUncomPool {
     fn insert(&mut self, entry: Self::Entry) -> bool {
-        let Some(entry) = filter_kv(entry) else {
-            return false;
-        };
-
         let intervals = intervals(&self.lease_collection, &entry);
+        let _ignore = self.intervals.insert(entry.id(), intervals.clone());
         let conflict = intervals.iter().any(|i| self.map.overlap(i));
         for interval in intervals {
             let e = self.map.entry(interval).or_insert(Commands::default());
@@ -93,9 +90,6 @@ impl UncommittedPoolOp for KvUncomPool {
     }
 
     fn all_conflict(&self, entry: &Self::Entry) -> Vec<Self::Entry> {
-        let Some(entry) = filter_kv(entry) else {
-            return vec![];
-        };
         let intervals = intervals(&self.lease_collection, entry);
         intervals
             .into_iter()
@@ -114,6 +108,8 @@ pub(crate) struct LeaseUncomPool {
     leases: HashMap<i64, Commands>,
     /// Lease collection
     lease_collection: Arc<LeaseCollection>,
+    /// Id to lease ids map
+    ids: HashMap<<<Self as ConflictPoolOp>::Entry as EntryId>::Id, Vec<i64>>,
 }
 
 impl LeaseUncomPool {
@@ -122,6 +118,7 @@ impl LeaseUncomPool {
         Self {
             leases: HashMap::new(),
             lease_collection,
+            ids: HashMap::new(),
         }
     }
 }
@@ -129,11 +126,10 @@ impl LeaseUncomPool {
 impl ConflictPoolOp for LeaseUncomPool {
     type Entry = CommandEntry<Command>;
 
-    fn remove(&mut self, entry: Self::Entry) {
-        let ids = all_leases(&self.lease_collection, &entry);
-        for id in ids {
+    fn remove(&mut self, entry: &Self::Entry) {
+        for id in self.ids.remove(&entry.id()).into_iter().flatten() {
             if let hash_map::Entry::Occupied(mut e) = self.leases.entry(id) {
-                if e.get_mut().remove_cmd(&entry) {
+                if e.get_mut().remove_cmd(entry) {
                     let _ignore = e.remove_entry();
                 }
             }
@@ -169,6 +165,7 @@ impl UncommittedPoolOp for LeaseUncomPool {
     fn insert(&mut self, entry: Self::Entry) -> bool {
         let mut conflict = false;
         let ids = all_leases(&self.lease_collection, &entry);
+        let _ignore = self.ids.insert(entry.id(), ids.clone());
         for id in ids {
             match self.leases.entry(id) {
                 hash_map::Entry::Occupied(mut e) => {
@@ -210,9 +207,9 @@ impl ConflictPoolOp for ExclusiveUncomPool {
         self.conflicts.is_empty()
     }
 
-    fn remove(&mut self, entry: Self::Entry) {
-        if is_exclusive_cmd(&entry) {
-            let _ignore = self.conflicts.remove_cmd(&entry);
+    fn remove(&mut self, entry: &Self::Entry) {
+        if is_exclusive_cmd(entry) {
+            let _ignore = self.conflicts.remove_cmd(entry);
         }
     }
 

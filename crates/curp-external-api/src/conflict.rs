@@ -1,12 +1,23 @@
 #![allow(clippy::module_name_repetitions)]
 
+use std::hash::Hash;
+
+/// Entry with an identifier
+pub trait EntryId {
+    /// The type of the id
+    type Id: Copy + Hash;
+
+    /// Gets the id of the entry
+    fn id(&self) -> Self::Id;
+}
+
 /// Common operations for conflict pools
 pub trait ConflictPoolOp {
     /// Entry of the pool
-    type Entry;
+    type Entry: EntryId;
 
     /// Removes a command from the pool
-    fn remove(&mut self, entry: Self::Entry);
+    fn remove(&mut self, entry: &Self::Entry);
 
     /// Returns all commands in the pool
     fn all(&self) -> Vec<Self::Entry>;
