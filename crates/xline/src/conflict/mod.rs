@@ -17,7 +17,7 @@ use self::{
     spec_pool::{ExclusiveSpecPool, KvSpecPool, LeaseSpecPool},
     uncommitted_pool::{ExclusiveUncomPool, KvUncomPool, LeaseUncomPool},
 };
-
+// TODO: Refine code to improve reusability for different conflict pool types
 /// Speculative pool implementations
 pub(crate) mod spec_pool;
 /// Uncommitted pool implementations
@@ -47,6 +47,10 @@ where
 }
 
 /// Gets KV intervals of a lease request
+///
+/// We also needs to handle `LeaseRevokeRequest` in KV conflict pools,
+/// as a revoke may delete keys associated with the lease id. Therefore,
+/// we should insert these keys into the KV conflict pool as well.
 fn intervals_lease<C>(
     lease_collection: &LeaseCollection,
     entry: &C,
@@ -101,6 +105,10 @@ pub(super) fn all_leases(
 }
 
 /// Lookups lease ids from lease collection
+///
+/// We also needs to handle `PutRequest` and `DeleteRangeRequest` in
+/// lease conflict pools, as they may conflict with a `LeaseRevokeRequest`.
+/// Therefore, we should lookup the lease ids from lease collection.
 fn lookup_lease(lease_collection: &LeaseCollection, req: &CommandEntry<Command>) -> Vec<i64> {
     req.request()
         .keys()

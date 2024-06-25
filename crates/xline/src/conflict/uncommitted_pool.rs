@@ -26,6 +26,10 @@ pub(crate) struct KvUncomPool {
     /// Lease collection
     lease_collection: Arc<LeaseCollection>,
     /// Id to intervals map
+    ///
+    /// NOTE: To avoid potential side-effects from the `LeaseCollection`, we store
+    /// The lookup results from `LeaseCollection` during entry insert and use
+    /// these result in entry remove.
     intervals:
         HashMap<<<Self as ConflictPoolOp>::Entry as EntryId>::Id, Vec<Interval<BytesAffine>>>,
 }
@@ -109,6 +113,10 @@ pub(crate) struct LeaseUncomPool {
     /// Lease collection
     lease_collection: Arc<LeaseCollection>,
     /// Id to lease ids map
+    ///
+    /// NOTE: To avoid potential side-effects from the `LeaseCollection`, we store
+    /// The lookup results from `LeaseCollection` during entry insert and use
+    /// these result in entry remove.
     ids: HashMap<<<Self as ConflictPoolOp>::Entry as EntryId>::Id, Vec<i64>>,
 }
 
