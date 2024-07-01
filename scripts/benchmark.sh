@@ -56,10 +56,10 @@ run_xline() {
     --client-propose-timeout 5s \
     --batch-timeout 1ms \
     --cmd-workers 16 \
-    --client-listen-urls=http://${SERVERS[$1]}:2379 \
-    --peer-listen-urls=http://${SERVERS[$1]}:2380 \
-    --client-advertise-urls=http://${SERVERS[$1]}:2379 \
-    --peer-advertise-urls=http://${SERVERS[$1]}:2380"
+    --client-listen-urls http://${SERVERS[$1]}:2379 \
+    --peer-listen-urls http://${SERVERS[$1]}:2380 \
+    --client-advertise-urls http://${SERVERS[$1]}:2379 \
+    --peer-advertise-urls http://${SERVERS[$1]}:2380"
 
     if [ ${1} -eq 1 ]; then
         cmd="${cmd} --is-leader"
@@ -190,6 +190,8 @@ set_cluster_latency() {
 }
 
 # run container of xline/etcd use specified image
+# env:
+#   XLINE_IMAGE: the image of xline used to benchmark
 # args:
 #   $1: size of cluster
 #   $2: image name
@@ -198,7 +200,7 @@ run_container() {
     size=${1}
     case ${2} in
     xline)
-        image="ghcr.io/xline-kv/xline:latest"
+        image=${XLINE_IMAGE-"ghcr.io/xline-kv/xline:latest"}
         ;;
     etcd)
         image="datenlord/etcd:v3.5.5"
@@ -234,9 +236,8 @@ for server in $@; do
         TESTCASE=("${ETCD_TESTCASE[@]}")
         ;;
     *)
-        echo "unknown server, only support xline/etcd"
+        echo "./benchmark.sh 'xline' or/and 'etcd'"
         exit 1
-        ;;
     esac
     run_container 3 ${server}
 
