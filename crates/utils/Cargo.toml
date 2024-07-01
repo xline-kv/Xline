@@ -31,7 +31,7 @@ parking_lot = { version = "0.12.3", optional = true }
 pbkdf2 = { version = "0.12.2", features = ["simple"] }
 petgraph = "0.6.4"
 rand = "0.8.5"
-regex = "1.10.4"
+regex = "1.10.5"
 serde = { version = "1.0.203", features = ["derive"] }
 thiserror = "1.0.61"
 tokio = { version = "0.2.25", package = "madsim-tokio", features = [
