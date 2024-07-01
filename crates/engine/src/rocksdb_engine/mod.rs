@@ -64,7 +64,7 @@ pub struct RocksEngine {
     /// The tables of current engine
     tables: Vec<String>,
     /// The size cache of the engine
-    size: Arc<AtomicU64>,
+    size: AtomicU64,
 }
 
 impl RocksEngine {
@@ -85,7 +85,7 @@ impl RocksEngine {
         Ok(Self {
             inner: db,
             tables: tables.iter().map(|s| (*s).to_owned()).collect(),
-            size: Arc::new(AtomicU64::new(size)),
+            size: AtomicU64::new(size),
         })
     }
 
@@ -151,11 +151,12 @@ impl RocksEngine {
 #[async_trait::async_trait]
 impl StorageEngine for RocksEngine {
     type Snapshot = RocksSnapshot;
-    type Transaction = RocksTransaction;
+    type Transaction<'db> = RocksTransaction<'db>;
 
     #[inline]
-    fn transaction(&self) -> RocksTransaction {
-        RocksTransaction {}
+    fn transaction(&self) -> RocksTransaction<'_> {
+        let txn = self.inner.transaction();
+        RocksTransaction::new(Arc::clone(&self.inner), txn, &self.size)
     }
 
     #[inline]
