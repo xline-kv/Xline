@@ -137,9 +137,9 @@ EOF
 watch_validation() {
     log::info "watch validation test running..."
 
-    command="${ETCDCTL} watch watch_key"
+    command="${ETCDCTL} watch watch_key -- echo watch event received"
     log::info "running: ${command}"
-    want=("PUT" "watch_key" "value" "DELETE" "watch_key")
+    want=("PUT" "watch_key" "value" "watch event received" "DELETE" "watch_key" "watch event received")
     ${command} | while read line; do
         log::debug ${line}
         if [ "${line}" == "${want[0]}" ]; then
