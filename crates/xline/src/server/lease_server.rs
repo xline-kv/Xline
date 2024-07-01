@@ -126,7 +126,6 @@ impl LeaseServer {
     {
         let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let request = request.into_inner().into();
-        // FIXME: get the keys in the conflict pools
         let cmd = Command::new_with_auth_info(request, auth_info);
         let res = self.client.propose(&cmd, None, use_fast_path).await??;
         Ok(res)

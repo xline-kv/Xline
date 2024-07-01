@@ -36,6 +36,11 @@ impl Lease {
         self.keys_set.iter().cloned().collect()
     }
 
+    /// Convert into keys
+    pub(crate) fn into_keys(mut self) -> Vec<Vec<u8>> {
+        self.keys_set.drain().collect()
+    }
+
     /// Lease id
     pub(crate) fn id(&self) -> i64 {
         self.id
