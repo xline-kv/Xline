@@ -27,7 +27,7 @@ use super::{
 use crate::log_entry::LogEntry;
 
 /// The size of wal file header in bytes
-const WAL_HEADER_SIZE: usize = 56;
+pub(super) const WAL_HEADER_SIZE: usize = 56;
 
 /// A segment of WAL
 #[derive(Debug)]
