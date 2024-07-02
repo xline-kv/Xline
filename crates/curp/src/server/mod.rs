@@ -15,7 +15,6 @@ pub use self::{
     conflict::{spec_pool_new::SpObject, uncommitted_pool::UcpObject},
     raw_curp::RawCurp,
 };
-use crate::response::ResponseSender;
 use crate::rpc::{OpResponse, RecordRequest, RecordResponse};
 use crate::{
     cmd::{Command, CommandExecutor},
@@ -30,6 +29,10 @@ use crate::{
         TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
         VoteRequest, VoteResponse,
     },
+};
+use crate::{
+    response::ResponseSender,
+    rpc::{ReadIndexRequest, ReadIndexResponse},
 };
 
 /// Command worker to do execution and after sync
@@ -106,6 +109,14 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
         Ok(tonic::Response::new(
             self.inner.record(&request.into_inner())?,
         ))
+    }
+
+    #[instrument(skip_all, name = "read_index")]
+    async fn read_index(
+        &self,
+        _request: tonic::Request<ReadIndexRequest>,
+    ) -> Result<tonic::Response<ReadIndexResponse>, tonic::Status> {
+        Ok(tonic::Response::new(self.inner.read_index()?))
     }
 
     #[instrument(skip_all, name = "curp_shutdown")]

@@ -50,10 +50,10 @@ use crate::{
         FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
         InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
         MoveLeaderResponse, PoolEntry, ProposeConfChangeRequest, ProposeConfChangeResponse,
-        ProposeId, ProposeRequest, ProposeResponse, PublishRequest, PublishResponse, RecordRequest,
-        RecordResponse, ShutdownRequest, ShutdownResponse, SyncedResponse, TriggerShutdownRequest,
-        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
-        VoteRequest, VoteResponse,
+        ProposeId, ProposeRequest, ProposeResponse, PublishRequest, PublishResponse,
+        ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
+        SyncedResponse, TriggerShutdownRequest, TriggerShutdownResponse, TryBecomeLeaderNowRequest,
+        TryBecomeLeaderNowResponse, VoteRequest, VoteResponse,
     },
     server::{
         cmd_worker::{after_sync, worker_reset, worker_snapshot},
@@ -214,6 +214,16 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         let conflict = self.curp.follower_record(id, &cmd);
 
         Ok(RecordResponse { conflict })
+    }
+
+    /// Handle `Record` requests
+    pub(super) fn read_index(&self) -> Result<ReadIndexResponse, CurpError> {
+        if self.curp.is_shutdown() {
+            return Err(CurpError::shutting_down());
+        }
+        Ok(ReadIndexResponse {
+            term: self.curp.term(),
+        })
     }
 
     /// Handle propose task
