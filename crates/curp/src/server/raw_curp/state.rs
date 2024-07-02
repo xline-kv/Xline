@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::atomic::{AtomicU64, Ordering},
+    pin::Pin,
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 use dashmap::{
@@ -10,6 +11,8 @@ use dashmap::{
     },
     DashMap,
 };
+use event_listener::Event;
+use futures::{future, Future};
 use madsim::rand::{thread_rng, Rng};
 use tracing::{debug, warn};
 
@@ -92,6 +95,38 @@ pub(super) struct LeaderState {
     statuses: DashMap<ServerId, FollowerStatus>,
     /// Leader Transferee
     leader_transferee: AtomicU64,
+    /// Event of the application of the no-op log, used for readIndex
+    no_op_state: NoOpState,
+}
+
+/// The state of the no-op log entry application
+#[derive(Debug, Default)]
+struct NoOpState {
+    /// The event that triggers after application
+    event: Event,
+    /// Whether the no-op entry has been applied
+    applied: AtomicBool,
+}
+
+impl NoOpState {
+    /// Sets the no-op entry as applied
+    fn set_applied(&self) {
+        self.applied.store(true, Ordering::Release);
+        let _ignore = self.event.notify(usize::MAX);
+    }
+
+    /// Resets the no-op application state
+    fn reset(&self) {
+        self.applied.store(false, Ordering::Release);
+    }
+
+    /// Waits for the no-op log to be applied
+    fn wait(&self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        if self.applied.load(Ordering::Acquire) {
+            return Box::pin(future::ready(()));
+        }
+        Box::pin(self.event.listen())
+    }
 }
 
 impl State {
@@ -130,6 +165,7 @@ impl LeaderState {
                 .map(|o| (*o, FollowerStatus::default()))
                 .collect(),
             leader_transferee: AtomicU64::new(0),
+            no_op_state: NoOpState::default(),
         }
     }
 
@@ -230,6 +266,21 @@ impl LeaderState {
     pub(super) fn swap_transferee(&self, node_id: ServerId) -> Option<ServerId> {
         let val = self.leader_transferee.swap(node_id, Ordering::SeqCst);
         (val != 0).then_some(val)
+    }
+
+    /// Sets the no-op log as applied
+    pub(super) fn set_no_op_applied(&self) {
+        self.no_op_state.set_applied();
+    }
+
+    /// Resets the no-op application state
+    pub(super) fn reset_no_op_state(&self) {
+        self.no_op_state.reset();
+    }
+
+    /// Waits for the no-op log to be applied
+    pub(super) fn wait_no_op_applied(&self) -> impl Future<Output = ()> + Send {
+        self.no_op_state.wait()
     }
 }
 
