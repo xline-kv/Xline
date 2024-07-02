@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{api::snapshot_api::SnapshotApi, error::EngineError, TransactionApi, WriteOperation};
+use crate::{api::snapshot_api::SnapshotApi, error::EngineError, TransactionApi};
 
 /// The `StorageEngine` trait
 #[async_trait::async_trait]
@@ -8,28 +8,10 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// The snapshot type
     type Snapshot: SnapshotApi;
     /// The transaction type
-    type Transaction: TransactionApi;
+    type Transaction<'db>: TransactionApi;
 
     /// Creates a transaction
-    fn transaction(&self) -> Self::Transaction;
-
-    /// Get the value associated with a key value and the given table
-    ///
-    /// # Errors
-    /// Return `EngineError::TableNotFound` if the given table does not exist
-    /// Return `EngineError` if met some errors
-    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError>;
-
-    /// Get the values associated with the given keys
-    ///
-    /// # Errors
-    /// Return `EngineError::TableNotFound` if the given table does not exist
-    /// Return `EngineError` if met some errors
-    fn get_multi(
-        &self,
-        table: &str,
-        keys: &[impl AsRef<[u8]>],
-    ) -> Result<Vec<Option<Vec<u8>>>, EngineError>;
+    fn transaction(&self) -> Self::Transaction<'_>;
 
     /// Get all the values of the given table
     /// # Errors
@@ -37,16 +19,6 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// Return `EngineError` if met some errors
     #[allow(clippy::type_complexity)] // it's clear that (Vec<u8>, Vec<u8>) is a key-value pair
     fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, EngineError>;
-
-    /// Commit a batch of write operations
-    /// If sync is true, the write will be flushed from the operating system
-    /// buffer cache before the write is considered complete. If this
-    /// flag is true, writes will be slower.
-    ///
-    /// # Errors
-    /// Return `EngineError::TableNotFound` if the given table does not exist
-    /// Return `EngineError` if met some errors
-    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError>;
 
     /// Get a snapshot of the current state of the database
     ///

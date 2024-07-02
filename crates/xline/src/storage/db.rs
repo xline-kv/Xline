@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use engine::{Engine, EngineType, Snapshot, StorageEngine, WriteOperation};
+use engine::{Engine, EngineType, Snapshot, StorageEngine, StorageOps, WriteOperation};
 use prost::Message;
 use utils::{
     config::EngineConfig,
@@ -163,14 +163,11 @@ impl DB {
         } else {
             let start = vec![];
             let end = vec![0xff];
-            let ops = XLINE_TABLES
-                .iter()
-                .map(|table| {
-                    WriteOperation::new_delete_range(table, start.as_slice(), end.as_slice())
-                })
-                .collect();
+            let ops = XLINE_TABLES.iter().map(|table| {
+                WriteOperation::new_delete_range(table, start.as_slice(), end.as_slice())
+            });
             self.engine
-                .write_batch(ops, true)
+                .write_multi(ops, true)
                 .map_err(|e| ExecuteError::DbError(format!("Failed to reset database, error: {e}")))
         }
     }
@@ -261,7 +258,7 @@ impl DB {
             wr_ops.push(wop);
         }
         self.engine
-            .write_batch(wr_ops, false)
+            .write_multi(wr_ops, false)
             .map_err(|e| ExecuteError::DbError(format!("Failed to flush ops, error: {e}")))?;
         Ok(revs)
     }
