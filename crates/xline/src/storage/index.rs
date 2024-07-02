@@ -68,7 +68,7 @@ impl Index {
         }
     }
 
-    /// Filter out `KeyRevision` that is less than one revision and convert to `Revision`
+    /// Filter out `KeyRevision` that is greater than or equal to the given revision and convert to `Revision`
     fn filter_revision(revs: &[KeyRevision], revision: i64) -> Vec<Revision> {
         revs.iter()
             .filter(|rev| rev.mod_revision >= revision)
