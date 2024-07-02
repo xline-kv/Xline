@@ -260,10 +260,11 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             } = propose;
             // Use default value for the entry as we don't need to put it into curp log
             let entry = Arc::new(LogEntry::new(0, 0, id, Arc::clone(&cmd)));
-            let wait_fut = curp.wait_conflicts_synced(cmd);
+            let wait_conflict = curp.wait_conflicts_synced(cmd);
+            let wait_no_op = curp.wait_no_op_applied();
             let cmd_executor_c = cmd_executor.clone();
             let _ignore = tokio::spawn(async move {
-                wait_fut.await;
+                tokio::join!(wait_conflict, wait_no_op);
                 cmd_executor_c((entry, resp_tx));
             });
         }

@@ -591,7 +591,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Wait synced for all conflict commands
-    pub(super) fn wait_conflicts_synced(&self, cmd: Arc<C>) -> impl Future<Output = ()> {
+    pub(super) fn wait_conflicts_synced(&self, cmd: Arc<C>) -> impl Future<Output = ()> + Send {
         let conflict_cmds: Vec<_> = self
             .ctx
             .uncommitted_pool
@@ -601,6 +601,16 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .map(|e| e.id)
             .collect();
         self.ctx.id_barrier.wait_all(conflict_cmds)
+    }
+
+    /// Wait all logs in previous term have been applied to state machine
+    pub(super) fn wait_no_op_applied(&self) -> impl Future<Output = ()> + Send {
+        self.lst.wait_no_op_applied()
+    }
+
+    /// Sets the no-op log as applied
+    pub(super) fn set_no_op_applied(&self) {
+        self.lst.set_no_op_applied();
     }
 
     /// Trigger the barrier of the given inflight id.
@@ -1895,6 +1905,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.ctx.cb.write().clear();
         self.ctx.lm.write().clear();
         self.ctx.uncommitted_pool.lock().clear();
+        self.lst.reset_no_op_state();
     }
 
     /// Switch to a new config and return old member infos for fallback
