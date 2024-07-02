@@ -23,7 +23,7 @@ use super::{
     db::{DB, SCHEDULED_COMPACT_REVISION},
     index::{Index, IndexOperate},
     lease_store::LeaseCollection,
-    revision::{KeyRevision, Revision},
+    revision::Revision,
 };
 use crate::{
     header_gen::HeaderGenerator,
@@ -777,10 +777,10 @@ impl KvStore {
         sub_revision: i64,
     ) -> Result<(Vec<WriteOp>, Vec<Event>), ExecuteError> {
         let mut ops = Vec::new();
-        let new_rev = self
-            .inner
-            .index
-            .register_revision(&req.key, revision, sub_revision);
+        let (new_rev, prev_rev) =
+            self.inner
+                .index
+                .register_revision(req.key.clone(), revision, sub_revision);
         let mut kv = KeyValue {
             key: req.key.clone(),
             value: req.value.clone(),
@@ -790,7 +790,8 @@ impl KvStore {
             lease: req.lease,
         };
         if req.ignore_lease || req.ignore_value {
-            let prev_kv = self.inner.get_range(&req.key, &[], 0)?.pop();
+            let pre_mod_rev = prev_rev.ok_or(ExecuteError::KeyNotFound)?.mod_revision;
+            let prev_kv = self.inner.get_range(&req.key, &[], pre_mod_rev)?.pop();
             let prev = prev_kv.as_ref().ok_or(ExecuteError::KeyNotFound)?;
             if req.ignore_lease {
                 kv.lease = prev.lease;
@@ -895,12 +896,6 @@ impl KvStore {
         }
         let events = Self::new_deletion_events(revision, keys);
         (ops, events)
-    }
-
-    /// Insert the given pairs (key, `KeyRevision`) into the index
-    #[inline]
-    pub(crate) fn insert_index(&self, key_revisions: Vec<(Vec<u8>, KeyRevision)>) {
-        self.inner.index.insert(key_revisions);
     }
 }
 
@@ -1023,8 +1018,7 @@ mod test {
         revision: i64,
     ) -> Result<(), ExecuteError> {
         let (_sync_res, ops) = store.after_sync(request, revision).await?;
-        let key_revs = store.inner.db.flush_ops(ops)?;
-        store.insert_index(key_revs);
+        let _key_revs = store.inner.db.flush_ops(ops)?;
         Ok(())
     }
 

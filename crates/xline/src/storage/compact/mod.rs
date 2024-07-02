@@ -12,10 +12,7 @@ use utils::{
 };
 use xlineapi::{command::Command, execute_error::ExecuteError, RequestWrapper};
 
-use super::{
-    index::{Index, IndexOperate},
-    KvStore,
-};
+use super::{index::Index, KvStore};
 use crate::{revision_number::RevisionNumberGenerator, rpc::CompactionRequest};
 
 /// mod revision compactor;
