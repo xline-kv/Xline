@@ -6,8 +6,8 @@ use curp::{
         FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
         LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse, OpResponse,
         ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, Protocol,
-        PublishRequest, PublishResponse, RecordRequest, RecordResponse, ShutdownRequest,
-        ShutdownResponse,
+        PublishRequest, PublishResponse, ReadIndexRequest, ReadIndexResponse, RecordRequest,
+        RecordResponse, ShutdownRequest, ShutdownResponse,
     },
 };
 use flume::r#async::RecvStream;
@@ -63,6 +63,13 @@ impl Protocol for AuthWrapper {
         request: tonic::Request<RecordRequest>,
     ) -> Result<tonic::Response<RecordResponse>, tonic::Status> {
         self.curp_server.record(request).await
+    }
+
+    async fn read_index(
+        &self,
+        request: tonic::Request<ReadIndexRequest>,
+    ) -> Result<tonic::Response<ReadIndexResponse>, tonic::Status> {
+        self.curp_server.read_index(request).await
     }
 
     async fn shutdown(

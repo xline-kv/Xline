@@ -23,8 +23,8 @@ use crate::{
     rpc::{
         connect::ConnectApi, ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse,
         FetchReadStateRequest, Member, MoveLeaderRequest, OpResponse, ProposeConfChangeRequest,
-        ProposeId, ProposeRequest, PublishRequest, ReadState, RecordRequest, RecordResponse,
-        ShutdownRequest,
+        ProposeId, ProposeRequest, PublishRequest, ReadIndexResponse, ReadState, RecordRequest,
+        RecordResponse, ShutdownRequest,
     },
     super_quorum,
     tracker::Tracker,
@@ -122,7 +122,12 @@ impl<C: Command> Unary<C> {
     /// Propose for read only commands
     ///
     /// For read-only commands, we only need to send propose to leader
-    async fn propose_read_only<PF>(propose_fut: PF) -> Result<ProposeResponse<C>, CurpError>
+    async fn propose_read_only<PF, RIF>(
+        propose_fut: PF,
+        read_index_futs: FuturesUnordered<RIF>,
+        term: u64,
+        quorum: usize,
+    ) -> Result<ProposeResponse<C>, CurpError>
     where
         PF: Future<
             Output = Result<
@@ -130,8 +135,17 @@ impl<C: Command> Unary<C> {
                 CurpError,
             >,
         >,
+        RIF: Future<Output = Result<Response<ReadIndexResponse>, CurpError>>,
     {
-        let propose_res = propose_fut.await;
+        let term_count_fut = read_index_futs
+            .filter_map(|res| future::ready(res.ok()))
+            .filter(|resp| future::ready(resp.get_ref().term == term))
+            .take(quorum.wrapping_sub(1))
+            .count();
+        let (propose_res, num_valid) = tokio::join!(propose_fut, term_count_fut);
+        if num_valid < quorum.wrapping_sub(1) {
+            return Err(CurpError::WrongClusterVersion(()));
+        }
         let resp_stream = propose_res?.into_inner();
         let mut response_rx = ResponseReceiver::new(resp_stream);
         response_rx.recv::<C>(false).await
@@ -390,16 +404,19 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, Self::Error> {
         let cmd_arc = Arc::new(cmd);
+        let term = self.state.term().await;
         let propose_req = ProposeRequest::new::<C>(
             propose_id,
             cmd_arc.as_ref(),
             self.state.cluster_version().await,
-            self.state.term().await,
+            term,
             !use_fast_path,
             self.tracker.read().first_incomplete(),
         );
         let record_req = RecordRequest::new::<C>(propose_id, cmd_arc.as_ref());
-        let superquorum = super_quorum(self.state.connects_len().await);
+        let connects_len = self.state.connects_len().await;
+        let quorum = quorum(connects_len);
+        let superquorum = super_quorum(connects_len);
         let leader_id = self.leader_id().await?;
         let timeout = self.config.propose_timeout;
 
@@ -414,9 +431,16 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
                 async move { conn.record(record_req_c, timeout).await }
             })
             .await;
+        let read_index_futs = self
+            .state
+            .for_each_follower(
+                leader_id,
+                |conn| async move { conn.read_index(timeout).await },
+            )
+            .await;
 
         if cmd.is_read_only() {
-            Self::propose_read_only(propose_fut).await
+            Self::propose_read_only(propose_fut, read_index_futs, term, quorum).await
         } else {
             Self::propose_mutative(propose_fut, record_futs, use_fast_path, superquorum).await
         }

@@ -26,7 +26,8 @@ use crate::{
         CurpError, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
         FetchReadStateResponse, Member, MoveLeaderRequest, MoveLeaderResponse, OpResponse,
         ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, PublishRequest,
-        PublishResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
+        PublishResponse, ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest,
+        ShutdownResponse,
     },
 };
 
@@ -578,6 +579,14 @@ impl ConnectApi for MockedStreamConnectApi {
         _request: RecordRequest,
         _timeout: Duration,
     ) -> Result<tonic::Response<RecordResponse>, CurpError> {
+        unreachable!("please use MockedConnectApi")
+    }
+
+    /// Send `ReadIndexRequest`
+    async fn read_index(
+        &self,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<ReadIndexResponse>, CurpError> {
         unreachable!("please use MockedConnectApi")
     }
 

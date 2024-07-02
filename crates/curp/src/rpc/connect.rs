@@ -40,7 +40,10 @@ use crate::{
     snapshot::Snapshot,
 };
 
-use super::{OpResponse, RecordRequest, RecordResponse};
+use super::{
+    proto::commandpb::{ReadIndexRequest, ReadIndexResponse},
+    OpResponse, RecordRequest, RecordResponse,
+};
 
 /// Install snapshot chunk size: 64KB
 const SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
@@ -175,6 +178,12 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         request: RecordRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<RecordResponse>, CurpError>;
+
+    /// Send `ReadIndexRequest`
+    async fn read_index(
+        &self,
+        timeout: Duration,
+    ) -> Result<tonic::Response<ReadIndexResponse>, CurpError>;
 
     /// Send `ProposeRequest`
     async fn propose_conf_change(
@@ -425,6 +434,16 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         let mut client = self.rpc_connect.clone();
         let req = tonic::Request::new(request);
         with_timeout!(timeout, client.record(req)).map_err(Into::into)
+    }
+
+    /// Send `ReadIndexRequest`
+    async fn read_index(
+        &self,
+        timeout: Duration,
+    ) -> Result<tonic::Response<ReadIndexResponse>, CurpError> {
+        let mut client = self.rpc_connect.clone();
+        let req = tonic::Request::new(ReadIndexRequest {});
+        with_timeout!(timeout, client.read_index(req)).map_err(Into::into)
     }
 
     /// Send `ShutdownRequest`
@@ -711,6 +730,16 @@ where
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.record(req).await.map_err(Into::into)
+    }
+
+    async fn read_index(
+        &self,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<ReadIndexResponse>, CurpError> {
+        let mut req = tonic::Request::new(ReadIndexRequest {});
+        req.metadata_mut().inject_bypassed();
+        req.metadata_mut().inject_current();
+        self.server.read_index(req).await.map_err(Into::into)
     }
 
     /// Send `PublishRequest`
