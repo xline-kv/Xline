@@ -298,6 +298,9 @@ lock_validation() {
     run "${ETCDCTL} lock mutex echo success"
     check_positive "success"
 
+    run "${ETCDCTL} lock mutex -- etcdctl --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2379 put foo bar"
+    check_positive "OK"
+
     log::info "lock validation test passed"
 }
 
