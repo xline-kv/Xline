@@ -652,7 +652,7 @@ Acquire a lock, which will return a unique key that exists so long as the lock i
 #### Usage
 
 ```bash
-lock <lockname>
+lock <lockname> [command arg1 arg2 ...]
 ```
 
 #### Examples
@@ -660,6 +660,15 @@ lock <lockname>
 ```bash
 # Hold a lock named foo until `SIGINT` is received
 ./xlinectl lock foo
+foo/df123ef45ef678f
+
+# Acquire lock and execute `echo lock acquired`
+./xlinectl lock foo echo lock acquired
+lock acquired
+
+# Acquire lock and execute `xlinectl put` command
+./xlinectl lock foo ./xlinectl put foo bar
+OK
 ```
 ## Authentication commands
 
