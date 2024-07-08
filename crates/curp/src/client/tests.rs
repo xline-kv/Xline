@@ -1,10 +1,10 @@
 use std::{
     collections::HashMap,
-    sync::{atomic::AtomicU64, Arc},
-    time::Duration,
+    sync::{atomic::AtomicU64, Arc, Mutex},
+    time::{Duration, Instant},
 };
 
-use curp_test_utils::test_cmd::{TestCommand, TestCommandResult};
+use curp_test_utils::test_cmd::{LogIndexResult, TestCommand, TestCommandResult};
 use futures::{future::BoxFuture, Stream};
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
@@ -19,7 +19,10 @@ use super::{
     unary::{Unary, UnaryConfig},
 };
 use crate::{
-    client::ClientApi,
+    client::{
+        retry::{Retry, RetryConfig},
+        ClientApi,
+    },
     members::ServerId,
     rpc::{
         connect::{ConnectApi, MockConnectApi},
@@ -257,7 +260,8 @@ async fn test_unary_fetch_clusters_linearizable_failed() {
     });
     let unary = init_unary_client(connects, None, None, 0, 0, None);
     let res = unary.fetch_cluster(true).await.unwrap_err();
-    // only server(0, 1)'s responses are valid, less than majority quorum(3), got a mocked RpcTransport to retry
+    // only server(0, 1)'s responses are valid, less than majority quorum(3), got a
+    // mocked RpcTransport to retry
     assert_eq!(res, CurpError::RpcTransport(()));
 }
 
@@ -276,79 +280,71 @@ fn build_synced_response() -> OpResponse {
 
 // TODO: rewrite this tests
 #[cfg(ignore)]
+fn build_empty_response() -> OpResponse {
+    OpResponse { op: None }
+}
+
 #[traced_test]
 #[tokio::test]
 async fn test_unary_propose_fast_path_works() {
     let connects = init_mocked_connects(5, |id, conn| {
-        conn.expect_propose()
+        conn.expect_propose_stream()
             .return_once(move |_req, _token, _timeout| {
-                let resp = match id {
-                    0 => ProposeResponse::new_result::<TestCommand>(
-                        &Ok(TestCommandResult::default()),
-                        false,
-                    ),
-                    1 | 2 | 3 => ProposeResponse::new_empty(),
-                    4 => return Err(CurpError::key_conflict()),
-                    _ => unreachable!("there are only 5 nodes"),
+                assert_eq!(id, 0, "followers should not receive propose");
+                let resp = async_stream::stream! {
+                    yield Ok(build_propose_response(false));
+                    yield Ok(build_synced_response());
                 };
-                Ok(tonic::Response::new(resp))
+                Ok(tonic::Response::new(Box::new(resp)))
             });
-        conn.expect_wait_synced()
-            .return_once(move |_req, _timeout| {
-                assert!(id == 0, "wait synced should send to leader");
-                std::thread::sleep(Duration::from_millis(100));
-                Ok(tonic::Response::new(WaitSyncedResponse::new_from_result::<
-                    TestCommand,
-                >(
-                    Ok(TestCommandResult::default()),
-                    Some(Ok(1.into())),
-                )))
-            });
+        conn.expect_record().return_once(move |_req, _timeout| {
+            let resp = match id {
+                0 => unreachable!("leader should not receive record request"),
+                1 | 2 | 3 => RecordResponse { conflict: false },
+                4 => RecordResponse { conflict: true },
+                _ => unreachable!("there are only 5 nodes"),
+            };
+            Ok(tonic::Response::new(resp))
+        });
     });
     let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
     let res = unary
-        .propose(&TestCommand::default(), None, true)
+        .propose(&TestCommand::new_put(vec![1], 1), None, true)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(res, (TestCommandResult::default(), None));
 }
 
-// TODO: rewrite this tests
-#[cfg(ignore)]
 #[traced_test]
 #[tokio::test]
 async fn test_unary_propose_slow_path_works() {
     let connects = init_mocked_connects(5, |id, conn| {
-        conn.expect_propose()
+        conn.expect_propose_stream()
             .return_once(move |_req, _token, _timeout| {
-                let resp = match id {
-                    0 => ProposeResponse::new_result::<TestCommand>(
-                        &Ok(TestCommandResult::default()),
-                        false,
-                    ),
-                    1 | 2 | 3 => ProposeResponse::new_empty(),
-                    4 => return Err(CurpError::key_conflict()),
-                    _ => unreachable!("there are only 5 nodes"),
+                assert_eq!(id, 0, "followers should not receive propose");
+                let resp = async_stream::stream! {
+                    yield Ok(build_propose_response(false));
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    yield Ok(build_synced_response());
                 };
-                Ok(tonic::Response::new(resp))
+                Ok(tonic::Response::new(Box::new(resp)))
             });
-        conn.expect_wait_synced()
-            .return_once(move |_req, _timeout| {
-                assert!(id == 0, "wait synced should send to leader");
-                std::thread::sleep(Duration::from_millis(100));
-                Ok(tonic::Response::new(WaitSyncedResponse::new_from_result::<
-                    TestCommand,
-                >(
-                    Ok(TestCommandResult::default()),
-                    Some(Ok(1.into())),
-                )))
-            });
+        conn.expect_record().return_once(move |_req, _timeout| {
+            let resp = match id {
+                0 => unreachable!("leader should not receive record request"),
+                1 | 2 | 3 => RecordResponse { conflict: false },
+                4 => RecordResponse { conflict: true },
+                _ => unreachable!("there are only 5 nodes"),
+            };
+            Ok(tonic::Response::new(resp))
+        });
     });
+
     let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
     let start_at = Instant::now();
     let res = unary
-        .propose(&TestCommand::default(), None, false)
+        .propose(&TestCommand::new_put(vec![1], 1), None, false)
         .await
         .unwrap()
         .unwrap();
@@ -362,42 +358,36 @@ async fn test_unary_propose_slow_path_works() {
     );
 }
 
-// TODO: rewrite this tests
-#[cfg(ignore)]
 #[traced_test]
 #[tokio::test]
 async fn test_unary_propose_fast_path_fallback_slow_path() {
+    // record how many times `handle_propose` was invoked.
     let connects = init_mocked_connects(5, |id, conn| {
-        conn.expect_propose()
+        conn.expect_propose_stream()
             .return_once(move |_req, _token, _timeout| {
-                // insufficient quorum to force slow path.
-                let resp = match id {
-                    0 => ProposeResponse::new_result::<TestCommand>(
-                        &Ok(TestCommandResult::default()),
-                        false,
-                    ),
-                    1 | 2 => ProposeResponse::new_empty(),
-                    3 | 4 => return Err(CurpError::key_conflict()),
-                    _ => unreachable!("there are only 5 nodes"),
+                assert_eq!(id, 0, "followers should not receive propose");
+                let resp = async_stream::stream! {
+                    yield Ok(build_propose_response(false));
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    yield Ok(build_synced_response());
                 };
-                Ok(tonic::Response::new(resp))
+                Ok(tonic::Response::new(Box::new(resp)))
             });
-        conn.expect_wait_synced()
-            .return_once(move |_req, _timeout| {
-                assert!(id == 0, "wait synced should send to leader");
-                std::thread::sleep(Duration::from_millis(100));
-                Ok(tonic::Response::new(WaitSyncedResponse::new_from_result::<
-                    TestCommand,
-                >(
-                    Ok(TestCommandResult::default()),
-                    Some(Ok(1.into())),
-                )))
-            });
+        // insufficient quorum
+        conn.expect_record().return_once(move |_req, _timeout| {
+            let resp = match id {
+                0 => unreachable!("leader should not receive record request"),
+                1 | 2 => RecordResponse { conflict: false },
+                3 | 4 => RecordResponse { conflict: true },
+                _ => unreachable!("there are only 5 nodes"),
+            };
+            Ok(tonic::Response::new(resp))
+        });
     });
     let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
     let start_at = Instant::now();
     let res = unary
-        .propose(&TestCommand::default(), None, true)
+        .propose(&TestCommand::new_put(vec![1], 1), None, true)
         .await
         .unwrap()
         .unwrap();
@@ -405,14 +395,13 @@ async fn test_unary_propose_fast_path_fallback_slow_path() {
         start_at.elapsed() > Duration::from_millis(100),
         "slow round takes at least 100ms"
     );
+    // indicate that we actually run out of fast round
     assert_eq!(
         res,
         (TestCommandResult::default(), Some(LogIndexResult::from(1)))
     );
 }
 
-// TODO: rewrite this tests
-#[cfg(ignore)]
 #[traced_test]
 #[tokio::test]
 async fn test_unary_propose_return_early_err() {
@@ -428,26 +417,22 @@ async fn test_unary_propose_return_early_err() {
         assert!(early_err.should_abort_fast_round());
         // record how many times rpc was invoked.
         let counter = Arc::new(Mutex::new(0));
-        let connects = init_mocked_connects(5, |id, conn| {
+        let connects = init_mocked_connects(5, |_id, conn| {
             let err = early_err.clone();
             let counter_c = Arc::clone(&counter);
-            conn.expect_propose()
+            conn.expect_propose_stream()
                 .return_once(move |_req, _token, _timeout| {
-                    counter_c.lock().unwrap().add_assign(1);
+                    *counter_c.lock().unwrap() += 1;
                     Err(err)
                 });
+
             let err = early_err.clone();
-            let counter_c = Arc::clone(&counter);
-            conn.expect_wait_synced()
-                .return_once(move |_req, _timeout| {
-                    assert!(id == 0, "wait synced should send to leader");
-                    counter_c.lock().unwrap().add_assign(1);
-                    Err(err)
-                });
+            conn.expect_record()
+                .return_once(move |_req, _timeout| Err(err));
         });
         let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
         let err = unary
-            .propose(&TestCommand::default(), None, true)
+            .propose(&TestCommand::new_put(vec![1], 1), None, true)
             .await
             .unwrap_err();
         assert_eq!(err, early_err);
@@ -457,8 +442,6 @@ async fn test_unary_propose_return_early_err() {
 
 // Tests for retry layer
 
-// TODO: rewrite this tests
-#[cfg(ignore)]
 #[traced_test]
 #[tokio::test]
 async fn test_retry_propose_return_no_retry_error() {
@@ -471,22 +454,18 @@ async fn test_retry_propose_return_no_retry_error() {
     ] {
         // record how many times rpc was invoked.
         let counter = Arc::new(Mutex::new(0));
-        let connects = init_mocked_connects(5, |id, conn| {
+        let connects = init_mocked_connects(5, |_id, conn| {
             let err = early_err.clone();
             let counter_c = Arc::clone(&counter);
-            conn.expect_propose()
+            conn.expect_propose_stream()
                 .return_once(move |_req, _token, _timeout| {
-                    counter_c.lock().unwrap().add_assign(1);
+                    *counter_c.lock().unwrap() += 1;
                     Err(err)
                 });
+
             let err = early_err.clone();
-            let counter_c = Arc::clone(&counter);
-            conn.expect_wait_synced()
-                .return_once(move |_req, _timeout| {
-                    assert!(id == 0, "wait synced should send to leader");
-                    counter_c.lock().unwrap().add_assign(1);
-                    Err(err)
-                });
+            conn.expect_record()
+                .return_once(move |_req, _timeout| Err(err));
         });
         let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
         let retry = Retry::new(
@@ -495,27 +474,22 @@ async fn test_retry_propose_return_no_retry_error() {
             None,
         );
         let err = retry
-            .propose(&TestCommand::default(), None, false)
+            .propose(&TestCommand::new_put(vec![1], 1), None, false)
             .await
             .unwrap_err();
         assert_eq!(err.message(), tonic::Status::from(early_err).message());
-        // fast path + slow path = 2
-        assert_eq!(*counter.lock().unwrap(), 2);
+        assert_eq!(*counter.lock().unwrap(), 1);
     }
 }
 
-// TODO: rewrite this tests
-#[cfg(ignore)]
 #[traced_test]
 #[tokio::test]
 async fn test_retry_propose_return_retry_error() {
     for early_err in [
-        CurpError::key_conflict(),
         CurpError::RpcTransport(()),
         CurpError::internal("No reason"),
     ] {
         let connects = init_mocked_connects(5, |id, conn| {
-            let err = early_err.clone();
             conn.expect_fetch_cluster()
                 .returning(move |_req, _timeout| {
                     Ok(tonic::Response::new(FetchClusterResponse {
@@ -532,14 +506,16 @@ async fn test_retry_propose_return_retry_error() {
                         cluster_version: 1,
                     }))
                 });
-            conn.expect_propose()
-                .returning(move |_req, _token, _timeout| Err(err.clone()));
             if id == 0 {
                 let err = early_err.clone();
-                conn.expect_wait_synced()
-                    .times(5) // wait synced should be retried in 5 times on leader
-                    .returning(move |_req, _timeout| Err(err.clone()));
+                conn.expect_propose_stream()
+                    .times(5) // propose should be retried in 5 times on leader
+                    .returning(move |_req, _token, _timeout| Err(err.clone()));
             }
+
+            let err = early_err.clone();
+            conn.expect_record()
+                .returning(move |_req, _timeout| Err(err.clone()));
         });
         let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
         let retry = Retry::new(
@@ -548,7 +524,7 @@ async fn test_retry_propose_return_retry_error() {
             None,
         );
         let err = retry
-            .propose(&TestCommand::default(), None, false)
+            .propose(&TestCommand::new_put(vec![1], 1), None, false)
             .await
             .unwrap_err();
         assert!(err.message().contains("request timeout"));
