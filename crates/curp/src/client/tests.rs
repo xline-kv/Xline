@@ -542,6 +542,68 @@ async fn test_retry_propose_return_retry_error() {
     }
 }
 
+#[traced_test]
+#[tokio::test]
+async fn test_read_index_success() {
+    let connects = init_mocked_connects(5, |id, conn| {
+        conn.expect_propose_stream()
+            .return_once(move |_req, _token, _timeout| {
+                assert_eq!(id, 0, "followers should not receive propose");
+                let resp = async_stream::stream! {
+                    yield Ok(build_propose_response(false));
+                    yield Ok(build_synced_response());
+                };
+                Ok(tonic::Response::new(Box::new(resp)))
+            });
+        conn.expect_read_index().return_once(move |_timeout| {
+            let resp = match id {
+                0 => unreachable!("read index should not send to leader"),
+                1 | 2 => ReadIndexResponse { term: 1 },
+                3 | 4 => ReadIndexResponse { term: 2 },
+                _ => unreachable!("there are only 5 nodes"),
+            };
+
+            Ok(tonic::Response::new(resp))
+        });
+    });
+    let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
+    let res = unary
+        .propose(&TestCommand::default(), None, true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(res, (TestCommandResult::default(), None));
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_read_index_fail() {
+    let connects = init_mocked_connects(5, |id, conn| {
+        conn.expect_propose_stream()
+            .return_once(move |_req, _token, _timeout| {
+                assert_eq!(id, 0, "followers should not receive propose");
+                let resp = async_stream::stream! {
+                    yield Ok(build_propose_response(false));
+                    yield Ok(build_synced_response());
+                };
+                Ok(tonic::Response::new(Box::new(resp)))
+            });
+        conn.expect_read_index().return_once(move |_timeout| {
+            let resp = match id {
+                0 => unreachable!("read index should not send to leader"),
+                1 => ReadIndexResponse { term: 1 },
+                2 | 3 | 4 => ReadIndexResponse { term: 2 },
+                _ => unreachable!("there are only 5 nodes"),
+            };
+
+            Ok(tonic::Response::new(resp))
+        });
+    });
+    let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
+    let res = unary.propose(&TestCommand::default(), None, true).await;
+    assert!(res.is_err());
+}
+
 // Tests for stream client
 
 struct MockedStreamConnectApi {
