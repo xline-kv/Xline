@@ -2,12 +2,12 @@
 
 ## Configurations
 
-The Xline configuration file is written in toml format and the default path is /etc/xline_server.conf. If you need to change the path of the configuration file, you can set it via the environment variable XLINE_SERVER_CONFIG.
+The Xline configuration file is written in toml format and the default path is `/etc/xline_server`.conf. If you need to change the path of the configuration file, you can set it via the environment variable `XLINE_SERVER_CONFIG`.
 
 The configuration file has four sections, as follows:
 
 1. cluster section: contains information about curp cluster, including basic information, cluster member configuration, curp server timeout settings (optional), curp client timeout settings (optional).
-2. log section: contains the Xline log-related configuration, where path is required, rotation (optional, default value is 'daily'), level (optional, default value is 'info')
+2. log section: contains the Xline log-related configuration, where path is required, rotation (optional, default value is `daily`), level (optional, default value is `info`)
 3. trace section: contains the jaeger's trace mode (online or offline), trace level and the log directory in offline mode
 4. auth section: contains the address of the key pair required for authentication
 
@@ -61,24 +61,24 @@ retry_timeout = '50ms'          # the rpc retry interval, of which the default i
 
 ## Boot up an Xline cluster
 
-1. Download binary from [release]() page.
+1. Download binary from [release](https://github.com/xline-kv/Xline/releases) page.
 2. Use the following command to start cluster:
 
-    ```bash
-    # Run in 3 terminals. If you want more logs, add `RUST_LOG=curp=debug,xline=debug` before the command.
+   ```bash
+   # Run in 3 terminals. If you want more logs, add `RUST_LOG=curp=debug,xline=debug` before the command.
 
-    ./xline --name node1 --members node1=127.0.0.1:2379,node2=127.0.0.1:2380,node3=127.0.0.1:2381 --is-leader
+   ./xline --name node1 --members node1=127.0.0.1:2379,node2=127.0.0.1:2380,node3=127.0.0.1:2381 --is-leader
 
-    ./xline --name node2 --members node1=127.0.0.1:2379,node2=127.0.0.1:2380,node3=127.0.0.1:2381
+   ./xline --name node2 --members node1=127.0.0.1:2379,node2=127.0.0.1:2380,node3=127.0.0.1:2381
 
-    ./xline --name node3 --members node1=127.0.0.1:2379,node2=127.0.0.1:2380,node3=127.0.0.1:2381
-    ```
+   ./xline --name node3 --members node1=127.0.0.1:2379,node2=127.0.0.1:2380,node3=127.0.0.1:2381
+   ```
 
 3. Download or build `etcdctl` from [etcd](https://github.com/etcd-io/etcd) project.
 4. Use `etcdctl` to operate the cluster:
 
-    ```bash
-    etcdctl --endpoints=http://127.0.0.1:2379 put foo bar
+   ```bash
+   etcdctl --endpoints=http://127.0.0.1:2379 put foo bar
 
-    etcdctl --endpoints=http://127.0.0.1:2379 get foo
-    ```
+   etcdctl --endpoints=http://127.0.0.1:2379 get foo
+   ```
