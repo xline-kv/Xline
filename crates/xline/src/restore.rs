@@ -10,9 +10,11 @@ use utils::table_names::XLINE_TABLES;
 use crate::server::MAINTENANCE_SNAPSHOT_CHUNK_SIZE;
 
 /// Restore snapshot to data dir
+///
 /// # Errors
-/// return `ClientError::IoError` if meet io errors
-/// return `ClientError::EngineError` if meet engine errors
+///
+/// - return `ClientError::IoError` if meet io errors
+/// - return `ClientError::EngineError` if meet engine errors
 #[inline]
 #[allow(clippy::indexing_slicing)] // safe operation
 pub async fn restore<P: AsRef<Path>, D: Into<PathBuf>>(

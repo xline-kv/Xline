@@ -14,6 +14,7 @@ const USIZE_BITS: usize = std::mem::size_of::<usize>() * 8;
 const DEFAULT_BIT_VEC_QUEUE_CAP: usize = 1024;
 
 /// A one-direction bit vector queue
+///
 /// It use a ring buffer `VecDeque<usize>` to store bits
 ///
 /// Memory Layout:
@@ -161,7 +162,9 @@ impl BitVecQueue {
     }
 
     /// Split this bit vec queue to `at`
+    ///
     /// e.g.
+    ///
     /// 001100 -> `split_at(2)` -> 1100
     fn split_at(&mut self, at: usize) {
         if self.store.is_empty() {

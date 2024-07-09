@@ -631,6 +631,7 @@ impl<T: Protocol> BypassedConnect<T> {
 const BYPASS_KEY: &str = "bypass";
 
 /// Inject bypassed message into a request's metadata and check if it is a bypassed request.
+///
 /// A bypass request can skip the check for lease expiration (there will never be a disconnection from oneself).
 pub(crate) trait Bypass {
     /// Inject into metadata

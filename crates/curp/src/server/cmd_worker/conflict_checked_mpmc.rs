@@ -25,7 +25,9 @@ use crate::{
 /// Cart
 mod cart {
     /// Cart is a utility that acts as a temporary container.
+    ///
     /// It is usually filled by the provider and consumed by the customer.
+    ///
     /// This is useful when we are sure that the provider will fill the cart and the cart will be consumed by the customer
     /// so that we don't need to check whether there is something in the `Option`.
     #[derive(Debug)]
@@ -188,6 +190,7 @@ enum OnceState {
 }
 
 /// The filter will block any msg if its predecessors(msgs that arrive earlier and conflict with it) haven't finished process
+///
 /// Internally it maintains a dependency graph of conflicting cmds
 
 struct Filter<C: Command, CE> {
@@ -318,6 +321,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
     }
 
     /// Update the vertex, see if it can progress
+    ///
     /// Return true if it can be removed
     #[allow(clippy::expect_used, clippy::too_many_lines)] // TODO: split this function
     fn update_vertex(&mut self, vid: u64) -> bool {

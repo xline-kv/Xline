@@ -157,7 +157,9 @@ impl ProposeRequest {
     }
 
     /// Get command
+    ///
     /// # Errors
+    ///
     /// Return error if the command can't be decoded
     #[inline]
     pub fn cmd<C: Command>(&self) -> Result<C, PbSerializeError> {
@@ -619,6 +621,7 @@ impl PublishRequest {
 }
 
 /// NOTICE:
+///
 /// Please check test case `test_unary_fast_round_return_early_err` `test_unary_propose_return_early_err`
 /// `test_retry_propose_return_no_retry_error` `test_retry_propose_return_retry_error` if you added some
 /// new [`CurpError`]
@@ -891,6 +894,7 @@ impl<C> From<Vec<ConfChange>> for PoolEntryInner<C> {
 }
 
 /// Command Id wrapper, which is used to identify a command
+///
 /// The underlying data is a tuple of (`client_id`, `seq_num`)
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Ord, PartialOrd, Default,

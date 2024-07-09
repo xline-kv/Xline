@@ -91,7 +91,9 @@ impl RocksEngine {
     }
 
     /// Get the total sst file size of all tables
+    ///
     /// # WARNING
+    ///
     /// This method need to flush memtable to disk. it may be slow. do not call it frequently.
     fn get_db_size<T: AsRef<str>, V: AsRef<[T]>>(
         db: &OptimisticTransactionDB,
@@ -455,7 +457,9 @@ impl RocksSnapshot {
     }
 
     /// Create a new snapshot for receiving
+    ///
     /// # Errors
+    ///
     /// Return `EngineError` when create directory failed.
     #[inline]
     pub fn new_for_receiving<P>(dir: P) -> Result<Self, EngineError>
@@ -470,7 +474,9 @@ impl RocksSnapshot {
     }
 
     /// Create a new snapshot for sending
+    ///
     /// # Errors
+    ///
     /// Return `EngineError` when read directory failed.
     #[inline]
     pub fn new_for_sending<P>(dir: P) -> Result<Self, EngineError>

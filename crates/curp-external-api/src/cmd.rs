@@ -31,6 +31,7 @@ pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
     type Error: pri::Serializable + PbCodec + std::error::Error;
 
     /// K (key) is used to tell confliction
+    ///
     /// The key can be a single key or a key range
     type K: pri::Serializable + Eq + Hash + ConflictCheck;
 
@@ -52,6 +53,7 @@ pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
     /// Prepare the command
     ///
     /// # Errors
+    ///
     /// Return `Self::Error` when `CommandExecutor::prepare` goes wrong
     #[inline]
     fn prepare<E>(&self, e: &E) -> Result<Self::PR, Self::Error>
@@ -64,6 +66,7 @@ pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
     /// Execute the command according to the executor
     ///
     /// # Errors
+    ///
     /// Return `Self::Error` when `CommandExecutor::execute` goes wrong
     #[inline]
     async fn execute<E>(&self, e: &E) -> Result<Self::ER, Self::Error>
@@ -76,6 +79,7 @@ pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
     /// Execute the command after_sync callback
     ///
     /// # Errors
+    ///
     /// Return `Self::Error` when `CommandExecutor::after_sync` goes wrong
     #[inline]
     async fn after_sync<E>(
@@ -116,6 +120,7 @@ impl ConflictCheck for u32 {
 }
 
 /// Command executor which actually executes the command.
+///
 /// It is usually defined by the protocol user.
 #[async_trait]
 pub trait CommandExecutor<C>: pri::ThreadSafe
@@ -125,18 +130,21 @@ where
     /// Prepare the command
     ///
     /// # Errors
+    ///
     /// This function may return an error if there is a problem preparing the command.
     fn prepare(&self, cmd: &C) -> Result<C::PR, C::Error>;
 
     /// Execute the command
     ///
     /// # Errors
+    ///
     /// This function may return an error if there is a problem executing the command.
     async fn execute(&self, cmd: &C) -> Result<C::ER, C::Error>;
 
     /// Execute the after_sync callback
     ///
     /// # Errors
+    ///
     /// This function may return an error if there is a problem executing the after_sync callback.
     async fn after_sync(
         &self,
@@ -148,24 +156,28 @@ where
     /// Set the index of the last log entry that has been successfully applied to the command executor
     ///
     /// # Errors
+    ///
     /// Returns an error if setting the last applied log entry fails.
     fn set_last_applied(&self, index: LogIndex) -> Result<(), C::Error>;
 
     /// Get the index of the last log entry that has been successfully applied to the command executor
     ///
     /// # Errors
+    ///
     /// Returns an error if retrieval of the last applied log entry fails.
     fn last_applied(&self) -> Result<LogIndex, C::Error>;
 
     /// Take a snapshot
     ///
     /// # Errors
+    ///
     /// This function may return an error if there is a problem taking a snapshot.
     async fn snapshot(&self) -> Result<Snapshot, C::Error>;
 
     /// Reset the command executor using the snapshot or to the initial state if None
     ///
     /// # Errors
+    ///
     /// This function may return an error if there is a problem resetting the command executor.
     async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), C::Error>;
 

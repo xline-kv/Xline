@@ -35,7 +35,9 @@ pub enum Engine {
 
 impl Engine {
     /// Create a new `Engine` instance
+    ///
     /// # Errors
+    ///
     /// Return `EngineError` when DB open failed.
     #[inline]
     pub fn new(engine_type: EngineType, tables: &[&'static str]) -> Result<Self, EngineError> {
@@ -48,7 +50,9 @@ impl Engine {
     }
 
     /// Apply snapshot from file, only works for `RocksEngine`
+    ///
     /// # Errors
+    ///
     /// Return `EngineError` when `RocksDB` returns an error.
     #[inline]
     pub async fn apply_snapshot_from_file(
@@ -258,7 +262,9 @@ pub enum Snapshot {
 
 impl Snapshot {
     /// Create a new `Snapshot` instance
+    ///
     /// # Errors
+    ///
     /// Return `EngineError` when DB open failed.
     #[inline]
     pub fn new_for_receiving(engine_type: EngineType) -> Result<Self, EngineError> {

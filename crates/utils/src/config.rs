@@ -293,6 +293,7 @@ pub struct CurpConfig {
     pub rpc_timeout: Duration,
 
     /// Curp append entries batch timeout
+    ///
     /// If the `batch_timeout` has expired, then it will be dispatched
     /// whether its size reaches the `BATCHING_MSG_MAX_SIZE` or not.
     #[builder(default = "default_batch_timeout()")]
@@ -305,13 +306,16 @@ pub struct CurpConfig {
     pub batch_max_size: u64,
 
     /// How many ticks a follower is allowed to miss before it starts a new round of election
+    ///
     /// The actual timeout will be randomized and in between heartbeat_interval * [follower_timeout_ticks, 2 * follower_timeout_ticks)
     #[builder(default = "default_follower_timeout_ticks()")]
     #[serde(default = "default_follower_timeout_ticks")]
     pub follower_timeout_ticks: u8,
 
     /// How many ticks a candidate needs to wait before it starts a new round of election
+    ///
     /// It should be smaller than `follower_timeout_ticks`
+    ///
     /// The actual timeout will be randomized and in between heartbeat_interval * [candidate_timeout_ticks, 2 * candidate_timeout_ticks)
     #[builder(default = "default_candidate_timeout_ticks()")]
     #[serde(default = "default_candidate_timeout_ticks")]

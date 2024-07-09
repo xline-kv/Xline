@@ -39,7 +39,9 @@ impl<E> Layer<E> {
 
 impl Layer<RocksEngine> {
     /// Apply snapshot from file, only works for `RocksEngine`
+    ///
     /// # Errors
+    ///
     /// Return `EngineError` when `RocksDB` returns an error.
     #[inline]
     pub async fn apply_snapshot_from_file(
@@ -68,9 +70,11 @@ where
     }
 
     /// Get all the values of the given table
+    ///
     /// # Errors
-    /// Return `EngineError::TableNotFound` if the given table does not exist
-    /// Return `EngineError` if met some errors
+    ///
+    /// - Return `EngineError::TableNotFound` if the given table does not exist
+    /// - Return `EngineError` if met some errors
     #[allow(clippy::type_complexity)] // it's clear that (Vec<u8>, Vec<u8>) is a key-value pair
     fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, EngineError> {
         self.engine.get_all(table)
@@ -79,6 +83,7 @@ where
     /// Get a snapshot of the current state of the database
     ///
     /// # Errors
+    ///
     /// Return `EngineError` if met some errors when creating the snapshot
     fn get_snapshot(
         &self,
@@ -91,6 +96,7 @@ where
     /// Apply a snapshot to the database
     ///
     /// # Errors
+    ///
     /// Return `EngineError` if met some errors when applying the snapshot
     async fn apply_snapshot(
         &self,

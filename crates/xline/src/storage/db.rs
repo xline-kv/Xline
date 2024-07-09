@@ -42,6 +42,7 @@ impl DB {
     /// Create a new `DB`
     ///
     /// # Errors
+    ///
     /// Return `ExecuteError::DbError` when open db failed
     #[inline]
     pub fn open(config: &EngineConfig) -> Result<Arc<Self>, ExecuteError> {
