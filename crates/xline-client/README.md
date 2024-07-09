@@ -3,7 +3,8 @@
 Official Xline API client for Rust that supports the [CURP](https://github.com/xline-kv/Xline/tree/master/crates/curp) protocol
 
 # Pre-requisites
-- Install `protobuf-compiler` as mentioned in [QuickStart](https://github.com/xline-kv/Xline/blob/master/doc/quick-start/README.md#install-dependencies)
+
+- Install `protobuf-compiler` as mentioned in [QuickStart](https://github.com/xline-kv/Xline/blob/master/doc/QUICK_START.md#build-from-source)
 
 ## Features
 
@@ -77,40 +78,41 @@ Add `xline-client` to your `Cargo.toml`:
 [dependencies]
 xline-client = { git = "https://github.com/xline-kv/Xline.git", package = "xline-client" }
 ```
+
 To create a xline client:
 
- ```rust, no_run
- use xline_client::{
-     types::kv::{PutOptions, RangeOptions},
-     Client, ClientOptions,
- };
- use anyhow::Result;
+```rust, no_run
+use xline_client::{
+    types::kv::{PutOptions, RangeOptions},
+    Client, ClientOptions,
+};
+use anyhow::Result;
 
- #[tokio::main]
- async fn main() -> Result<()> {
-     // the name and address of all curp members
-     let curp_members = ["10.0.0.1:2379", "10.0.0.2:2379", "10.0.0.3:2379"];
+#[tokio::main]
+async fn main() -> Result<()> {
+    // the name and address of all curp members
+    let curp_members = ["10.0.0.1:2379", "10.0.0.2:2379", "10.0.0.3:2379"];
 
-     let mut client = Client::connect(curp_members, ClientOptions::default())
-         .await?
-         .kv_client();
+    let mut client = Client::connect(curp_members, ClientOptions::default())
+        .await?
+        .kv_client();
 
-     client.put("key", "value", None).await?;
+    client.put("key", "value", None).await?;
 
-     let resp = client.range("key", None).await?;
-     // let resp = client.range("key2", Some(RangeOptions::default().with_limit(6))).await?;
+    let resp = client.range("key", None).await?;
+    // let resp = client.range("key2", Some(RangeOptions::default().with_limit(6))).await?;
 
-     if let Some(kv) = resp.kvs.first() {
-         println!(
-             "got key: {}, value: {}",
-             String::from_utf8_lossy(&kv.key),
-             String::from_utf8_lossy(&kv.value)
-         );
-     }
+    if let Some(kv) = resp.kvs.first() {
+        println!(
+            "got key: {}, value: {}",
+            String::from_utf8_lossy(&kv.key),
+            String::from_utf8_lossy(&kv.value)
+        );
+    }
 
-     Ok(())
- }
- ```
+    Ok(())
+}
+```
 
 ## Examples
 
