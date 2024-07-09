@@ -5,12 +5,14 @@ This crate provides a set of utilities for locks.
 ## Usage
 
 Add this to your Cargo.toml :
+
 ```Toml
 [dependencies]
 utils = { path = "../utils", features = ["std"] }
 ```
 
 Write your code like this:
+
 ```Rust
 use utils::std_lock::{MutexMap, RwLockMap};
 use std::sync::{Mutex, RwLock};
@@ -31,6 +33,7 @@ assert_eq!(val, 3);
 ```
 
 ## Features
+
 - `std`: utils for `std::sync::Mutex` and `std::sync::RwLock`
 - `parking_lot`: utils for` parking_lot::Mutex` and `parking_lot::RwLock`
 - `tokio`: utils for `tokio::sync::Mutex` and `tokio::sync::RwLock`
