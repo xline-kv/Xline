@@ -14,7 +14,9 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     fn transaction(&self) -> Self::Transaction<'_>;
 
     /// Get all the values of the given table
+    ///
     /// # Errors
+    ///
     /// Return `EngineError::TableNotFound` if the given table does not exist
     /// Return `EngineError` if met some errors
     #[allow(clippy::type_complexity)] // it's clear that (Vec<u8>, Vec<u8>) is a key-value pair
@@ -23,6 +25,7 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// Get a snapshot of the current state of the database
     ///
     /// # Errors
+    ///
     /// Return `EngineError` if met some errors when creating the snapshot
     fn get_snapshot(
         &self,
@@ -33,6 +36,7 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// Apply a snapshot to the database
     ///
     /// # Errors
+    ///
     /// Return `EngineError` if met some errors when applying the snapshot
     async fn apply_snapshot(
         &self,
@@ -46,6 +50,7 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// Get the file size of the engine (Measured in bytes)
     ///
     /// # Errors
+    ///
     /// Return `EngineError` if met some errors when get file size
     fn file_size(&self) -> Result<u64, EngineError>;
 }

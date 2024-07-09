@@ -5,7 +5,9 @@ use tracing::info;
 use utils::config::{MetricsConfig, MetricsPushProtocol};
 
 /// Start metrics server
+///
 /// # Errors
+///
 /// Return error if init failed
 #[inline]
 pub fn init_metrics(config: &MetricsConfig) -> anyhow::Result<()> {

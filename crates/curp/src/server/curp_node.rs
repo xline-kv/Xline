@@ -722,8 +722,11 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     }
 
     /// Candidate or pre candidate broadcasts votes
-    /// Return `Some(vote)` if bcast pre vote and success
-    /// Return `None` if bcast pre vote and fail or bcast vote
+    ///
+    /// # Returns
+    ///
+    /// - `Some(vote)` if bcast pre vote and success
+    /// - `None` if bcast pre vote and fail or bcast vote
     async fn bcast_vote(curp: &RawCurp<C, RC>, vote: Vote) -> Option<Vote> {
         if vote.is_pre_vote {
             debug!("{} broadcasts pre votes to all servers", curp.id());

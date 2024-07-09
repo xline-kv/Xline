@@ -172,7 +172,9 @@ impl RocksSnapshot {
     }
 
     /// Create a new mock snapshot for receiving
+    ///
     /// # Errors
+    ///
     /// Return `EngineError` when create directory failed.
     #[inline]
     #[allow(clippy::unnecessary_wraps)] // the real rocksdb engine need the Result wrap

@@ -24,6 +24,7 @@ pub(super) struct UnaryConfig {
     /// The rpc timeout of a propose request
     propose_timeout: Duration,
     /// The rpc timeout of a 2-RTT request, usually takes longer than propose timeout
+    ///
     /// The recommended the values is within (propose_timeout, 2 * propose_timeout].
     wait_synced_timeout: Duration,
 }
@@ -60,9 +61,13 @@ impl<C: Command> Unary<C> {
     }
 
     /// Get a handle `f` and apply to the leader
+    ///
     /// NOTICE:
+    ///
     /// The leader might be outdate if the local state is stale.
+    ///
     /// `map_leader` should never be invoked in [`ClientApi::fetch_cluster`]
+    ///
     /// `map_leader` might call `fetch_leader_id`, `fetch_cluster`, finally
     /// result in stack overflow.
     async fn map_leader<R, F: Future<Output = Result<R, CurpError>>>(

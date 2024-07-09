@@ -15,6 +15,7 @@ use crate::{
 };
 
 /// The curp client trait object on the command of xline
+///
 /// TODO: use `type CurpClient = impl ClientApi<...>` when `type_alias_impl_trait` stabilized
 pub type CurpClient = dyn ClientApi<Error = tonic::Status, Cmd = Command> + Sync + Send + 'static;
 
@@ -125,6 +126,7 @@ impl KeyRange {
     }
 
     /// Get end of range with prefix
+    ///
     /// User will provide a start key when prefix is true, we need calculate the end key of `KeyRange`
     #[allow(clippy::indexing_slicing)] // end[i] is always valid
     #[must_use]

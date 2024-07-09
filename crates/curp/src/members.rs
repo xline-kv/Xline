@@ -98,7 +98,9 @@ impl ClusterInfo {
     }
 
     /// Construct a new `ClusterInfo` from members map
+    ///
     /// # Panics
+    ///
     /// panic if `all_members` is empty
     #[inline]
     #[must_use]
@@ -131,7 +133,9 @@ impl ClusterInfo {
     }
 
     /// Construct a new `ClusterInfo` from `FetchClusterResponse`
+    ///
     /// # Panics
+    ///
     /// panic if `cluster.members` doesn't contain `self_addr`
     #[inline]
     #[must_use]
@@ -234,7 +238,9 @@ impl ClusterInfo {
     }
 
     /// Get the current member
+    ///
     /// # Panics
+    ///
     /// panic if self member id is not in members
     #[allow(clippy::unwrap_used)] // self member id must be in members
     #[must_use]
@@ -257,7 +263,7 @@ impl ClusterInfo {
         self.self_member().client_urls.clone()
     }
 
-    /// Get the current server id
+    /// Get the current server name
     #[must_use]
     #[inline]
     pub fn self_name(&self) -> String {

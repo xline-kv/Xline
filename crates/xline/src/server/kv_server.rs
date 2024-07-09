@@ -227,6 +227,7 @@ impl Kv for KvServer {
     }
 
     /// Put puts the given key into the key-value store.
+    ///
     /// A put request increments the revision of the key-value store
     /// and generates one event in the event history.
     #[instrument(skip_all)]
@@ -256,6 +257,7 @@ impl Kv for KvServer {
     }
 
     /// DeleteRange deletes the given range from the key-value store.
+    ///
     /// A delete request increments the revision of the key-value store
     /// and generates a delete event in the event history for every deleted key.
     #[instrument(skip_all)]
@@ -285,6 +287,7 @@ impl Kv for KvServer {
     }
 
     /// Txn processes multiple requests in a single transaction.
+    ///
     /// A txn request increments the revision of the key-value store
     /// and generates events with the same revision for every completed request.
     /// It is not allowed to modify the same key several times within one txn.

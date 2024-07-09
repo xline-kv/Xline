@@ -97,7 +97,9 @@ pub struct XlineServer {
 
 impl XlineServer {
     /// New `XlineServer`
+    ///
     /// # Errors
+    ///
     /// Return error if init cluster info failed
     #[inline]
     pub async fn new(

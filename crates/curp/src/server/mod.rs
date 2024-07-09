@@ -59,6 +59,7 @@ mod metrics;
 pub use storage::{db::DB, StorageApi, StorageError};
 
 /// The Rpc Server to handle rpc requests
+///
 /// This Wrapper is introduced due to the `MadSim` rpc lib
 #[derive(Debug)]
 pub struct Rpc<C: Command, RC: RoleChange> {
@@ -231,7 +232,9 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
 
 impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     /// New `Rpc`
+    ///
     /// # Panics
+    ///
     /// Panic if storage creation failed
     #[inline]
     #[allow(clippy::too_many_arguments)] // TODO: refactor this use builder pattern
@@ -278,8 +281,9 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     /// Run a new rpc server on a specific addr, designed to be used in the tests
     ///
     /// # Errors
-    ///   `ServerError::ParsingError` if parsing failed for the local server address
-    ///   `ServerError::RpcError` if any rpc related error met
+    ///
+    /// - `ServerError::ParsingError` if parsing failed for the local server address
+    /// - `ServerError::RpcError` if any rpc related error met
     #[cfg(madsim)]
     #[allow(clippy::too_many_arguments)]
     #[inline]

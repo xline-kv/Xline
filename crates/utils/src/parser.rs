@@ -40,7 +40,9 @@ pub enum ConfigFileError {
 }
 
 /// parse members from string like "node1=addr1,addr2,node2=add3,addr4,addr5,node3=addr6"
+///
 /// # Errors
+///
 /// Return error when pass wrong args
 #[inline]
 pub fn parse_members(s: &str) -> Result<HashMap<String, Vec<String>>, ConfigParseError> {
@@ -69,7 +71,9 @@ pub fn parse_members(s: &str) -> Result<HashMap<String, Vec<String>>, ConfigPars
 }
 
 /// Parse `ClusterRange` from the given string
+///
 /// # Errors
+///
 /// Return error when parsing the given string to `ClusterRange` failed
 #[inline]
 pub fn parse_range(s: &str) -> Result<ClusterRange, ConfigParseError> {
@@ -86,7 +90,9 @@ pub fn parse_range(s: &str) -> Result<ClusterRange, ConfigParseError> {
 }
 
 /// Parse `Duration` from string
+///
 /// # Errors
+///
 /// Return error when parsing the given string to `Duration` failed
 #[inline]
 pub fn parse_duration(s: &str) -> Result<Duration, ConfigParseError> {
@@ -150,7 +156,9 @@ pub fn parse_duration(s: &str) -> Result<Duration, ConfigParseError> {
 }
 
 /// Parse `InitialClusterState` from string
+///
 /// # Errors
+///
 /// Return error when parsing the given string to `InitialClusterState` failed
 #[inline]
 pub fn parse_state(s: &str) -> Result<InitialClusterState, ConfigParseError> {
@@ -164,7 +172,9 @@ pub fn parse_state(s: &str) -> Result<InitialClusterState, ConfigParseError> {
 }
 
 /// Parse `LOG_PATH` from string
+///
 /// # Errors
+///
 /// Return error when parsing the given string to `PathBuf` failed
 #[inline]
 pub fn parse_log_file(s: &str) -> Result<PathBuf, ConfigParseError> {
@@ -195,7 +205,9 @@ pub fn parse_log_file(s: &str) -> Result<PathBuf, ConfigParseError> {
 }
 
 /// Parse `LevelConfig` from string
+///
 /// # Errors
+///
 /// Return error when parsing the given string to `LevelConfig` failed
 #[inline]
 pub fn parse_log_level(s: &str) -> Result<LevelConfig, ConfigParseError> {
@@ -212,7 +224,9 @@ pub fn parse_log_level(s: &str) -> Result<LevelConfig, ConfigParseError> {
 }
 
 /// Parse `RotationConfig` from string
+///
 /// # Errors
+///
 /// Return error when parsing the given string to `RotationConfig` failed
 #[inline]
 pub fn parse_rotation(s: &str) -> Result<RotationConfig, ConfigParseError> {
@@ -227,7 +241,9 @@ pub fn parse_rotation(s: &str) -> Result<RotationConfig, ConfigParseError> {
 }
 
 /// Parse bytes from string
+///
 /// # Errors
+///
 /// Return error when parsing the given string to usize failed
 #[inline]
 #[allow(clippy::arithmetic_side_effects)]
@@ -264,7 +280,9 @@ pub fn parse_batch_bytes(s: &str) -> Result<u64, ConfigParseError> {
 }
 
 /// Get the metrics push protocol
+///
 /// # Errors
+///
 /// Return error when parsing the given string to `MetricsPushProtocol` failed
 #[inline]
 pub fn parse_metrics_push_protocol(s: &str) -> Result<MetricsPushProtocol, ConfigParseError> {

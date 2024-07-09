@@ -820,6 +820,7 @@ impl ConnectApi for MockedStreamConnectApi {
 }
 
 /// Create mocked stream connects
+///
 /// The leader is S0
 #[allow(trivial_casts)] // cannot be inferred
 fn init_mocked_stream_connects(

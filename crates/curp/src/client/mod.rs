@@ -97,6 +97,7 @@ pub trait ClientApi {
 
     /// Send fetch cluster requests to all servers (That's because initially, we didn't
     /// know who the leader is.)
+    ///
     /// Note: The fetched cluster may still be outdated if `linearizable` is false
     async fn fetch_cluster(&self, linearizable: bool) -> Result<FetchClusterResponse, Self::Error>;
 

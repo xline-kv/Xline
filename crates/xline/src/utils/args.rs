@@ -348,7 +348,9 @@ impl From<ServerArgs> for XlineServerConfig {
 }
 
 /// Parse config from command line arguments or config file
+///
 /// # Errors
+///
 /// Return error if parse failed
 #[inline]
 pub async fn parse_config() -> Result<XlineServerConfig> {

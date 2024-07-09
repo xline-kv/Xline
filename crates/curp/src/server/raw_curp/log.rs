@@ -69,8 +69,11 @@ impl<T> From<RangeInclusive<T>> for LogRange<T> {
     }
 }
 
+/// ```text
 /// Curp logs
+///
 /// There exists a fake log entry 0 whose term equals 0
+///
 /// For the leader, there should never be a gap between snapshot and entries
 ///
 /// Examples:
@@ -89,6 +92,7 @@ impl<T> From<RangeInclusive<T>> for LogRange<T> {
 /// (1, `batch_end[1]`) = (1,2), which means the `entries[1..=2]` is a valid batch whose size is 5+6=11, equal to the `batch_limit`
 /// ...
 /// (`first_idx_in_cur_batch`, `batch_end[first_idx_in_cur_batch]`) = (4, 0), which means the `entries[4..]` is a valid batch (aka. current batch) whose size (aka. `cur_batch_size`) is 3+4+2=9, less than the `batch_limit`
+/// ```
 pub(super) struct Log<C: Command> {
     /// Log entries, should be persisted
     /// A VecDeque to store log entries, it will be serialized and persisted

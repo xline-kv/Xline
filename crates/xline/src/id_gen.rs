@@ -8,6 +8,7 @@ use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp::members::ServerId;
 
 /// Generator of unique id
+///
 /// id format:
 /// | prefix    | suffix              |
 /// | 2 bytes   | 5 bytes   | 1 byte  |
