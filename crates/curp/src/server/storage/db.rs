@@ -11,6 +11,7 @@ use crate::{
     log_entry::LogEntry,
     members::{ClusterInfo, ServerId},
     rpc::Member,
+    server::storage::wal::WALStorageOps,
 };
 
 /// Key for persisted state
