@@ -32,6 +32,9 @@ mod util;
 /// Framed
 mod framed;
 
+/// Mock WAL storage
+mod mock;
+
 use std::{io, marker::PhantomData, ops::Mul};
 
 use clippy_utilities::OverflowArithmetic;
@@ -53,6 +56,24 @@ use self::{
     segment::WALSegment,
     util::LockedFile,
 };
+
+/// Operations of a WAL storage
+pub(crate) trait WALStorageOps<C> {
+    /// Recover from the given directory if there's any segments
+    fn recover(&mut self) -> io::Result<Vec<LogEntry<C>>>;
+
+    /// Send frames with fsync
+    fn send_sync(&mut self, item: Vec<DataFrame<'_, C>>) -> io::Result<()>;
+
+    /// Tuncate all the logs whose index is less than or equal to
+    /// `compact_index`
+    ///
+    /// `compact_index` should be the smallest index required in CURP
+    fn truncate_head(&mut self, compact_index: LogIndex) -> io::Result<()>;
+
+    /// Tuncate all the logs whose index is greater than `max_index`
+    fn truncate_tail(&mut self, max_index: LogIndex) -> io::Result<()>;
+}
 
 /// The magic of the WAL file
 const WAL_MAGIC: u32 = 0xd86e_0be2;
@@ -98,12 +119,12 @@ impl<C> WALStorage<C> {
     }
 }
 
-impl<C> WALStorage<C>
+impl<C> WALStorageOps<C> for WALStorage<C>
 where
     C: Serialize + DeserializeOwned + Unpin + 'static + std::fmt::Debug,
 {
     /// Recover from the given directory if there's any segments
-    pub(super) fn recover(&mut self) -> io::Result<Vec<LogEntry<C>>> {
+    fn recover(&mut self) -> io::Result<Vec<LogEntry<C>>> {
         /// Number of lines printed around the missing log in debug information
         const NUM_LINES_DEBUG: usize = 3;
         // We try to recover the removal first
@@ -154,9 +175,8 @@ where
         Ok(logs)
     }
 
-    /// Send frames with fsync
     #[allow(clippy::pattern_type_mismatch)] // Cannot satisfy both clippy
-    pub(super) fn send_sync(&mut self, item: Vec<DataFrame<'_, C>>) -> io::Result<()> {
+    fn send_sync(&mut self, item: Vec<DataFrame<'_, C>>) -> io::Result<()> {
         let last_segment = self
             .segments
             .last_mut()
@@ -173,10 +193,11 @@ where
         Ok(())
     }
 
-    /// Truncate all the logs whose index is less than or equal to `compact_index`
+    /// Truncate all the logs whose index is less than or equal to
+    /// `compact_index`
     ///
     /// `compact_index` should be the smallest index required in CURP
-    pub(super) fn truncate_head(&mut self, compact_index: LogIndex) -> io::Result<()> {
+    fn truncate_head(&mut self, compact_index: LogIndex) -> io::Result<()> {
         if compact_index >= self.next_log_index {
             warn!(
                 "head truncation: compact index too large, compact index: {}, storage next index: {}",
@@ -206,7 +227,7 @@ where
     }
 
     /// Truncate all the logs whose index is greater than `max_index`
-    pub(super) fn truncate_tail(&mut self, max_index: LogIndex) -> io::Result<()> {
+    fn truncate_tail(&mut self, max_index: LogIndex) -> io::Result<()> {
         // segments to truncate
         let segments: Vec<_> = self
             .segments
@@ -227,7 +248,12 @@ where
 
         Ok(())
     }
+}
 
+impl<C> WALStorage<C>
+where
+    C: Serialize + DeserializeOwned + Unpin + 'static + std::fmt::Debug,
+{
     /// Opens a new WAL segment
     fn open_new_segment(&mut self) -> io::Result<()> {
         let lfile = self
