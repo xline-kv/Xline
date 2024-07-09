@@ -4,34 +4,34 @@ This crate provides a command line client for Xline.
 
 ## Global Options
 
-- endpoints <SERVER_NAME ADDR>... -- Set Xline endpoints, which are separated by ','
+- `--endpoints <SERVER_NAME ADDR>...` -- Set Xline endpoints, which are separated by ','
 
   ```bash
   # connect to servers with specific addresses
   ./xlinectl --endpoints "127.0.0.1:2379"
   ```
 
-- user <USERNAME[:PASSWD]> -- The name of the user, this provide a shorthand to set password
+- `--user <USERNAME[:PASSWD]>` -- The name of the user, this provide a shorthand to set password
 
   ```bash
   # connect to servers using user `foo` with password `bar`
   ./xlinectl --user foo:bar
   ```
 
-- password <PASSWD> -- The password of the user, should exist if password not set in `--user`
+- `--password <PASSWD>` -- The password of the user, should exist if password not set in `--user`
 
   ```bash
   # connect to servers using user `foo` with password `bar`
   ./xlinectl --user foo --password bar
   ```
 
-- wait_synced_timeout <TIMEOUT> -- The timeout for Curp client waiting synced(in secs) [default: 2]
+- `--wait_synced_timeout <TIMEOUT>` -- The timeout for Curp client waiting synced(in secs) [default: 2]
 
-- propose_timeout <TIMEOUT> -- The timeout for Curp client proposing request(in secs) [default: 1]
+- `--propose_timeout <TIMEOUT>` -- The timeout for Curp client proposing request(in secs) [default: 1]
 
-- retry_timeout <TIMEOUT> -- The timeout for Curp client retry interval(in millis) [default: 50]
+- `--retry_timeout <TIMEOUT>` -- The timeout for Curp client retry interval(in millis) [default: 50]
 
-- printer_type <TYPE> -- The format of the result that will be printed [default: SIMPLE] [possible values: SIMPLE, FIELD]
+- `--printer_type <TYPE>` -- The format of the result that will be printed [default: SIMPLE] [possible values: SIMPLE, FIELD]
 
 ## Output Format
 
@@ -52,10 +52,10 @@ put [options] <key> <value>
 
 #### Options
 
-- lease -- lease ID to attach to the key [default: 0]
-- prev_kv --  return the previous key-value pair before modification
-- ignore_value --  updates the key using its current value
-- ignore_lease --  updates the key using its current lease
+- `--lease <ID>` -- lease ID to attach to the key [default: 0]
+- `--prev_kv` -- return the previous key-value pair before modification
+- `--ignore_value` -- updates the key using its current value
+- `--ignore_lease` -- updates the key using its current lease
 
 #### Output
 
@@ -95,15 +95,15 @@ get [options] <key> [range_end]
 
 #### Options
 
-- consistency -- Linearizable(L) or Serializable(S) [default: L]
-- order -- Order of results; ASCEND or DESCEND
-- sort_by -- Sort target; CREATE, KEY, MODIFY, VALUE, or VERSION
-- limit -- Maximum number of results [default: 0]
-- prefix -- Get keys with matching prefix (conflicts with range_end)
-- from_key -- Get keys that are greater than or equal to the given key using byte compare (conflicts with prefix and range_end)
-- rev -- Specify the kv revision [default: 0]
-- keys_only -- Get only the keys
-- count_only -- Get only the count (conflicts with keys_only)
+- `--consistency <CONSISTENCY>` -- Linearizable(L) or Serializable(S) [default: L]
+- `--order <ORDER>` -- Order of results; `ASCEND` or `DESCEND`
+- `--sort_by <SORTBY>` -- Sort target; `CREATE`, `KEY`, `MODIFY`, `VALUE`, or `VERSION`
+- `--limit <LIMIT>` -- Maximum number of results [default: 0]
+- `--prefix` -- Get keys with matching prefix (conflicts with range_end)
+- `--from_key` -- Get keys that are greater than or equal to the given key using byte compare (conflicts with prefix and range_end)
+- `--rev <REV>` -- Specify the kv revision [default: 0]
+- `--keys_only` -- Get only the keys
+- `--count_only` -- Get only the count (conflicts with keys_only)
 
 #### Output
 
@@ -157,6 +157,7 @@ bar2
 ```
 
 ### DELETE
+
 Deletes the key or a range of keys
 
 #### Usage
@@ -166,9 +167,10 @@ delete [options] <key> [range_end]
 ```
 
 #### Options
-- prefix -- delete keys with matching prefix
-- prev_kv -- return deleted key-value pairs
-- from_key -- delete keys that are greater than or equal to the given key using byte compare
+
+- `--prefix` -- delete keys with matching prefix
+- `--prev_kv` -- return deleted key-value pairs
+- `--from_key` -- delete keys that are greater than or equal to the given key using byte compare
 
 #### Output
 
@@ -197,6 +199,7 @@ delete [options] <key> [range_end]
 ```
 
 ### TXN
+
 Txn processes all the requests in one transaction
 
 #### Usage
@@ -206,11 +209,13 @@ txn [options]
 ```
 
 #### Options
-- interactive -- set interactive mode
+
+- `--interactive` -- set interactive mode
 
 #### Input Format
 
 The ebnf is the same as etcdctl
+
 ```ebnf
 <Txn> ::= <CMP>* "\n" <THEN> "\n" <ELSE> "\n"
 <CMP> ::= (<CMPCREATE>|<CMPMOD>|<CMPVAL>|<CMPVER>|<CMPLEASE>) "\n"
@@ -237,11 +242,12 @@ The ebnf is the same as etcdctl
 [child requests]
 ```
 
-`<succeed>` can be SUCCESS | FAILURE
+`<succeed>` can be `SUCCESS` | `FAILURE`
 
 #### Examples
 
 non-interactive mode
+
 ```bash
 ./xlinectl txn <<<'mod("key1") > "0"
 
@@ -254,6 +260,7 @@ put key2 "some-val"
 ```
 
 interactive mode
+
 ```bash
 ./xlinectl txn --interactive
 compares:
@@ -266,7 +273,9 @@ failure request:
 put key1 "val1"
 put key2 "some-val"
 ```
+
 ### COMPACTION
+
 COMPACTION discards all Xline event history prior to a given revision. Since Xline uses a multiversion concurrency control model, it preserves all key updates as event history. When the event history up to some revision is no longer needed, all superseded keys may be compacted away to reclaim storage space in the Xline backend database.
 
 #### Usage
@@ -276,7 +285,8 @@ compaction [options] <revision>
 ```
 
 #### Options
-- physical -- To wait for compaction to physically remove all old revisions
+
+- `--physical` -- To wait for compaction to physically remove all old revisions
 
 #### Output
 
@@ -297,19 +307,22 @@ Compacted
 ```
 
 ### WATCH
+
 Watches events stream on keys or prefixes
 
 #### Usage
+
 ```bash
 watch [options] [key] [range_end]
 ```
 
 #### Options
-- prefix -- Watch a prefix
-- rev -- Revision to start watching
-- pre_kv -- Get the previous key-value pair before the event happens
-- progress_notify -- Get periodic watch progress notification from server
-- interactive -- Interactive mode
+
+- `--prefix` -- Watch a prefix
+- `--rev <REVISION>` -- Revision to start watching
+- `--pre_kv` -- Get the previous key-value pair before the event happens
+- `--progress_notify` -- Get periodic watch progress notification from server
+- `--interactive` -- Interactive mode
 
 #### Output
 
@@ -333,16 +346,19 @@ watch [options] [key] [range_end]
 #### Examples
 
 non-interactive mode, which will continuously get output from response stream
+
 ```bash
 # Watch key `foo`
 ./xlinectl watch foo
 ```
+
 ```bash
 # Watch a range of keys from foo to foo3
 ./xlinectl watch foo foo3
 ```
 
 interactive mode, which can start or cancel a watch
+
 ```bash
 ./xlinectl watch --interactive
 
@@ -352,13 +368,14 @@ watch foo foo3
 cancel 100
 ```
 
-
 ### LEASE
 
 ### LEASE GRANT
+
 Create a lease with a given TTL
 
 #### Usage
+
 ```bash
 grant <ttl>
 ```
@@ -370,6 +387,7 @@ grant <ttl>
 ```
 
 #### Examples
+
 ```bash
 # create a new lease with 100s TTL
 ./xlinectl lease grant 100
@@ -377,6 +395,7 @@ grant <ttl>
 ```
 
 ### LEASE REVOKE
+
 Revoke a lease
 
 #### Usage
@@ -384,6 +403,7 @@ Revoke a lease
 ```bash
 revoke <leaseId>
 ```
+
 #### Output
 
 ```
@@ -391,6 +411,7 @@ Revoked
 ```
 
 #### Examples
+
 ```bash
 ./xlinectl lease grant 100
 8927807922788821579
@@ -400,6 +421,7 @@ Revoked
 ```
 
 ### LEASE TIMETOLIVE
+
 Get lease ttl information
 
 #### Usage
@@ -425,6 +447,7 @@ timetolive <leaseId>
 ```
 
 ### LEASE LIST
+
 List all active leases
 
 #### Usage
@@ -442,6 +465,7 @@ list
 ```
 
 #### Examples
+
 ```bash
 ./xlinectl lease grant 100
 8927807922788821579
@@ -455,6 +479,7 @@ list
 ```
 
 ### LEASE KEEP-ALIVE
+
 lease keep alive periodically
 
 #### Usage
@@ -464,7 +489,8 @@ keep_alive [options] <leaseId>
 ```
 
 #### Options
-- once -- keep alive once
+
+- `--once` -- keep alive once
 
 #### Output
 
@@ -493,9 +519,11 @@ keep_alive [options] <leaseId>
 ## Cluster maintenance commands
 
 ### MEMBER
+
 MEMBER provides commands for managing Xline cluster membership.
 
 ### MEMBER ADD
+
 MEMBER ADD introduces a new member into the Xline cluster as a new peer.
 
 #### Usage
@@ -505,8 +533,8 @@ member add [options] <peer_urls>
 ```
 
 #### Options
-- is_learner -- Add as learner
 
+- `--is_learner` -- Add as learner
 
 #### Output
 
@@ -515,6 +543,7 @@ member add [options] <peer_urls>
 ```
 
 #### Examples
+
 ```bash
 # Add a member whose addresses are [127.0.0.1:2379, 127.0.0.1:2380]
 ./xlinectl member add "10.0.0.1:2379,10.0.0.2:2379"
@@ -522,6 +551,7 @@ member add [options] <peer_urls>
 ```
 
 ### MEMBER UPDATE
+
 MEMBER UPDATE sets the peer URLs for an existing member in the Xline cluster.
 
 #### Usage
@@ -537,6 +567,7 @@ Member updated
 ```
 
 #### Examples
+
 ```bash
 ./xlinectl member add "10.0.0.1:2379,10.0.0.2:2379"
 16151281779493828828
@@ -545,6 +576,7 @@ Member updated
 ```
 
 ### MEMBER LIST
+
 MEMBER ADD introduces a new member into the Xline cluster as a new peer.
 
 #### Usage
@@ -554,8 +586,8 @@ member list
 ```
 
 #### Options
-- linearizable -- to use linearizable fetch
 
+- `--linearizable` -- to use linearizable fetch
 
 #### Output
 
@@ -566,6 +598,7 @@ member list
 ```
 
 #### Examples
+
 ```bash
 # List all members
 ./xlinectl member list
@@ -575,6 +608,7 @@ member list
 ```
 
 ### MEMBER REMOVE
+
 MEMBER REMOVE removes a member of an Xline cluster from participating in cluster consensus.
 
 #### Usage
@@ -590,6 +624,7 @@ Member removed
 ```
 
 #### Examples
+
 ```bash
 # Remove a member
 ./xlinectl member remove 16151281779493828828
@@ -597,6 +632,7 @@ Member removed
 ```
 
 ### MEMBER PROMOTE
+
 MEMBER PROMOTE promotes a learner of an Xline cluster to member
 
 #### Usage
@@ -612,6 +648,7 @@ Member promoted
 ```
 
 #### Examples
+
 ```bash
 # Remove a member
 ./xlinectl member promote 16151281779493828828
@@ -619,9 +656,11 @@ Member promoted
 ```
 
 ### SNAPSHOT
+
 Get snapshots of xline nodes
 
 ### SNAPSHOT SAVE
+
 Save snapshot to file
 
 #### Usage
@@ -647,6 +686,7 @@ snapshot saved to: /tmp/foo.snapshot
 ## Concurrency commands
 
 ### LOCK
+
 Acquire a lock, which will return a unique key that exists so long as the lock is held.
 
 #### Usage
@@ -670,12 +710,15 @@ lock acquired
 ./xlinectl lock foo ./xlinectl put foo bar
 OK
 ```
+
 ## Authentication commands
 
 ### AUTH
+
 Manage authentication
 
 ### AUTH ENABLE
+
 Enable authentication
 
 #### Usage
@@ -691,6 +734,7 @@ Authentication enabled
 ```
 
 #### Examples
+
 ```bash
 ./xlinectl user add root rootpw
 ./xlienctl user grant-role root root
@@ -700,6 +744,7 @@ Authentication enabled
 ```
 
 ### AUTH DISABLE
+
 Disable authentication
 
 #### Usage
@@ -715,6 +760,7 @@ Authentication disabled
 ```
 
 #### Examples
+
 ```bash
 # Disable authentication
 ./xlinectl --user root:root auth disable
@@ -722,6 +768,7 @@ Authentication disabled
 ```
 
 ### AUTH STATUS
+
 Status of authentication
 
 #### Usage
@@ -731,15 +778,18 @@ auth status
 ```
 
 #### Examples
+
 ```bash
 # Check the status of authentication
 ./xlinectl auth status
 ```
 
 ### ROLE
+
 Role related commands
 
 ### ROLE ADD
+
 Create a new role
 
 #### Usage
@@ -763,6 +813,7 @@ Role added
 ```
 
 ### ROLE GET
+
 List role information
 
 #### Usage
@@ -797,6 +848,7 @@ key1
 ```
 
 ### ROLE DELETE
+
 Delete a role
 
 #### Usage
@@ -812,6 +864,7 @@ Role deleted
 ```
 
 #### Examples
+
 ```bash
 ./xlinectl --user=root:root role add foo
 # delete the role named `foo`
@@ -820,6 +873,7 @@ Role deleted
 ```
 
 ### ROLE LIST
+
 List all roles
 
 #### Usage
@@ -848,6 +902,7 @@ foo1
 ```
 
 ### ROLE GRANT-PERMISSION
+
 Grant permission to a role, including Read, Write or ReadWrite
 
 #### Usage
@@ -857,8 +912,9 @@ grant_perm [options] <name> <perm_type> <key> [range_end]
 ```
 
 #### Options
-- prefix -- Get keys with matching prefix
-- from_key -- Get keys that are greater than or equal to the given key using byte compare (conflicts with `range_end`)
+
+- `--prefix` -- Get keys with matching prefix
+- `--from_key` -- Get keys that are greater than or equal to the given key using byte compare (conflicts with `range_end`)
 
 #### Output
 
@@ -875,6 +931,7 @@ Permission granted
 ```
 
 ### ROLE REVOKE-PERMISSION
+
 Revoke permission from a role
 
 #### Usage
@@ -900,6 +957,7 @@ Permission revoked
 ### USER
 
 ### USER ADD
+
 Add a new user
 
 #### Usage
@@ -909,7 +967,8 @@ add [options] <name> [password]
 ```
 
 #### Options
-- no_password -- Create without password
+
+- `--no_password` -- Create without password
 
 #### Output
 
@@ -918,6 +977,7 @@ User added
 ```
 
 #### Examples
+
 ```bash
 # Add a new user with a specified password
 ./xlinectl --user=root:root user add foo bar
@@ -929,6 +989,7 @@ User added
 ```
 
 ### USER GET
+
 Get a new user
 
 #### Usage
@@ -938,7 +999,8 @@ get [options] <name>
 ```
 
 #### Options
-- detail -- Show permissions of roles granted to the user
+
+- `--detail` -- Show permissions of roles granted to the user
 
 #### Output
 
@@ -949,6 +1011,7 @@ get [options] <name>
 ```
 
 #### Examples
+
 ```bash
 ./xlinectl --user=root:root user grant_role foo role0
 ./xlinectl --user=root:root user grant_role foo role1
@@ -959,6 +1022,7 @@ role1
 ```
 
 ### USER LIST
+
 List all users
 
 #### Usage
@@ -976,6 +1040,7 @@ list
 ```
 
 #### Examples
+
 ```bash
 ./xlinectl --user=root:root user add foo bar
 ./xlinectl --user=root:root user add foo1 bar1
@@ -986,6 +1051,7 @@ foo1
 ```
 
 ### USER PASSWD
+
 Change the password of a user
 
 #### Usage
@@ -1009,6 +1075,7 @@ Password updated
 ```
 
 ### USER GRANT-ROLE
+
 Grant role to a user
 
 #### Usage
@@ -1034,6 +1101,7 @@ Role granted
 ```
 
 ### USER REVOKE-ROLE
+
 Revoke role from a user
 
 #### Usage
