@@ -14,6 +14,7 @@ use super::{
     codec::{DataFrame, DataFrameOwned, WAL},
     config::PersistentConfig,
     error::{CorruptType, WALError},
+    fs,
     pipeline::FilePipeline,
     remover::SegmentRemover,
     segment::WALSegment,
@@ -41,8 +42,8 @@ pub(crate) struct WALStorage<C> {
 impl<C> WALStorage<C> {
     /// Creates a new `LogStorage`
     pub(super) fn new(config: PersistentConfig) -> io::Result<WALStorage<C>> {
-        if !config.dir.try_exists()? {
-            std::fs::create_dir_all(&config.dir);
+        if fs::metadata(&config.dir).is_err() {
+            fs::create_dir_all(&config.dir)?;
         }
         let mut pipeline = FilePipeline::new(config.dir.clone(), config.max_segment_size);
         Ok(Self {

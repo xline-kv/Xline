@@ -1,5 +1,4 @@
 use std::{
-    fs::File,
     io::{self, Read, Write},
     iter,
     pin::Pin,
@@ -21,6 +20,7 @@ use super::{
     codec::{DataFrame, DataFrameOwned, WAL},
     error::{CorruptType, WALError},
     framed::{Decoder, Encoder},
+    fs,
     util::{get_checksum, parse_u64, validate_data, LockedFile},
     WAL_FILE_EXT,
 };
@@ -45,7 +45,7 @@ pub(super) struct WALSegment {
     /// The soft size limit of this segment
     size_limit: u64,
     /// The opened file of this segment
-    file: File,
+    file: fs::File,
     /// The file size of the segment
     size: u64,
     /// The highest index of the segment
@@ -320,7 +320,7 @@ mod tests {
     use curp_test_utils::test_cmd::TestCommand;
 
     use super::*;
-    use crate::log_entry::EntryData;
+    use crate::{log_entry::EntryData, server::storage::wal::util::tempdir};
 
     #[test]
     fn gen_parse_header_is_correct() {
@@ -347,7 +347,7 @@ mod tests {
         const BASE_INDEX: u64 = 17;
         const SEGMENT_ID: u64 = 2;
         const SIZE_LIMIT: u64 = 5;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempdir();
         let mut tmp_path = dir.path().to_path_buf();
         tmp_path.push("test.tmp");
         let segment_name = WALSegment::segment_name(SEGMENT_ID, BASE_INDEX);
@@ -371,7 +371,7 @@ mod tests {
         const BASE_INDEX: u64 = 1;
         const SEGMENT_ID: u64 = 1;
         const SIZE_LIMIT: u64 = 5;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempdir();
         let mut tmp_path = dir.path().to_path_buf();
         tmp_path.push("test.tmp");
         let segment_name = WALSegment::segment_name(SEGMENT_ID, BASE_INDEX);

@@ -1,5 +1,5 @@
 /// Mock fs implementations
-mod fs;
+pub(super) mod fs;
 
 use std::{collections::VecDeque, io, marker::PhantomData};
 

@@ -38,7 +38,10 @@ mod mock;
 /// WAL storage
 mod storage;
 
-use std::io;
+/// Fs components
+mod fs;
+
+use std::{io, marker::PhantomData};
 
 use codec::DataFrame;
 use config::WALConfig;
