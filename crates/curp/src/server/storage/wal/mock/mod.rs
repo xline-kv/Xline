@@ -1,3 +1,6 @@
+/// Mock fs implementations
+mod fs;
+
 use std::{collections::VecDeque, io, marker::PhantomData};
 
 use curp_external_api::LogIndex;
