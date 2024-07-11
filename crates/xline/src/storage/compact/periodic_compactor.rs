@@ -1,5 +1,4 @@
 use std::{
-    cmp::Ordering,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc,
@@ -133,10 +132,7 @@ impl<C: Compactable> PeriodicCompactor<C> {
 fn sample_config(period: Duration) -> (Duration, usize) {
     /// one hour duration
     const ONEHOUR: Duration = Duration::from_secs(3600);
-    let base_interval = match period.cmp(&ONEHOUR) {
-        Ordering::Less => period,
-        Ordering::Equal | Ordering::Greater => ONEHOUR,
-    };
+    let base_interval = period.min(ONEHOUR);
     let divisor = 10;
     let check_interval = base_interval
         .checked_div(divisor)

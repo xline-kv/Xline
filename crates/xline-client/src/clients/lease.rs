@@ -36,7 +36,6 @@ impl Debug for LeaseClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LeaseClient")
             .field("lease_client", &self.lease_client)
-            .field("lease_client", &self.lease_client)
             .field("token", &self.token)
             .field("id_gen", &self.id_gen)
             .finish()
