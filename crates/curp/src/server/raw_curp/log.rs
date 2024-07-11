@@ -168,7 +168,7 @@ impl<C: Command> Log<C> {
             }
             let end = self.li_to_pi(self.batch_end[self.first_idx_in_cur_batch - 1]);
             match end.cmp(&last_index) {
-                // All the `batch_end[i]` lager than `len - 1` should be reset to zero
+                // All the `batch_end[i]` larger than `len - 1` should be reset to zero
                 Ordering::Greater => {
                     self.batch_end[self.first_idx_in_cur_batch - 1] = 0;
                     self.first_idx_in_cur_batch -= 1;
@@ -197,10 +197,12 @@ impl<C: Command> Log<C> {
         }
 
         // recalculate the `cur_batch_size`
-        self.cur_batch_size = 0;
-        for entry in self.entries.iter().skip(self.first_idx_in_cur_batch) {
-            self.cur_batch_size += entry.size;
-        }
+        self.cur_batch_size = self
+            .entries
+            .iter()
+            .skip(self.first_idx_in_cur_batch)
+            .map(|entry| entry.size)
+            .sum();
     }
 
     /// push a log entry into the back of queue
