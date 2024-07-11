@@ -14,7 +14,7 @@ use xline_client::{
     types::{
         cluster::{MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse},
         kv::{
-            CompactionRequest, CompactionResponse, PutRequest, PutResponse, RangeRequest,
+            CompactionRequest, CompactionResponse, PutOptions, PutResponse, RangeRequest,
             RangeResponse,
         },
         watch::{WatchRequest, WatchStreaming, Watcher},
@@ -175,10 +175,22 @@ macro_rules! impl_client_method {
 }
 
 impl SimClient {
-    impl_client_method!(put, kv_client, PutRequest, PutResponse);
+    pub async fn put(
+        &self,
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+        option: Option<PutOptions>,
+    ) -> Result<PutResponse, XlineClientError<Command>> {
+        let client = self.inner.clone();
+        let key = key.into();
+        let value = value.into();
+        self.handle
+            .spawn(async move { client.kv_client().put(key, value, option).await })
+            .await
+            .unwrap()
+    }
     impl_client_method!(range, kv_client, RangeRequest, RangeResponse);
     impl_client_method!(compact, kv_client, CompactionRequest, CompactionResponse);
-
     impl_client_method!(watch, watch_client, WatchRequest, (Watcher, WatchStreaming));
 }
 
@@ -225,12 +237,21 @@ impl SimEtcdClient {
         }
     }
 
-    pub async fn put(&self, request: PutRequest) -> Result<PutResponse, XlineClientError<Command>> {
+    pub async fn put(
+        &self,
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+        option: Option<PutOptions>,
+    ) -> Result<PutResponse, XlineClientError<Command>> {
         let mut client = self.kv.clone();
+        let key = key.into();
+        let value = value.into();
         self.handle
             .spawn(async move {
                 client
-                    .put(xlineapi::PutRequest::from(request))
+                    .put(xlineapi::PutRequest::from(
+                        option.unwrap_or_default().with_kv(key, value),
+                    ))
                     .await
                     .map(|r| r.into_inner())
                     .map_err(Into::into)
