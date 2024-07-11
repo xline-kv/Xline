@@ -3,9 +3,8 @@ use std::{error::Error, time::Duration};
 use test_macros::abort_on_panic;
 use tokio::{net::TcpListener, time::sleep};
 use xline_client::{
-    types::{
-        cluster::{MemberAddRequest, MemberListRequest, MemberRemoveRequest, MemberUpdateRequest},
-        kv::PutRequest,
+    types::cluster::{
+        MemberAddRequest, MemberListRequest, MemberRemoveRequest, MemberUpdateRequest,
     },
     Client, ClientOptions,
 };
@@ -39,7 +38,7 @@ async fn xline_add_node() -> Result<(), Box<dyn Error>> {
     let client = Client::connect(cluster.all_client_addrs(), ClientOptions::default()).await?;
     let mut cluster_client = client.cluster_client();
     let kv_client = client.kv_client();
-    _ = kv_client.put(PutRequest::new("key", "value")).await?;
+    _ = kv_client.put("key", "value", None).await?;
     let new_node_peer_listener = TcpListener::bind("0.0.0.0:0").await?;
     let new_node_peer_urls = vec![format!("http://{}", new_node_peer_listener.local_addr()?)];
     let new_node_client_listener = TcpListener::bind("0.0.0.0:0").await?;

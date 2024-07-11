@@ -1,6 +1,6 @@
 //! An example to show how the errors are organized in `xline-client`
 use anyhow::Result;
-use xline_client::{error::XlineClientError, types::kv::PutRequest, Client, ClientOptions};
+use xline_client::{error::XlineClientError, types::kv::PutOptions, Client, ClientOptions};
 use xlineapi::execute_error::ExecuteError;
 
 #[tokio::main]
@@ -16,7 +16,11 @@ async fn main() -> Result<()> {
     // It should return an error and it should be `key not found`
     // as we did not add it before.
     let resp = client
-        .put(PutRequest::new("key", "").with_ignore_value(true))
+        .put(
+            "key",
+            "",
+            Some(PutOptions::default().with_ignore_value(true)),
+        )
         .await;
     let err = resp.unwrap_err();
 
