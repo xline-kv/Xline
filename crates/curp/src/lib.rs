@@ -247,6 +247,7 @@ mod test {
             (3, 2, 4),
             (4, 3, 5),
             (4, 3, 6),
+            (6, 4, 8),
         ];
 
         for (node_cnt, expected) in nodes.into_iter().zip(expected_res.into_iter()) {

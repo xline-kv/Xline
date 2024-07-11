@@ -188,7 +188,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
     }
 
     #[instrument(skip_all, name = "lease_keep_alive")]
-    #[allow(clippy::unimplemented)]
     async fn lease_keep_alive(
         &self,
         request: tonic::Request<tonic::Streaming<LeaseKeepAliveMsg>>,
