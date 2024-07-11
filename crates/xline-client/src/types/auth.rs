@@ -9,33 +9,6 @@ pub use xlineapi::{
 };
 
 /// Request for `Authenticate`
-#[derive(Debug)]
-pub struct AuthenticateRequest {
-    /// Inner request
-    pub(crate) inner: xlineapi::AuthenticateRequest,
-}
-
-impl AuthenticateRequest {
-    /// Creates a new `AuthenticateRequest`.
-    #[inline]
-    pub fn new(user_name: impl Into<String>, user_password: impl Into<String>) -> Self {
-        Self {
-            inner: xlineapi::AuthenticateRequest {
-                name: user_name.into(),
-                password: user_password.into(),
-            },
-        }
-    }
-}
-
-impl From<AuthenticateRequest> for xlineapi::AuthenticateRequest {
-    #[inline]
-    fn from(req: AuthenticateRequest) -> Self {
-        req.inner
-    }
-}
-
-/// Request for `Authenticate`
 #[derive(Debug, PartialEq)]
 pub struct AuthUserAddRequest {
     /// Inner request
