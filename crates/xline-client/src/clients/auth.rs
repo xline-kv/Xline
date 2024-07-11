@@ -17,7 +17,7 @@ use crate::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
         AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, AuthUserAddRequest,
         AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGetRequest,
-        AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest, AuthenticateRequest,
+        AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
     },
     AuthService, CurpClient,
 };
@@ -182,7 +182,7 @@ impl AuthClient {
     ///         .auth_client();
     ///
     ///     let resp = client
-    ///         .authenticate(AuthenticateRequest::new("root", "root pass word"))
+    ///         .authenticate("root", "root pass word")
     ///         .await?;
     ///
     ///     println!("auth token: {}", resp.token);
@@ -193,11 +193,15 @@ impl AuthClient {
     #[inline]
     pub async fn authenticate(
         &mut self,
-        request: AuthenticateRequest,
+        name: impl Into<String>,
+        password: impl Into<String>,
     ) -> Result<AuthenticateResponse> {
         Ok(self
             .auth_client
-            .authenticate(xlineapi::AuthenticateRequest::from(request))
+            .authenticate(xlineapi::AuthenticateRequest {
+                name: name.into(),
+                password: password.into(),
+            })
             .await?
             .into_inner())
     }

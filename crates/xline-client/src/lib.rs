@@ -253,7 +253,7 @@ impl Client {
             Some((username, password)) => {
                 let mut tmp_auth = AuthClient::new(Arc::clone(&curp_client), channel.clone(), None);
                 let resp = tmp_auth
-                    .authenticate(types::auth::AuthenticateRequest::new(username, password))
+                    .authenticate(username, password)
                     .await
                     .map_err(|err| XlineClientBuildError::AuthError(err.to_string()))?;
 
