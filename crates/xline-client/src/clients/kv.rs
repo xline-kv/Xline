@@ -32,7 +32,6 @@ impl Debug for KvClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("KvClient")
             .field("kv_client", &self.kv_client)
-            .field("kv_client", &self.kv_client)
             .field("token", &self.token)
             .finish()
     }

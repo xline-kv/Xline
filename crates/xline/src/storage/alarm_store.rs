@@ -170,12 +170,14 @@ impl AlarmStore {
 
     /// Handle alarm activate request
     fn handle_alarm_activate(&self, member_id: ServerId, alarm: AlarmType) -> Vec<AlarmMember> {
-        let new_alarm = AlarmMember::new(member_id, alarm);
         self.types
             .read()
             .get(&alarm)
             .and_then(|e| e.get(&member_id))
-            .map_or_else(|| vec![new_alarm], |m| vec![m.clone()])
+            .map_or_else(
+                || vec![AlarmMember::new(member_id, alarm)],
+                |m| vec![m.clone()],
+            )
     }
 
     /// Handle alarm deactivate request
