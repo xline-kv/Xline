@@ -3,7 +3,7 @@ use std::{error::Error, time::Duration};
 use test_macros::abort_on_panic;
 use xline_test_utils::{
     types::kv::{
-        Compare, CompareResult, DeleteRangeRequest, PutRequest, RangeRequest, Response, SortOrder,
+        Compare, CompareResult, DeleteRangeRequest, PutOptions, RangeRequest, Response, SortOrder,
         SortTarget, TxnOp, TxnRequest,
     },
     Client, ClientOptions, Cluster,
@@ -13,25 +13,35 @@ use xline_test_utils::{
 #[abort_on_panic]
 async fn test_kv_put() -> Result<(), Box<dyn Error>> {
     struct TestCase {
-        req: PutRequest,
+        key: &'static str,
+        value: &'static str,
+        option: Option<PutOptions>,
         want_err: bool,
     }
 
     let tests = [
         TestCase {
-            req: PutRequest::new("foo", "").with_ignore_value(true),
+            key: "foo",
+            value: "",
+            option: Some(PutOptions::default().with_ignore_value(true)),
             want_err: true,
         },
         TestCase {
-            req: PutRequest::new("foo", "bar"),
+            key: "foo",
+            value: "bar",
+            option: None,
             want_err: false,
         },
         TestCase {
-            req: PutRequest::new("foo", "").with_ignore_value(true),
+            key: "foo",
+            value: "",
+            option: Some(PutOptions::default().with_ignore_value(true)),
             want_err: false,
         },
         TestCase {
-            req: PutRequest::new("foo", "").with_lease(12345),
+            key: "foo",
+            value: "",
+            option: Some(PutOptions::default().with_lease(12345)),
             want_err: true,
         },
     ];
@@ -41,7 +51,7 @@ async fn test_kv_put() -> Result<(), Box<dyn Error>> {
     let client = cluster.client().await.kv_client();
 
     for test in tests {
-        let res = client.put(test.req).await;
+        let res = client.put(test.key, test.value, test.option).await;
         assert_eq!(res.is_err(), test.want_err);
     }
 
@@ -148,7 +158,7 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
     ];
 
     for key in kvs {
-        client.put(PutRequest::new(key, "bar")).await?;
+        client.put(key, "bar", None).await?;
     }
 
     for test in tests {
@@ -175,7 +185,7 @@ async fn test_range_redirect() -> Result<(), Box<dyn Error>> {
     let kv_client = Client::connect([addr], ClientOptions::default())
         .await?
         .kv_client();
-    let _ignore = kv_client.put(PutRequest::new("foo", "bar")).await?;
+    let _ignore = kv_client.put("foo", "bar", None).await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
     let res = kv_client.range(RangeRequest::new("foo")).await?;
     assert_eq!(res.kvs.len(), 1);
@@ -239,7 +249,7 @@ async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
 
     for test in tests {
         for key in keys {
-            client.put(PutRequest::new(key, "bar")).await?;
+            client.put(key, "bar", None).await?;
         }
 
         let res = client.delete(test.req).await?;
@@ -266,12 +276,12 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
 
     let kvs = ["a", "b", "c", "d", "e"];
     for key in kvs {
-        client.put(PutRequest::new(key, "bar")).await?;
+        client.put(key, "bar", None).await?;
     }
 
     let read_write_txn_req = TxnRequest::new()
         .when(&[Compare::value("b", CompareResult::Equal, "bar")][..])
-        .and_then(&[TxnOp::put(PutRequest::new("f", "foo"))][..])
+        .and_then(&[TxnOp::put("f", "foo", None)][..])
         .or_else(&[TxnOp::range(RangeRequest::new("a"))][..]);
 
     let res = client.txn(read_write_txn_req).await?;

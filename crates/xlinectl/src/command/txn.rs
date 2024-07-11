@@ -140,7 +140,7 @@ fn parse_op_line(line: &str) -> Result<TxnOp> {
         "put" => {
             let matches = put_cmd.try_get_matches_from(args.clone())?;
             let req = put::build_request(&matches);
-            Ok(TxnOp::put(req))
+            Ok(TxnOp::put(req.0, req.1, Some(req.2)))
         }
         "get" => {
             let matches = get_cmd.try_get_matches_from(args.clone())?;
@@ -167,7 +167,7 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 
 #[cfg(test)]
 mod tests {
-    use xline_client::types::kv::{PutRequest, RangeRequest};
+    use xline_client::types::kv::RangeRequest;
 
     use super::*;
 
@@ -187,7 +187,7 @@ mod tests {
     fn parse_op() {
         assert_eq!(
             parse_op_line(r#"put key1 "created-key1""#).unwrap(),
-            TxnOp::put(PutRequest::new("key1", "created-key1"))
+            TxnOp::put("key1", "created-key1", None)
         );
         assert_eq!(
             parse_op_line(r"get key1 key11").unwrap(),

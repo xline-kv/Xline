@@ -1,8 +1,5 @@
 use anyhow::Result;
-use xline_client::{
-    types::{kv::PutRequest, watch::WatchRequest},
-    Client, ClientOptions,
-};
+use xline_client::{types::watch::WatchRequest, Client, ClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -15,7 +12,7 @@ async fn main() -> Result<()> {
 
     // watch
     let (mut watcher, mut stream) = watch_client.watch(WatchRequest::new("key1")).await?;
-    kv_client.put(PutRequest::new("key1", "value1")).await?;
+    kv_client.put("key1", "value1", None).await?;
 
     let resp = stream.message().await?.unwrap();
     let kv = resp.events[0].kv.as_ref().unwrap();

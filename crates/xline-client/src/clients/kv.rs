@@ -8,7 +8,7 @@ use xlineapi::{
 
 use crate::{
     error::Result,
-    types::kv::{CompactionRequest, DeleteRangeRequest, PutRequest, RangeRequest, TxnRequest},
+    types::kv::{CompactionRequest, DeleteRangeRequest, PutOptions, RangeRequest, TxnRequest},
     AuthService, CurpClient,
 };
 
@@ -65,7 +65,7 @@ impl KvClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::kv::PutRequest, Client, ClientOptions};
+    /// use xline_client::{types::kv::PutOptions, Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -76,14 +76,22 @@ impl KvClient {
     ///         .await?
     ///         .kv_client();
     ///
-    ///     client.put(PutRequest::new("key1", "value1")).await?;
+    ///     client.put("key1", "value1", None).await?;
+    ///     client.put("key1", "value1", PutOptions::default().with_prev_kv(true)).await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     #[inline]
-    pub async fn put(&self, request: PutRequest) -> Result<PutResponse> {
-        let request = RequestWrapper::from(xlineapi::PutRequest::from(request));
+    pub async fn put(
+        &self,
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+        option: Option<PutOptions>,
+    ) -> Result<PutResponse> {
+        let request = RequestWrapper::from(xlineapi::PutRequest::from(
+            option.unwrap_or_default().with_kv(key.into(), value.into()),
+        ));
         let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client

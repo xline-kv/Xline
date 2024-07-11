@@ -2,10 +2,7 @@ use std::error::Error;
 
 use test_macros::abort_on_panic;
 use xline_test_utils::{
-    types::{
-        kv::{DeleteRangeRequest, PutRequest},
-        watch::WatchRequest,
-    },
+    types::{kv::DeleteRangeRequest, watch::WatchRequest},
     Cluster,
 };
 use xlineapi::EventType;
@@ -45,7 +42,7 @@ async fn test_watch() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    kv_client.put(PutRequest::new("foo", "bar")).await?;
+    kv_client.put("foo", "bar", None).await?;
     kv_client.delete(DeleteRangeRequest::new("foo")).await?;
 
     handle.await?;

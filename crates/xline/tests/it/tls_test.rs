@@ -7,7 +7,6 @@ use utils::config::{
     AuthConfig, ClusterConfig, CompactConfig, LogConfig, MetricsConfig, StorageConfig, TlsConfig,
     TraceConfig, XlineServerConfig,
 };
-use xline_client::types::kv::PutRequest;
 use xline_test_utils::{enable_auth, set_user, Cluster};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -19,7 +18,7 @@ async fn test_basic_tls() {
     let client = cluster
         .client_with_tls_config(basic_tls_client_config())
         .await;
-    let res = client.kv_client().put(PutRequest::new("foo", "bar")).await;
+    let res = client.kv_client().put("foo", "bar", None).await;
     assert!(res.is_ok());
 }
 
@@ -32,7 +31,7 @@ async fn test_mtls() {
     let client = cluster
         .client_with_tls_config(mtls_client_config("root"))
         .await;
-    let res = client.kv_client().put(PutRequest::new("foo", "bar")).await;
+    let res = client.kv_client().put("foo", "bar", None).await;
     assert!(res.is_ok());
 }
 
@@ -59,10 +58,7 @@ async fn test_certificate_authenticate() {
     let u1_client = cluster
         .client_with_tls_config(mtls_client_config("u1"))
         .await;
-    let res = u1_client
-        .kv_client()
-        .put(PutRequest::new("foo", "bar"))
-        .await;
+    let res = u1_client.kv_client().put("foo", "bar", None).await;
     assert!(res.is_err());
 
     set_user(&root_client, "u1", "123", "r1", b"foo", &[])
@@ -74,10 +70,7 @@ async fn test_certificate_authenticate() {
 
     let res = etcd_u2_client.put("foa", "bar", None).await;
     assert!(res.is_ok());
-    let res = u1_client
-        .kv_client()
-        .put(PutRequest::new("foo", "bar"))
-        .await;
+    let res = u1_client.kv_client().put("foo", "bar", None).await;
     assert!(res.is_ok());
 }
 

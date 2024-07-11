@@ -5,10 +5,7 @@ use tokio::io::AsyncWriteExt;
 #[cfg(test)]
 use xline::restore::restore;
 use xline_client::error::XlineClientError;
-use xline_test_utils::{
-    types::kv::{PutRequest, RangeRequest},
-    Client, ClientOptions, Cluster,
-};
+use xline_test_utils::{types::kv::RangeRequest, Client, ClientOptions, Cluster};
 use xlineapi::{execute_error::ExecuteError, AlarmAction, AlarmRequest, AlarmType};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -27,7 +24,7 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
         let mut cluster = Cluster::new_rocks(3).await;
         cluster.start().await;
         let client = cluster.client().await.kv_client();
-        let _ignore = client.put(PutRequest::new("key", "value")).await?;
+        let _ignore = client.put("key", "value", None).await?;
         tokio::time::sleep(Duration::from_millis(100)).await; // TODO: use `propose_index` and remove this sleep after we finished our client.
         let mut maintenance_client =
             Client::connect(vec![cluster.get_client_url(0)], ClientOptions::default())
@@ -85,8 +82,7 @@ async fn test_alarm(idx: usize) {
     for i in 1..100u8 {
         let key: Vec<u8> = vec![i];
         let value: Vec<u8> = vec![i];
-        let req = PutRequest::new(key, value);
-        if let Err(err) = k_client.put(req).await {
+        if let Err(err) = k_client.put(key, value, None).await {
             assert!(matches!(
                 err,
                 XlineClientError::ExecuteError(ExecuteError::Nospace)

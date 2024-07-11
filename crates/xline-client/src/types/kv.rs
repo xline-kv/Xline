@@ -4,27 +4,22 @@ pub use xlineapi::{
     RangeResponse, Response, ResponseOp, SortOrder, SortTarget, TargetUnion, TxnResponse,
 };
 
-/// Request type for `Put`
-#[derive(Debug, PartialEq)]
-pub struct PutRequest {
+/// Options for `Put`, as same as the `PutRequest` for `Put`.
+#[derive(Debug, PartialEq, Default)]
+pub struct PutOptions {
     /// Inner request
     inner: xlineapi::PutRequest,
 }
 
-impl PutRequest {
-    /// Creates a new `PutRequest`
-    ///
+impl PutOptions {
+    #[inline]
+    #[must_use]
     /// `key` is the key, in bytes, to put into the key-value store.
     /// `value` is the value, in bytes, to associate with the key in the key-value store.
-    #[inline]
-    pub fn new(key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> Self {
-        Self {
-            inner: xlineapi::PutRequest {
-                key: key.into(),
-                value: value.into(),
-                ..Default::default()
-            },
-        }
+    pub fn with_kv(mut self, key: Vec<u8>, value: Vec<u8>) -> Self {
+        self.inner.key = key;
+        self.inner.value = value;
+        self
     }
 
     /// lease is the lease ID to associate with the key in the key-value store.
@@ -106,9 +101,9 @@ impl PutRequest {
     }
 }
 
-impl From<PutRequest> for xlineapi::PutRequest {
+impl From<PutOptions> for xlineapi::PutRequest {
     #[inline]
-    fn from(req: PutRequest) -> Self {
+    fn from(req: PutOptions) -> Self {
         req.inner
     }
 }
@@ -567,9 +562,18 @@ impl TxnOp {
     /// Creates a `Put` operation.
     #[inline]
     #[must_use]
-    pub fn put(request: PutRequest) -> Self {
+    pub fn put(
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+        option: Option<PutOptions>,
+    ) -> Self {
         TxnOp {
-            inner: xlineapi::Request::RequestPut(request.into()),
+            inner: xlineapi::Request::RequestPut(
+                option
+                    .unwrap_or_default()
+                    .with_kv(key.into(), value.into())
+                    .into(),
+            ),
         }
     }
 
