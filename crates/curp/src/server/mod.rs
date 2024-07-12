@@ -196,7 +196,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::InnerProtoc
         request: tonic::Request<VoteRequest>,
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.vote(request.into_inner()).await?,
+            self.inner.vote(&request.into_inner())?,
         ))
     }
 

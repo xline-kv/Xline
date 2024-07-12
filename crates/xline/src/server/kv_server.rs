@@ -232,9 +232,9 @@ impl Kv for KvServer {
         }
     }
 
-    /// Compact compacts the event history in the etcd key-value store. The key-value
-    /// store should be periodically compacted or the event history will continue to grow
-    /// indefinitely.
+    /// Compact compacts the event history in the etcd key-value store. The
+    /// key-value store should be periodically compacted or the event
+    /// history will continue to grow indefinitely.
     #[instrument(skip_all)]
     async fn compact(
         &self,

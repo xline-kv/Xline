@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use engine::EngineError;
 use thiserror::Error;
 
@@ -18,8 +17,11 @@ pub enum StorageError {
     #[error("codec error, {0}")]
     Codec(String),
     /// Rocksdb error
-    #[error("internal error, {0}")]
-    Internal(#[from] EngineError),
+    #[error("rocksdb error, {0}")]
+    RocksDB(#[from] EngineError),
+    /// WAL error
+    #[error("wal error, {0}")]
+    WAL(#[from] std::io::Error),
 }
 
 impl From<bincode::Error> for StorageError {
@@ -36,8 +38,12 @@ impl From<prost::DecodeError> for StorageError {
     }
 }
 
+/// Vote info
+pub(crate) type VoteInfo = (u64, ServerId);
+/// Recovered data
+pub(crate) type RecoverData<C> = (Option<VoteInfo>, Vec<LogEntry<C>>);
+
 /// Curp storage api
-#[async_trait]
 #[allow(clippy::module_name_repetitions)]
 pub trait StorageApi: Send + Sync {
     /// Command
@@ -47,7 +53,7 @@ pub trait StorageApi: Send + Sync {
     ///
     /// # Errors
     /// Return `StorageError` when it failed to store the `voted_for` info to underlying database.
-    async fn flush_voted_for(&self, term: u64, voted_for: ServerId) -> Result<(), StorageError>;
+    fn flush_voted_for(&self, term: u64, voted_for: ServerId) -> Result<(), StorageError>;
 
     /// Put `Member` into storage
     ///
@@ -76,16 +82,15 @@ pub trait StorageApi: Send + Sync {
     /// Put log entries in storage
     ///
     /// # Errors
-    /// Return `StorageError` when it failed to store the given log entry info to underlying database.
-    async fn put_log_entry(&self, entry: &LogEntry<Self::Command>) -> Result<(), StorageError>;
+    /// Return `StorageError` when it failed to store the log entries to underlying database.
+    fn put_log_entries(&self, entry: &[&LogEntry<Self::Command>]) -> Result<(), StorageError>;
 
     /// Recover from persisted storage
+    /// Return `voted_for` and all log entries
     ///
     /// # Errors
-    /// Return `StorageError` when it failed to recover from underlying database. Otherwise, return recovered `voted_for` and all log entries
-    async fn recover(
-        &self,
-    ) -> Result<(Option<(u64, ServerId)>, Vec<LogEntry<Self::Command>>), StorageError>;
+    /// Return `StorageError` when it failed to recover the log entries and vote info from underlying database.
+    fn recover(&self) -> Result<RecoverData<Self::Command>, StorageError>;
 }
 
 /// CURP `DB` storage implementation
