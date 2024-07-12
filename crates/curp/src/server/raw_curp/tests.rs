@@ -73,6 +73,7 @@ impl RawCurp<TestCommand, TestRoleChange> {
             .build()
             .unwrap();
         let curp_storage = Arc::new(DB::open(&curp_config.engine_cfg).unwrap());
+        let _ignore = curp_storage.recover().unwrap();
 
         // grant a infinity expiry lease for test client id
         lease_manager.write().expiry_queue.push(

@@ -206,6 +206,9 @@ mod tests {
         let storage_cfg = EngineConfig::RocksDB(db_dir.clone());
         {
             let s = DB::<TestCommand>::open(&storage_cfg)?;
+            let (voted_for, entries) = s.recover()?;
+            assert!(voted_for.is_none());
+            assert!(entries.is_empty());
             s.flush_voted_for(1, 222)?;
             s.flush_voted_for(3, 111)?;
             let entry0 = LogEntry::new(1, 3, ProposeId(1, 1), Arc::new(TestCommand::default()));
