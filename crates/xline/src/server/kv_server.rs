@@ -145,7 +145,10 @@ impl Kv for KvServer {
         )?;
         let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let is_serializable = range_req.serializable;
-        let res = if !is_serializable {
+        let res = if is_serializable {
+            let cmd = Command::new_with_auth_info(request.into_inner().into(), auth_info);
+            self.do_serializable(&cmd)?
+        } else {
             let (cmd_res, sync_res) = self.propose(request.into_inner(), auth_info, false).await?;
             let mut res = Self::parse_response_op(cmd_res.into_inner().into());
             if let Some(sync_res) = sync_res {
@@ -154,9 +157,6 @@ impl Kv for KvServer {
                 Self::update_header_revision(&mut res, revision);
             }
             res
-        } else {
-            let cmd = Command::new_with_auth_info(request.into_inner().into(), auth_info);
-            self.do_serializable(&cmd)?
         };
 
         if let Response::ResponseRange(response) = res {

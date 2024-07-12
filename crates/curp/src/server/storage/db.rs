@@ -1,11 +1,14 @@
-use std::marker::PhantomData;
+use std::ops::Deref;
 
-use async_trait::async_trait;
 use engine::{Engine, EngineType, StorageEngine, StorageOps, WriteOperation};
+use parking_lot::Mutex;
 use prost::Message;
 use utils::config::EngineConfig;
 
-use super::{StorageApi, StorageError};
+use super::{
+    wal::{codec::DataFrame, config::WALConfig, WALStorage, WALStorageOps},
+    RecoverData, StorageApi, StorageError,
+};
 use crate::{
     cmd::Command,
     log_entry::LogEntry,
@@ -22,27 +25,30 @@ const MEMBER_ID: &[u8] = b"MemberId";
 
 /// Column family name for curp storage
 const CF: &str = "curp";
-/// Column family name for logs
-const LOGS_CF: &str = "logs";
 /// Column family name for members
 const MEMBERS_CF: &str = "members";
+
+/// The sub dir for `RocksDB` files
+const ROCKSDB_SUB_DIR: &str = "rocksdb";
+
+/// The sub dir for WAL files
+const WAL_SUB_DIR: &str = "wal";
 
 /// `DB` storage implementation
 #[derive(Debug)]
 pub struct DB<C> {
+    /// The WAL storage
+    wal: Mutex<WALStorage<C>>,
     /// DB handle
     db: Engine,
-    /// Phantom
-    phantom: PhantomData<C>,
 }
 
-#[async_trait]
 impl<C: Command> StorageApi for DB<C> {
     /// Command
     type Command = C;
 
     #[inline]
-    async fn flush_voted_for(&self, term: u64, voted_for: ServerId) -> Result<(), StorageError> {
+    fn flush_voted_for(&self, term: u64, voted_for: ServerId) -> Result<(), StorageError> {
         let bytes = bincode::serialize(&(term, voted_for))?;
         let op = WriteOperation::new_put(CF, VOTE_FOR.to_vec(), bytes);
         self.db.write_multi(vec![op], true)?;
@@ -51,12 +57,17 @@ impl<C: Command> StorageApi for DB<C> {
     }
 
     #[inline]
-    async fn put_log_entry(&self, entry: &LogEntry<Self::Command>) -> Result<(), StorageError> {
-        let bytes = bincode::serialize(entry)?;
-        let op = WriteOperation::new_put(LOGS_CF, entry.index.to_le_bytes().to_vec(), bytes);
-        self.db.write_multi(vec![op], false)?;
-
-        Ok(())
+    fn put_log_entries(&self, entry: &[&LogEntry<Self::Command>]) -> Result<(), StorageError> {
+        self.wal
+            .lock()
+            .send_sync(
+                entry
+                    .iter()
+                    .map(Deref::deref)
+                    .map(DataFrame::Entry)
+                    .collect(),
+            )
+            .map_err(Into::into)
     }
 
     #[inline]
@@ -135,28 +146,13 @@ impl<C: Command> StorageApi for DB<C> {
     }
 
     #[inline]
-    async fn recover(
-        &self,
-    ) -> Result<(Option<(u64, ServerId)>, Vec<LogEntry<Self::Command>>), StorageError> {
+    fn recover(&self) -> Result<RecoverData<Self::Command>, StorageError> {
+        let entries = self.wal.lock().recover()?;
         let voted_for = self
             .db
             .get(CF, VOTE_FOR)?
             .map(|bytes| bincode::deserialize::<(u64, ServerId)>(&bytes))
             .transpose()?;
-
-        let mut entries = vec![];
-        let mut prev_index = 0;
-        for (_k, v) in self.db.get_all(LOGS_CF)? {
-            let entry: LogEntry<C> = bincode::deserialize(&v)?;
-            #[allow(clippy::arithmetic_side_effects)] // won't overflow
-            if entry.index != prev_index + 1 {
-                // break when logs are no longer consistent
-                break;
-            }
-            prev_index = entry.index;
-            entries.push(entry);
-        }
-
         Ok((voted_for, entries))
     }
 }
@@ -167,15 +163,27 @@ impl<C> DB<C> {
     /// Will return `StorageError` if failed to open the storage
     #[inline]
     pub fn open(config: &EngineConfig) -> Result<Self, StorageError> {
-        let engine_type = match *config {
-            EngineConfig::Memory => EngineType::Memory,
-            EngineConfig::RocksDB(ref path) => EngineType::Rocks(path.clone()),
+        let (engine_type, wal_config) = match *config {
+            EngineConfig::Memory => (EngineType::Memory, WALConfig::Memory),
+            EngineConfig::RocksDB(ref path) => {
+                let mut rocksdb_dir = path.clone();
+                rocksdb_dir.push(ROCKSDB_SUB_DIR);
+                let mut wal_dir = path.clone();
+                wal_dir.push(WAL_SUB_DIR);
+                (
+                    EngineType::Rocks(rocksdb_dir.clone()),
+                    WALConfig::new(wal_dir),
+                )
+            }
             _ => unreachable!("Not supported storage type"),
         };
-        let db = Engine::new(engine_type, &[CF, LOGS_CF, MEMBERS_CF])?;
+
+        let db = Engine::new(engine_type, &[CF, MEMBERS_CF])?;
+        let wal = WALStorage::new(wal_config)?;
+
         Ok(Self {
+            wal: Mutex::new(wal),
             db,
-            phantom: PhantomData,
         })
     }
 }
@@ -198,20 +206,20 @@ mod tests {
         let storage_cfg = EngineConfig::RocksDB(db_dir.clone());
         {
             let s = DB::<TestCommand>::open(&storage_cfg)?;
-            s.flush_voted_for(1, 222).await?;
-            s.flush_voted_for(3, 111).await?;
+            s.flush_voted_for(1, 222)?;
+            s.flush_voted_for(3, 111)?;
             let entry0 = LogEntry::new(1, 3, ProposeId(1, 1), Arc::new(TestCommand::default()));
             let entry1 = LogEntry::new(2, 3, ProposeId(1, 2), Arc::new(TestCommand::default()));
             let entry2 = LogEntry::new(3, 3, ProposeId(1, 3), Arc::new(TestCommand::default()));
-            s.put_log_entry(&entry0).await?;
-            s.put_log_entry(&entry1).await?;
-            s.put_log_entry(&entry2).await?;
+            s.put_log_entries(&[&entry0])?;
+            s.put_log_entries(&[&entry1])?;
+            s.put_log_entries(&[&entry2])?;
             sleep_secs(2).await;
         }
 
         {
             let s = DB::<TestCommand>::open(&storage_cfg)?;
-            let (voted_for, entries) = s.recover().await?;
+            let (voted_for, entries) = s.recover()?;
             assert_eq!(voted_for, Some((3, 111)));
             assert_eq!(entries[0].index, 1);
             assert_eq!(entries[1].index, 2);

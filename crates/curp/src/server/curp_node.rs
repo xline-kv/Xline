@@ -176,7 +176,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     }
 
     /// Handle `Vote` requests
-    pub(super) async fn vote(&self, req: VoteRequest) -> Result<VoteResponse, CurpError> {
+    pub(super) fn vote(&self, req: &VoteRequest) -> Result<VoteResponse, CurpError> {
         let result = if req.is_pre_vote {
             self.curp.handle_pre_vote(
                 req.term,
@@ -196,7 +196,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         let resp = match result {
             Ok((term, sp)) => {
                 if !req.is_pre_vote {
-                    self.storage.flush_voted_for(term, req.candidate_id).await?;
+                    self.storage.flush_voted_for(term, req.candidate_id)?;
                 }
                 VoteResponse::new_accept(term, sp)?
             }
@@ -586,7 +586,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                     let Some(e) = e else {
                         return;
                     };
-                    if let Err(err) = storage.put_log_entry(e.as_ref()).await {
+                    if let Err(err) = storage.put_log_entries(&[e.as_ref()]) {
                         error!("storage error, {err}");
                     }
                 }
@@ -594,7 +594,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
             }
         }
         while let Ok(e) = log_rx.try_recv() {
-            if let Err(err) = storage.put_log_entry(e.as_ref()).await {
+            if let Err(err) = storage.put_log_entries(&[e.as_ref()]) {
                 error!("storage error, {err}");
             }
         }
@@ -640,7 +640,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         let ce_event_tx: Arc<dyn CEEventTxApi<C>> = Arc::new(ce_event_tx);
 
         // create curp state machine
-        let (voted_for, entries) = storage.recover().await?;
+        let (voted_for, entries) = storage.recover()?;
         let curp = Arc::new(
             RawCurp::builder()
                 .cluster_info(Arc::clone(&cluster_info))

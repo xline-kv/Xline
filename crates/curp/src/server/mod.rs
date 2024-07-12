@@ -193,7 +193,7 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
         request: tonic::Request<VoteRequest>,
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.vote(request.into_inner()).await?,
+            self.inner.vote(&request.into_inner())?,
         ))
     }
 
