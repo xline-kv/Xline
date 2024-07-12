@@ -1,7 +1,14 @@
-use clap::{arg, ArgMatches, Command};
-use xline_client::{error::Result, types::auth::AuthUserAddRequest, Client};
-
 use crate::utils::printer::Printer;
+use clap::{arg, ArgMatches, Command};
+use xline_client::{error::Result, Client};
+
+/// Parameters of `AuthClient::user_add`.
+///
+/// The first parameter is the name of the user.
+/// The second parameter is the password of the user. If the user has no password, set it to empty string.
+/// The third parameter is whether the user could has no password.
+/// If set, the user is allowed to have no password.
+type AuthUserAddRequest = (String, String, bool);
 
 /// Definition of `add` command
 pub(super) fn command() -> Command {
@@ -9,7 +16,7 @@ pub(super) fn command() -> Command {
         .about("Add a new user")
         .arg(arg!(<name> "The name of the user"))
         .arg(
-            arg!([password] "Password of the user")
+            arg!([password] "Password of the user, set to empty string if the user has no password")
                 .required_if_eq("no_password", "false")
                 .required_unless_present("no_password"),
         )
@@ -18,20 +25,30 @@ pub(super) fn command() -> Command {
 
 /// Build request from matches
 pub(super) fn build_request(matches: &ArgMatches) -> AuthUserAddRequest {
-    let name = matches.get_one::<String>("name").expect("required");
+    let name = matches
+        .get_one::<String>("name")
+        .expect("required")
+        .to_owned();
     let no_password = matches.get_flag("no_password");
-    if no_password {
-        AuthUserAddRequest::new(name)
-    } else {
-        let password = matches.get_one::<String>("password").expect("required");
-        AuthUserAddRequest::new(name).with_pwd(password)
-    }
+
+    (
+        name,
+        if no_password {
+            String::new()
+        } else {
+            matches
+                .get_one::<String>("password")
+                .expect("required")
+                .to_owned()
+        },
+        no_password,
+    )
 }
 
 /// Execute the command
 pub(super) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let req = build_request(matches);
-    let resp = client.auth_client().user_add(req).await?;
+    let resp = client.auth_client().user_add(req.0, req.1, req.2).await?;
     resp.print();
 
     Ok(())
@@ -49,11 +66,11 @@ mod tests {
         let test_cases = vec![
             TestCase::new(
                 vec!["add", "JaneSmith", "password123"],
-                Some(AuthUserAddRequest::new("JaneSmith").with_pwd("password123")),
+                Some(("JaneSmith".into(), "password123".into(), false)),
             ),
             TestCase::new(
                 vec!["add", "--no_password", "BobJohnson"],
-                Some(AuthUserAddRequest::new("BobJohnson")),
+                Some(("BobJohnson".into(), String::new(), true)),
             ),
         ];
 

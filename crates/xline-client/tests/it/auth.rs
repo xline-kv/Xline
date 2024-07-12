@@ -3,7 +3,7 @@ use xline_client::{
     error::Result,
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, AuthUserAddRequest,
+        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
         AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGetRequest,
         AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest, Permission, PermissionType,
     },
@@ -128,9 +128,7 @@ async fn user_operations_should_success_in_normal_path() -> Result<()> {
     let password1 = "pwd1";
     let password2 = "pwd2";
 
-    client
-        .user_add(AuthUserAddRequest::new(name1).with_pwd(password1))
-        .await?;
+    client.user_add(name1, password1, false).await?;
     client.user_get(AuthUserGetRequest::new(name1)).await?;
 
     let user_list_resp = client.user_list().await?;
@@ -160,7 +158,7 @@ async fn user_role_operations_should_success_in_normal_path() -> Result<()> {
     let role1 = "role1";
     let role2 = "role2";
 
-    client.user_add(AuthUserAddRequest::new(name1)).await?;
+    client.user_add(name1, "", true).await?;
     client.role_add(AuthRoleAddRequest::new(role1)).await?;
     client.role_add(AuthRoleAddRequest::new(role2)).await?;
 

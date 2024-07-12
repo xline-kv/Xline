@@ -8,43 +8,6 @@ pub use xlineapi::{
     AuthenticateResponse, Type as PermissionType,
 };
 
-/// Request for `Authenticate`
-#[derive(Debug, PartialEq)]
-pub struct AuthUserAddRequest {
-    /// Inner request
-    pub(crate) inner: xlineapi::AuthUserAddRequest,
-}
-
-impl AuthUserAddRequest {
-    /// Creates a new `AuthUserAddRequest`.
-    #[inline]
-    pub fn new(user_name: impl Into<String>) -> Self {
-        Self {
-            inner: xlineapi::AuthUserAddRequest {
-                name: user_name.into(),
-                options: Some(xlineapi::UserAddOptions { no_password: true }),
-                ..Default::default()
-            },
-        }
-    }
-
-    /// Sets the password.
-    #[inline]
-    #[must_use]
-    pub fn with_pwd(mut self, password: impl Into<String>) -> Self {
-        self.inner.password = password.into();
-        self.inner.options = Some(xlineapi::UserAddOptions { no_password: false });
-        self
-    }
-}
-
-impl From<AuthUserAddRequest> for xlineapi::AuthUserAddRequest {
-    #[inline]
-    fn from(req: AuthUserAddRequest) -> Self {
-        req.inner
-    }
-}
-
 /// Request for `AuthUserGet`
 #[derive(Debug, PartialEq)]
 pub struct AuthUserGetRequest {
