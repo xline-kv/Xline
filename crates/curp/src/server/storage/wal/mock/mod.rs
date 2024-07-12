@@ -8,14 +8,15 @@ use crate::log_entry::LogEntry;
 use super::{codec::DataFrame, config::WALConfig, WALStorageOps};
 
 /// The mock WAL storage
-pub(super) struct WALStorage<C> {
+#[derive(Debug)]
+pub(crate) struct WALStorage<C> {
     /// Storage
     entries: VecDeque<LogEntry<C>>,
 }
 
 impl<C> WALStorage<C> {
     /// Creates a new mock `WALStorage`
-    pub(super) fn new(_config: &WALConfig) -> WALStorage<C> {
+    pub(super) fn new() -> WALStorage<C> {
         Self {
             entries: VecDeque::new(),
         }
