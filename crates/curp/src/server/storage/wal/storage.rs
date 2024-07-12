@@ -1,40 +1,3 @@
-#![allow(unused)] // TODO: remove this until used
-
-/// The WAL codec
-pub(super) mod codec;
-
-/// The config for `WALStorage`
-pub(super) mod config;
-
-/// WAL errors
-mod error;
-
-/// File pipeline
-mod pipeline;
-
-/// Remover of the segment file
-mod remover;
-
-/// WAL segment
-mod segment;
-
-/// WAL test utils
-#[cfg(test)]
-mod test_util;
-
-/// WAL storage tests
-#[cfg(test)]
-mod tests;
-
-/// File utils
-mod util;
-
-/// Framed
-mod framed;
-
-/// Mock WAL storage
-mod mock;
-
 use std::{io, marker::PhantomData, ops::Mul};
 
 use clippy_utilities::OverflowArithmetic;
@@ -47,48 +10,22 @@ use tracing::{debug, error, info, warn};
 
 use crate::log_entry::LogEntry;
 
-use self::{
+use super::{
     codec::{DataFrame, DataFrameOwned, WAL},
-    config::WALConfig,
+    config::PersistentConfig,
     error::{CorruptType, WALError},
     pipeline::FilePipeline,
     remover::SegmentRemover,
     segment::WALSegment,
-    util::LockedFile,
+    util::{self, LockedFile},
+    WALStorageOps, WAL_FILE_EXT,
 };
-
-/// Operations of a WAL storage
-pub(crate) trait WALStorageOps<C> {
-    /// Recover from the given directory if there's any segments
-    fn recover(&mut self) -> io::Result<Vec<LogEntry<C>>>;
-
-    /// Send frames with fsync
-    fn send_sync(&mut self, item: Vec<DataFrame<'_, C>>) -> io::Result<()>;
-
-    /// Tuncate all the logs whose index is less than or equal to
-    /// `compact_index`
-    ///
-    /// `compact_index` should be the smallest index required in CURP
-    fn truncate_head(&mut self, compact_index: LogIndex) -> io::Result<()>;
-
-    /// Tuncate all the logs whose index is greater than `max_index`
-    fn truncate_tail(&mut self, max_index: LogIndex) -> io::Result<()>;
-}
-
-/// The magic of the WAL file
-const WAL_MAGIC: u32 = 0xd86e_0be2;
-
-/// The current WAL version
-const WAL_VERSION: u8 = 0x00;
-
-/// The wal file extension
-const WAL_FILE_EXT: &str = ".wal";
 
 /// The WAL storage
 #[derive(Debug)]
-pub(super) struct WALStorage<C> {
+pub(crate) struct WALStorage<C> {
     /// The config of wal files
-    config: WALConfig,
+    config: PersistentConfig,
     /// The pipeline that pre-allocates files
     pipeline: FilePipeline,
     /// WAL segments
@@ -103,7 +40,7 @@ pub(super) struct WALStorage<C> {
 
 impl<C> WALStorage<C> {
     /// Creates a new `LogStorage`
-    pub(super) fn new(config: WALConfig) -> io::Result<WALStorage<C>> {
+    pub(super) fn new(config: PersistentConfig) -> io::Result<WALStorage<C>> {
         if !config.dir.try_exists()? {
             std::fs::create_dir_all(&config.dir);
         }

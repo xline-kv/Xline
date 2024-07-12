@@ -22,9 +22,15 @@ use super::{
     error::{CorruptType, WALError},
     framed::{Decoder, Encoder},
     util::{get_checksum, parse_u64, validate_data, LockedFile},
-    WAL_FILE_EXT, WAL_MAGIC, WAL_VERSION,
+    WAL_FILE_EXT,
 };
 use crate::log_entry::LogEntry;
+
+/// The magic of the WAL file
+const WAL_MAGIC: u32 = 0xd86e_0be2;
+
+/// The current WAL version
+const WAL_VERSION: u8 = 0x00;
 
 /// The size of wal file header in bytes
 pub(super) const WAL_HEADER_SIZE: usize = 56;
