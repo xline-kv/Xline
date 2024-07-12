@@ -604,8 +604,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Wait all logs in previous term have been applied to state machine
-    pub(super) fn wait_no_op_applied(&self) -> impl Future<Output = ()> + Send {
-        self.lst.wait_no_op_applied()
+    pub(super) fn wait_no_op_applied(&self) -> Box<dyn Future<Output = ()> + Send + Unpin> {
+        // if the leader is at term 1, it won't commit a no-op log
+        if self.term() == 1 {
+            return Box::new(futures::future::ready(()));
+        }
+        Box::new(self.lst.wait_no_op_applied())
     }
 
     /// Sets the no-op log as applied
