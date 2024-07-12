@@ -8,7 +8,7 @@ use utils::config::{
 use xline_test_utils::{
     enable_auth, set_user,
     types::{
-        auth::{AuthRoleDeleteRequest, AuthUserAddRequest, AuthUserGetRequest},
+        auth::{AuthRoleDeleteRequest, AuthUserGetRequest},
         kv::RangeRequest,
     },
     Client, ClientOptions, Cluster,
@@ -73,9 +73,7 @@ async fn test_auth_revision() -> Result<(), Box<dyn Error>> {
 
     client.kv_client().put("foo", "bar", None).await?;
 
-    let user_add_resp = auth_client
-        .user_add(AuthUserAddRequest::new("root").with_pwd("123"))
-        .await?;
+    let user_add_resp = auth_client.user_add("root", "123", false).await?;
     let auth_rev = user_add_resp.header.unwrap().revision;
     assert_eq!(auth_rev, 2);
 
@@ -181,16 +179,12 @@ async fn test_no_root_user_do_admin_ops() -> Result<(), Box<dyn Error>> {
     .await?
     .auth_client();
 
-    let result = user_client
-        .user_add(AuthUserAddRequest::new("u2").with_pwd("123"))
-        .await;
+    let result = user_client.user_add("u2", "123", false).await;
     assert!(
         result.is_err(),
         "normal user should not allow to add user when auth is enabled: {result:?}"
     );
-    let result = root_client
-        .user_add(AuthUserAddRequest::new("u2").with_pwd("123"))
-        .await;
+    let result = root_client.user_add("u2", "123", false).await;
     assert!(result.is_ok(), "root user failed to add user: {result:?}");
 
     Ok(())

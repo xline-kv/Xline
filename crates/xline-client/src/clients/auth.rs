@@ -15,7 +15,7 @@ use crate::{
     error::{Result, XlineClientError},
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, AuthUserAddRequest,
+        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
         AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGetRequest,
         AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
     },
@@ -207,15 +207,19 @@ impl AuthClient {
     }
 
     /// Add an user.
+    /// Set password to empty String if you want to create a user without password.
     ///
     /// # Errors
     ///
-    /// This function will return an error if the inner CURP client encountered a propose failure
+    /// This function will return an error if the inner CURP client encountered a propose failure;
+    ///
+    /// Returns `XlineClientError::InvalidArgs` if the user name is empty,
+    /// or the password is empty when `allow_no_password` is false.
     ///
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::auth::AuthUserAddRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -226,33 +230,43 @@ impl AuthClient {
     ///         .await?
     ///         .auth_client();
     ///
-    ///     client.user_add(AuthUserAddRequest::new("user1")).await?;
+    ///     client.user_add("user1", "", true).await?;
     ///     Ok(())
     /// }
     ///```
     #[inline]
-    pub async fn user_add(&self, mut request: AuthUserAddRequest) -> Result<AuthUserAddResponse> {
-        if request.inner.name.is_empty() {
+    pub async fn user_add(
+        &self,
+        name: impl Into<String>,
+        password: impl AsRef<str>,
+        allow_no_password: bool,
+    ) -> Result<AuthUserAddResponse> {
+        let name = name.into();
+        let password: &str = password.as_ref();
+        if name.is_empty() {
             return Err(XlineClientError::InvalidArgs(String::from(
                 "user name is empty",
             )));
         }
-        let need_password = request
-            .inner
-            .options
-            .as_ref()
-            .map_or(true, |o| !o.no_password);
-        if need_password && request.inner.password.is_empty() {
+        if !allow_no_password && password.is_empty() {
             return Err(XlineClientError::InvalidArgs(String::from(
                 "password is required but not provided",
             )));
         }
-        let hashed_password = hash_password(request.inner.password.as_bytes()).map_err(|err| {
+        let hashed_password = hash_password(password.as_bytes()).map_err(|err| {
             XlineClientError::InternalError(format!("Failed to hash password: {err}"))
         })?;
-        request.inner.hashed_password = hashed_password;
-        request.inner.password = String::new();
-        self.handle_req(request.inner, false).await
+        let options = allow_no_password.then_some(xlineapi::UserAddOptions { no_password: true });
+        self.handle_req(
+            xlineapi::AuthUserAddRequest {
+                name,
+                password: String::new(),
+                hashed_password,
+                options,
+            },
+            false,
+        )
+        .await
     }
 
     /// Gets the user info by the user name.

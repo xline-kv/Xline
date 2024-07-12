@@ -1,8 +1,8 @@
 use anyhow::Result;
 use xline_client::{
     types::auth::{
-        AuthUserAddRequest, AuthUserChangePasswordRequest, AuthUserDeleteRequest,
-        AuthUserGetRequest, AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
+        AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGetRequest,
+        AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
     },
     Client, ClientOptions,
 };
@@ -17,8 +17,8 @@ async fn main() -> Result<()> {
         .auth_client();
 
     // add user
-    client.user_add(AuthUserAddRequest::new("user1")).await?;
-    client.user_add(AuthUserAddRequest::new("user2")).await?;
+    client.user_add("user1", "", true).await?;
+    client.user_add("user2", "", true).await?;
 
     // change user1's password to "123"
     client
