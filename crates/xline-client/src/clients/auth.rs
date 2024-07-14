@@ -16,8 +16,7 @@ use crate::{
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
         AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
-        AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGrantRoleRequest,
-        AuthUserRevokeRoleRequest,
+        AuthUserChangePasswordRequest, AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
     },
     AuthService, CurpClient,
 };
@@ -359,23 +358,15 @@ impl AuthClient {
     ///         .await?
     ///         .auth_client();
     ///
-    ///     // add the user
-    ///
-    ///     let resp = client.user_list().await?;
-    ///
-    ///     for user in resp.users {
-    ///         println!("user: {}", user);
-    ///     }
+    ///     let resp = client.user_delete("user").await?;
     ///
     ///     Ok(())
     /// }
     ///```
     #[inline]
-    pub async fn user_delete(
-        &self,
-        request: AuthUserDeleteRequest,
-    ) -> Result<AuthUserDeleteResponse> {
-        self.handle_req(request.inner, false).await
+    pub async fn user_delete(&self, name: impl Into<String>) -> Result<AuthUserDeleteResponse> {
+        self.handle_req(xlineapi::AuthUserDeleteRequest { name: name.into() }, false)
+            .await
     }
 
     /// Change password for an user.

@@ -4,8 +4,8 @@ use xline_client::{
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
         AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
-        AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGrantRoleRequest,
-        AuthUserRevokeRoleRequest, Permission, PermissionType,
+        AuthUserChangePasswordRequest, AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
+        Permission, PermissionType,
     },
 };
 
@@ -138,9 +138,7 @@ async fn user_operations_should_success_in_normal_path() -> Result<()> {
         .user_change_password(AuthUserChangePasswordRequest::new(name1, password2))
         .await?;
 
-    client
-        .user_delete(AuthUserDeleteRequest::new(name1))
-        .await?;
+    client.user_delete(name1).await?;
     client.user_get(name1).await.unwrap_err();
 
     Ok(())

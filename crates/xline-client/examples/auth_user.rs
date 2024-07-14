@@ -1,8 +1,7 @@
 use anyhow::Result;
 use xline_client::{
     types::auth::{
-        AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGrantRoleRequest,
-        AuthUserRevokeRoleRequest,
+        AuthUserChangePasswordRequest, AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
     },
     Client, ClientOptions,
 };
@@ -54,12 +53,8 @@ async fn main() -> Result<()> {
         .await?;
 
     // delete users
-    client
-        .user_delete(AuthUserDeleteRequest::new("user1"))
-        .await?;
-    client
-        .user_delete(AuthUserDeleteRequest::new("user2"))
-        .await?;
+    client.user_delete("user1").await?;
+    client.user_delete("user2").await?;
 
     Ok(())
 }
