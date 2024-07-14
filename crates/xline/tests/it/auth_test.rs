@@ -7,10 +7,7 @@ use utils::config::{
 };
 use xline_test_utils::{
     enable_auth, set_user,
-    types::{
-        auth::{AuthRoleDeleteRequest, AuthUserGetRequest},
-        kv::RangeRequest,
-    },
+    types::{auth::AuthRoleDeleteRequest, kv::RangeRequest},
     Client, ClientOptions, Cluster,
 };
 
@@ -146,12 +143,12 @@ async fn test_role_delete() -> Result<(), Box<dyn Error>> {
     let client = cluster.client().await;
     let auth_client = client.auth_client();
     set_user(client, "u", "123", "r", b"foo", &[]).await?;
-    let user = auth_client.user_get(AuthUserGetRequest::new("u")).await?;
+    let user = auth_client.user_get("u").await?;
     assert_eq!(user.roles.len(), 1);
     auth_client
         .role_delete(AuthRoleDeleteRequest::new("r"))
         .await?;
-    let user = auth_client.user_get(AuthUserGetRequest::new("u")).await?;
+    let user = auth_client.user_get("u").await?;
     assert_eq!(user.roles.len(), 0);
 
     Ok(())
