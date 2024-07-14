@@ -8,32 +8,6 @@ pub use xlineapi::{
     AuthenticateResponse, Type as PermissionType,
 };
 
-/// Request for `AuthUserDelete`
-#[derive(Debug, PartialEq)]
-pub struct AuthUserDeleteRequest {
-    /// Inner request
-    pub(crate) inner: xlineapi::AuthUserDeleteRequest,
-}
-
-impl AuthUserDeleteRequest {
-    /// Creates a new `AuthUserDeleteRequest`.
-    #[inline]
-    pub fn new(user_name: impl Into<String>) -> Self {
-        Self {
-            inner: xlineapi::AuthUserDeleteRequest {
-                name: user_name.into(),
-            },
-        }
-    }
-}
-
-impl From<AuthUserDeleteRequest> for xlineapi::AuthUserDeleteRequest {
-    #[inline]
-    fn from(req: AuthUserDeleteRequest) -> Self {
-        req.inner
-    }
-}
-
 /// Request for `AuthUserChangePassword`
 #[derive(Debug, PartialEq)]
 pub struct AuthUserChangePasswordRequest {
