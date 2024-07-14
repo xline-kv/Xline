@@ -4,8 +4,8 @@ use xline_client::{
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
         AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
-        AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGetRequest,
-        AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest, Permission, PermissionType,
+        AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGrantRoleRequest,
+        AuthUserRevokeRoleRequest, Permission, PermissionType,
     },
 };
 
@@ -129,7 +129,7 @@ async fn user_operations_should_success_in_normal_path() -> Result<()> {
     let password2 = "pwd2";
 
     client.user_add(name1, password1, false).await?;
-    client.user_get(AuthUserGetRequest::new(name1)).await?;
+    client.user_get(name1).await?;
 
     let user_list_resp = client.user_list().await?;
     assert!(user_list_resp.users.contains(&name1.to_string()));
@@ -141,10 +141,7 @@ async fn user_operations_should_success_in_normal_path() -> Result<()> {
     client
         .user_delete(AuthUserDeleteRequest::new(name1))
         .await?;
-    client
-        .user_get(AuthUserGetRequest::new(name1))
-        .await
-        .unwrap_err();
+    client.user_get(name1).await.unwrap_err();
 
     Ok(())
 }
@@ -169,7 +166,7 @@ async fn user_role_operations_should_success_in_normal_path() -> Result<()> {
         .user_grant_role(AuthUserGrantRoleRequest::new(name1, role2))
         .await?;
 
-    let user_get_resp = client.user_get(AuthUserGetRequest::new(name1)).await?;
+    let user_get_resp = client.user_get(name1).await?;
     assert_eq!(
         user_get_resp.roles,
         vec![role1.to_owned(), role2.to_owned()]

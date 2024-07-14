@@ -1,8 +1,8 @@
 use anyhow::Result;
 use xline_client::{
     types::auth::{
-        AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGetRequest,
-        AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
+        AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGrantRoleRequest,
+        AuthUserRevokeRoleRequest,
     },
     Client, ClientOptions,
 };
@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
     let resp = client.user_list().await?;
     for user in resp.users {
         println!("user: {}", user);
-        let get_resp = client.user_get(AuthUserGetRequest::new(user)).await?;
+        let get_resp = client.user_get(user).await?;
         println!("roles:");
         for role in get_resp.roles.iter() {
             print!("{} ", role);

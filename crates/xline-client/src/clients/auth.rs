@@ -16,8 +16,8 @@ use crate::{
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
         AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
-        AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGetRequest,
-        AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
+        AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGrantRoleRequest,
+        AuthUserRevokeRoleRequest,
     },
     AuthService, CurpClient,
 };
@@ -278,7 +278,7 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::auth::AuthUserGetRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -289,7 +289,7 @@ impl AuthClient {
     ///         .await?
     ///         .auth_client();
     ///
-    ///     let resp = client.user_get(AuthUserGetRequest::new("user")).await?;
+    ///     let resp = client.user_get("user").await?;
     ///
     ///     for role in resp.roles {
     ///         print!("{} ", role);
@@ -299,8 +299,9 @@ impl AuthClient {
     /// }
     ///```
     #[inline]
-    pub async fn user_get(&self, request: AuthUserGetRequest) -> Result<AuthUserGetResponse> {
-        self.handle_req(request.inner, true).await
+    pub async fn user_get(&self, name: impl Into<String>) -> Result<AuthUserGetResponse> {
+        self.handle_req(xlineapi::AuthUserGetRequest { name: name.into() }, true)
+            .await
     }
 
     /// Lists all users.
