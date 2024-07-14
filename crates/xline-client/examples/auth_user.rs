@@ -1,5 +1,5 @@
 use anyhow::Result;
-use xline_client::{types::auth::AuthUserChangePasswordRequest, Client, ClientOptions};
+use xline_client::{Client, ClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -15,9 +15,7 @@ async fn main() -> Result<()> {
     client.user_add("user2", "", true).await?;
 
     // change user1's password to "123"
-    client
-        .user_change_password(AuthUserChangePasswordRequest::new("user1", "123"))
-        .await?;
+    client.user_change_password("user1", "123").await?;
 
     // grant roles
     client.user_grant_role("user1", "role1").await?;
