@@ -3,8 +3,8 @@ use xline_client::{
     error::Result,
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
-        AuthUserChangePasswordRequest, Permission, PermissionType,
+        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, Permission,
+        PermissionType,
     },
 };
 
@@ -133,9 +133,7 @@ async fn user_operations_should_success_in_normal_path() -> Result<()> {
     let user_list_resp = client.user_list().await?;
     assert!(user_list_resp.users.contains(&name1.to_string()));
 
-    client
-        .user_change_password(AuthUserChangePasswordRequest::new(name1, password2))
-        .await?;
+    client.user_change_password(name1, password2).await?;
 
     client.user_delete(name1).await?;
     client.user_get(name1).await.unwrap_err();

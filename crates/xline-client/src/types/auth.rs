@@ -8,34 +8,6 @@ pub use xlineapi::{
     AuthenticateResponse, Type as PermissionType,
 };
 
-/// Request for `AuthUserChangePassword`
-#[derive(Debug, PartialEq)]
-pub struct AuthUserChangePasswordRequest {
-    /// Inner request
-    pub(crate) inner: xlineapi::AuthUserChangePasswordRequest,
-}
-
-impl AuthUserChangePasswordRequest {
-    /// Creates a new `AuthUserChangePasswordRequest`.
-    #[inline]
-    pub fn new(user_name: impl Into<String>, new_password: impl Into<String>) -> Self {
-        Self {
-            inner: xlineapi::AuthUserChangePasswordRequest {
-                name: user_name.into(),
-                password: new_password.into(),
-                hashed_password: String::new(),
-            },
-        }
-    }
-}
-
-impl From<AuthUserChangePasswordRequest> for xlineapi::AuthUserChangePasswordRequest {
-    #[inline]
-    fn from(req: AuthUserChangePasswordRequest) -> Self {
-        req.inner
-    }
-}
-
 /// Request for `AuthRoleAdd`
 #[derive(Debug, PartialEq)]
 pub struct AuthRoleAddRequest {

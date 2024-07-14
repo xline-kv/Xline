@@ -16,7 +16,6 @@ use crate::{
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
         AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
-        AuthUserChangePasswordRequest,
     },
     AuthService, CurpClient,
 };
@@ -378,9 +377,7 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{
-    ///     types::auth::AuthUserChangePasswordRequest, Client, ClientOptions,
-    /// };
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -394,7 +391,7 @@ impl AuthClient {
     ///     // add the user
     ///
     ///     client
-    ///         .user_change_password(AuthUserChangePasswordRequest::new("user", "123"))
+    ///         .user_change_password("user", "123")
     ///         .await?;
     ///
     ///     Ok(())
@@ -403,19 +400,27 @@ impl AuthClient {
     #[inline]
     pub async fn user_change_password(
         &self,
-        mut request: AuthUserChangePasswordRequest,
+        name: impl Into<String>,
+        password: impl AsRef<str>,
     ) -> Result<AuthUserChangePasswordResponse> {
-        if request.inner.password.is_empty() {
+        let password: &str = password.as_ref();
+        if password.is_empty() {
             return Err(XlineClientError::InvalidArgs(String::from(
                 "role name is empty",
             )));
         }
-        let hashed_password = hash_password(request.inner.password.as_bytes()).map_err(|err| {
+        let hashed_password = hash_password(password.as_bytes()).map_err(|err| {
             XlineClientError::InternalError(format!("Failed to hash password: {err}"))
         })?;
-        request.inner.hashed_password = hashed_password;
-        request.inner.password = String::new();
-        self.handle_req(request.inner, false).await
+        self.handle_req(
+            xlineapi::AuthUserChangePasswordRequest {
+                name: name.into(),
+                hashed_password,
+                password: String::new(),
+            },
+            false,
+        )
+        .await
     }
 
     /// Grant role for an user.
