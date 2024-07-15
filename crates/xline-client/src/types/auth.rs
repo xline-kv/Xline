@@ -36,36 +36,6 @@ impl From<AuthUserChangePasswordRequest> for xlineapi::AuthUserChangePasswordReq
     }
 }
 
-/// Request for `AuthUserRevokeRole`
-#[derive(Debug, PartialEq)]
-pub struct AuthUserRevokeRoleRequest {
-    /// Inner request
-    pub(crate) inner: xlineapi::AuthUserRevokeRoleRequest,
-}
-
-impl AuthUserRevokeRoleRequest {
-    /// Creates a new `AuthUserRevokeRoleRequest`
-    ///
-    /// `user_name` is the name of the user to revoke role,
-    /// `role` is the role name to revoke.
-    #[inline]
-    pub fn new(user_name: impl Into<String>, role: impl Into<String>) -> Self {
-        Self {
-            inner: xlineapi::AuthUserRevokeRoleRequest {
-                name: user_name.into(),
-                role: role.into(),
-            },
-        }
-    }
-}
-
-impl From<AuthUserRevokeRoleRequest> for xlineapi::AuthUserRevokeRoleRequest {
-    #[inline]
-    fn from(req: AuthUserRevokeRoleRequest) -> Self {
-        req.inner
-    }
-}
-
 /// Request for `AuthRoleAdd`
 #[derive(Debug, PartialEq)]
 pub struct AuthRoleAddRequest {

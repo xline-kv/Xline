@@ -4,7 +4,7 @@ use xline_client::{
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
         AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
-        AuthUserChangePasswordRequest, AuthUserRevokeRoleRequest, Permission, PermissionType,
+        AuthUserChangePasswordRequest, Permission, PermissionType,
     },
 };
 
@@ -165,12 +165,8 @@ async fn user_role_operations_should_success_in_normal_path() -> Result<()> {
         vec![role1.to_owned(), role2.to_owned()]
     );
 
-    client
-        .user_revoke_role(AuthUserRevokeRoleRequest::new(name1, role1))
-        .await?;
-    client
-        .user_revoke_role(AuthUserRevokeRoleRequest::new(name1, role2))
-        .await?;
+    client.user_revoke_role(name1, role1).await?;
+    client.user_revoke_role(name1, role2).await?;
 
     Ok(())
 }

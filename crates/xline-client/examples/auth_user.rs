@@ -1,8 +1,5 @@
 use anyhow::Result;
-use xline_client::{
-    types::auth::{AuthUserChangePasswordRequest, AuthUserRevokeRoleRequest},
-    Client, ClientOptions,
-};
+use xline_client::{types::auth::AuthUserChangePasswordRequest, Client, ClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -39,12 +36,8 @@ async fn main() -> Result<()> {
     }
 
     // revoke role from user
-    client
-        .user_revoke_role(AuthUserRevokeRoleRequest::new("user1", "role1"))
-        .await?;
-    client
-        .user_revoke_role(AuthUserRevokeRoleRequest::new("user2", "role2"))
-        .await?;
+    client.user_revoke_role("user1", "role1").await?;
+    client.user_revoke_role("user2", "role2").await?;
 
     // delete users
     client.user_delete("user1").await?;
