@@ -1,7 +1,10 @@
 use clap::{arg, ArgMatches, Command};
-use xline_client::{error::Result, types::auth::AuthUserRevokeRoleRequest, Client};
+use xline_client::{error::Result, Client};
 
 use crate::utils::printer::Printer;
+
+/// Temporary struct for testing, indicates `(user_name, role)`
+type AuthUserRevokeRoleRequest = (String, String);
 
 /// Definition of `revoke_role` command
 pub(super) fn command() -> Command {
@@ -15,13 +18,13 @@ pub(super) fn command() -> Command {
 pub(super) fn build_request(matches: &ArgMatches) -> AuthUserRevokeRoleRequest {
     let name = matches.get_one::<String>("name").expect("required");
     let role = matches.get_one::<String>("role").expect("required");
-    AuthUserRevokeRoleRequest::new(name, role)
+    (name.to_owned(), role.to_owned())
 }
 
 /// Execute the command
 pub(super) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let req = build_request(matches);
-    let resp = client.auth_client().user_revoke_role(req).await?;
+    let resp = client.auth_client().user_revoke_role(req.0, req.1).await?;
     resp.print();
 
     Ok(())
@@ -38,7 +41,7 @@ mod tests {
     fn command_parse_should_be_valid() {
         let test_cases = vec![TestCase::new(
             vec!["revoke_role", "JohnDoe", "Admin"],
-            Some(AuthUserRevokeRoleRequest::new("JohnDoe", "Admin")),
+            Some(("JohnDoe".to_owned(), "Admin".to_owned())),
         )];
 
         for case in test_cases {
