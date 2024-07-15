@@ -15,8 +15,7 @@ use utils::config::{
 };
 use xline::server::XlineServer;
 use xline_client::types::auth::{
-    AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserGrantRoleRequest, Permission,
-    PermissionType,
+    AuthRoleAddRequest, AuthRoleGrantPermissionRequest, Permission, PermissionType,
 };
 pub use xline_client::{clients, types, Client, ClientOptions};
 
@@ -350,9 +349,7 @@ pub async fn set_user(
     let client = client.auth_client();
     client.user_add(name, password, false).await?;
     client.role_add(AuthRoleAddRequest::new(role)).await?;
-    client
-        .user_grant_role(AuthUserGrantRoleRequest::new(name, role))
-        .await?;
+    client.user_grant_role(name, role).await?;
     if !key.is_empty() {
         client
             .role_grant_permission(AuthRoleGrantPermissionRequest::new(

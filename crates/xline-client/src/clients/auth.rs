@@ -16,7 +16,7 @@ use crate::{
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
         AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
-        AuthUserChangePasswordRequest, AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
+        AuthUserChangePasswordRequest, AuthUserRevokeRoleRequest,
     },
     AuthService, CurpClient,
 };
@@ -427,7 +427,7 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::auth::AuthUserGrantRoleRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -440,9 +440,7 @@ impl AuthClient {
     ///
     ///     // add user and role
     ///
-    ///     client
-    ///         .user_grant_role(AuthUserGrantRoleRequest::new("user", "role"))
-    ///         .await?;
+    ///     client.user_grant_role("user", "role").await?;
     ///
     ///     Ok(())
     /// }
@@ -450,9 +448,17 @@ impl AuthClient {
     #[inline]
     pub async fn user_grant_role(
         &self,
-        request: AuthUserGrantRoleRequest,
+        name: impl Into<String>,
+        role: impl Into<String>,
     ) -> Result<AuthUserGrantRoleResponse> {
-        self.handle_req(request.inner, false).await
+        self.handle_req(
+            xlineapi::AuthUserGrantRoleRequest {
+                user: name.into(),
+                role: role.into(),
+            },
+            false,
+        )
+        .await
     }
 
     /// Revoke role for an user.

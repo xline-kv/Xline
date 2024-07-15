@@ -4,8 +4,7 @@ use xline_client::{
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
         AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
-        AuthUserChangePasswordRequest, AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
-        Permission, PermissionType,
+        AuthUserChangePasswordRequest, AuthUserRevokeRoleRequest, Permission, PermissionType,
     },
 };
 
@@ -157,12 +156,8 @@ async fn user_role_operations_should_success_in_normal_path() -> Result<()> {
     client.role_add(AuthRoleAddRequest::new(role1)).await?;
     client.role_add(AuthRoleAddRequest::new(role2)).await?;
 
-    client
-        .user_grant_role(AuthUserGrantRoleRequest::new(name1, role1))
-        .await?;
-    client
-        .user_grant_role(AuthUserGrantRoleRequest::new(name1, role2))
-        .await?;
+    client.user_grant_role(name1, role1).await?;
+    client.user_grant_role(name1, role2).await?;
 
     let user_get_resp = client.user_get(name1).await?;
     assert_eq!(
