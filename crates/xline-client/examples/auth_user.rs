@@ -1,8 +1,6 @@
 use anyhow::Result;
 use xline_client::{
-    types::auth::{
-        AuthUserChangePasswordRequest, AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
-    },
+    types::auth::{AuthUserChangePasswordRequest, AuthUserRevokeRoleRequest},
     Client, ClientOptions,
 };
 
@@ -25,12 +23,8 @@ async fn main() -> Result<()> {
         .await?;
 
     // grant roles
-    client
-        .user_grant_role(AuthUserGrantRoleRequest::new("user1", "role1"))
-        .await?;
-    client
-        .user_grant_role(AuthUserGrantRoleRequest::new("user2", "role2"))
-        .await?;
+    client.user_grant_role("user1", "role1").await?;
+    client.user_grant_role("user2", "role2").await?;
 
     // list all users and their roles
     let resp = client.user_list().await?;
