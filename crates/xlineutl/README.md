@@ -16,10 +16,11 @@ restore [options] <filename>
 
 #### Options
 
-- data-dir -- path to the output data directory
+- `--data-dir` -- path to the output data directory
 
 #### Examples
 
 ```bash
 # restore snapshot to data dir
 ./xlineutl snapshot restore /path/to/snapshot --data-dir /path/to/target/dir
+```
