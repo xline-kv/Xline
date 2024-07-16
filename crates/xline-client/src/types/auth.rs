@@ -8,32 +8,6 @@ pub use xlineapi::{
     AuthenticateResponse, Type as PermissionType,
 };
 
-/// Request for `AuthRoleAdd`
-#[derive(Debug, PartialEq)]
-pub struct AuthRoleAddRequest {
-    /// Inner request
-    pub(crate) inner: xlineapi::AuthRoleAddRequest,
-}
-
-impl AuthRoleAddRequest {
-    /// Creates a new `AuthRoleAddRequest`
-    ///
-    /// `role` is the name of the role to add.
-    #[inline]
-    pub fn new(role: impl Into<String>) -> Self {
-        Self {
-            inner: xlineapi::AuthRoleAddRequest { name: role.into() },
-        }
-    }
-}
-
-impl From<AuthRoleAddRequest> for xlineapi::AuthRoleAddRequest {
-    #[inline]
-    fn from(req: AuthRoleAddRequest) -> Self {
-        req.inner
-    }
-}
-
 /// Request for `AuthRoleDelete`
 #[derive(Debug, PartialEq)]
 pub struct AuthRoleDeleteRequest {

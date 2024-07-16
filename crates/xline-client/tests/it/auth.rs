@@ -16,8 +16,8 @@ async fn role_operations_should_success_in_normal_path() -> Result<()> {
     let role1 = "role1";
     let role2 = "role2";
 
-    client.role_add(AuthRoleAddRequest::new(role1)).await?;
-    client.role_add(AuthRoleAddRequest::new(role2)).await?;
+    client.role_add(role1).await?;
+    client.role_add(role2).await?;
 
     client.role_get(role1).await?;
     client.role_get(role2).await?;
@@ -53,7 +53,7 @@ async fn permission_operations_should_success_in_normal_path() -> Result<()> {
     let perm4 = Permission::new(PermissionType::Write, "pp").with_prefix();
     let perm5 = Permission::new(PermissionType::Read, vec![0]).with_from_key();
 
-    client.role_add(AuthRoleAddRequest::new(role1)).await?;
+    client.role_add(role1).await?;
 
     client
         .role_grant_permission(AuthRoleGrantPermissionRequest::new(role1, perm1.clone()))
@@ -144,8 +144,8 @@ async fn user_role_operations_should_success_in_normal_path() -> Result<()> {
     let role2 = "role2";
 
     client.user_add(name1, "", true).await?;
-    client.role_add(AuthRoleAddRequest::new(role1)).await?;
-    client.role_add(AuthRoleAddRequest::new(role2)).await?;
+    client.role_add(role1).await?;
+    client.role_add(role2).await?;
 
     client.user_grant_role(name1, role1).await?;
     client.user_grant_role(name1, role2).await?;
