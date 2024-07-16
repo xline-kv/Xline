@@ -34,32 +34,6 @@ impl From<AuthRoleAddRequest> for xlineapi::AuthRoleAddRequest {
     }
 }
 
-/// Request for `AuthRoleGet`
-#[derive(Debug, PartialEq)]
-pub struct AuthRoleGetRequest {
-    /// Inner request
-    pub(crate) inner: xlineapi::AuthRoleGetRequest,
-}
-
-impl AuthRoleGetRequest {
-    /// Creates a new `AuthRoleGetRequest`
-    ///
-    /// `role` is the name of the role to get.
-    #[inline]
-    pub fn new(role: impl Into<String>) -> Self {
-        Self {
-            inner: xlineapi::AuthRoleGetRequest { role: role.into() },
-        }
-    }
-}
-
-impl From<AuthRoleGetRequest> for xlineapi::AuthRoleGetRequest {
-    #[inline]
-    fn from(req: AuthRoleGetRequest) -> Self {
-        req.inner
-    }
-}
-
 /// Request for `AuthRoleDelete`
 #[derive(Debug, PartialEq)]
 pub struct AuthRoleDeleteRequest {

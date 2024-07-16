@@ -1,5 +1,5 @@
 use clap::{arg, ArgMatches, Command};
-use xline_client::{error::Result, types::auth::AuthRoleGetRequest, Client};
+use xline_client::{error::Result, Client};
 
 use crate::utils::printer::Printer;
 
@@ -11,9 +11,9 @@ pub(super) fn command() -> Command {
 }
 
 /// Build request from matches
-pub(super) fn build_request(matches: &ArgMatches) -> AuthRoleGetRequest {
+pub(super) fn build_request(matches: &ArgMatches) -> String {
     let name = matches.get_one::<String>("name").expect("required");
-    AuthRoleGetRequest::new(name)
+    name.to_owned()
 }
 
 /// Execute the command
@@ -30,14 +30,11 @@ mod tests {
     use super::*;
     use crate::test_case_struct;
 
-    test_case_struct!(AuthRoleGetRequest);
+    test_case_struct!(String);
 
     #[test]
     fn command_parse_should_be_valid() {
-        let test_cases = vec![TestCase::new(
-            vec!["get", "Admin"],
-            Some(AuthRoleGetRequest::new("Admin")),
-        )];
+        let test_cases = vec![TestCase::new(vec!["get", "Admin"], Some("Admin".into()))];
 
         for case in test_cases {
             case.run_test();
