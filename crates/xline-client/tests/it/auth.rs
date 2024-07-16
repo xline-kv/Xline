@@ -2,9 +2,8 @@
 use xline_client::{
     error::Result,
     types::auth::{
-        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, Permission,
-        PermissionType,
+        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest,
+        AuthRoleRevokePermissionRequest, Permission, PermissionType,
     },
 };
 
@@ -20,8 +19,8 @@ async fn role_operations_should_success_in_normal_path() -> Result<()> {
     client.role_add(AuthRoleAddRequest::new(role1)).await?;
     client.role_add(AuthRoleAddRequest::new(role2)).await?;
 
-    client.role_get(AuthRoleGetRequest::new(role1)).await?;
-    client.role_get(AuthRoleGetRequest::new(role2)).await?;
+    client.role_get(role1).await?;
+    client.role_get(role2).await?;
 
     let role_list_resp = client.role_list().await?;
     assert_eq!(
@@ -36,14 +35,8 @@ async fn role_operations_should_success_in_normal_path() -> Result<()> {
         .role_delete(AuthRoleDeleteRequest::new(role2))
         .await?;
 
-    client
-        .role_get(AuthRoleGetRequest::new(role1))
-        .await
-        .unwrap_err();
-    client
-        .role_get(AuthRoleGetRequest::new(role2))
-        .await
-        .unwrap_err();
+    client.role_get(role1).await.unwrap_err();
+    client.role_get(role2).await.unwrap_err();
 
     Ok(())
 }
@@ -79,7 +72,7 @@ async fn permission_operations_should_success_in_normal_path() -> Result<()> {
         .await?;
 
     {
-        let resp = client.role_get(AuthRoleGetRequest::new(role1)).await?;
+        let resp = client.role_get(role1).await?;
         let permissions = resp.perm;
         assert!(permissions.contains(&perm1.into()));
         assert!(permissions.contains(&perm2.into()));
@@ -109,7 +102,7 @@ async fn permission_operations_should_success_in_normal_path() -> Result<()> {
         )
         .await?;
 
-    let role_get_resp = client.role_get(AuthRoleGetRequest::new(role1)).await?;
+    let role_get_resp = client.role_get(role1).await?;
     assert!(role_get_resp.perm.is_empty());
 
     client

@@ -14,8 +14,8 @@ use xlineapi::{
 use crate::{
     error::{Result, XlineClientError},
     types::auth::{
-        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
+        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest,
+        AuthRoleRevokePermissionRequest,
     },
     AuthService, CurpClient,
 };
@@ -554,7 +554,6 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::types::auth::AuthRoleGetRequest;
     /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
@@ -566,7 +565,7 @@ impl AuthClient {
     ///         .await?
     ///         .auth_client();
     ///
-    ///     let resp = client.role_get(AuthRoleGetRequest::new("role")).await?;
+    ///     let resp = client.role_get("role").await?;
     ///
     ///     println!("permissions:");
     ///     for perm in resp.perm {
@@ -577,8 +576,9 @@ impl AuthClient {
     /// }
     ///```
     #[inline]
-    pub async fn role_get(&self, request: AuthRoleGetRequest) -> Result<AuthRoleGetResponse> {
-        self.handle_req(request.inner, true).await
+    pub async fn role_get(&self, name: impl Into<String>) -> Result<AuthRoleGetResponse> {
+        self.handle_req(xlineapi::AuthRoleGetRequest { role: name.into() }, true)
+            .await
     }
 
     /// Lists role.

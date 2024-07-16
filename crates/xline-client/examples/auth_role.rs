@@ -1,9 +1,8 @@
 use anyhow::Result;
 use xline_client::{
     types::auth::{
-        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, Permission,
-        PermissionType,
+        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest,
+        AuthRoleRevokePermissionRequest, Permission, PermissionType,
     },
     Client, ClientOptions,
 };
@@ -40,7 +39,7 @@ async fn main() -> Result<()> {
     println!("roles:");
     for role in resp.roles {
         println!("{}", role);
-        let get_resp = client.role_get(AuthRoleGetRequest::new(role)).await?;
+        let get_resp = client.role_get(role).await?;
         println!("permmisions:");
         for perm in get_resp.perm {
             println!("{} {}", perm.perm_type, String::from_utf8_lossy(&perm.key));
