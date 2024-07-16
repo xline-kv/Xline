@@ -14,8 +14,7 @@ use xlineapi::{
 use crate::{
     error::{Result, XlineClientError},
     types::auth::{
-        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest,
-        AuthRoleRevokePermissionRequest,
+        AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
     },
     AuthService, CurpClient,
 };

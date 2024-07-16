@@ -2,8 +2,8 @@
 use xline_client::{
     error::Result,
     types::auth::{
-        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest,
-        AuthRoleRevokePermissionRequest, Permission, PermissionType,
+        AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
+        Permission, PermissionType,
     },
 };
 
