@@ -517,7 +517,6 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::types::auth::AuthRoleAddRequest;
     /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
@@ -529,19 +528,21 @@ impl AuthClient {
     ///         .await?
     ///         .auth_client();
     ///
-    ///     client.role_add(AuthRoleAddRequest::new("role")).await?;
+    ///     client.role_add("role").await?;
     ///
     ///     Ok(())
     /// }
     ///```
     #[inline]
-    pub async fn role_add(&self, request: AuthRoleAddRequest) -> Result<AuthRoleAddResponse> {
-        if request.inner.name.is_empty() {
+    pub async fn role_add(&self, name: impl Into<String>) -> Result<AuthRoleAddResponse> {
+        let name = name.into();
+        if name.is_empty() {
             return Err(XlineClientError::InvalidArgs(String::from(
                 "role name is empty",
             )));
         }
-        self.handle_req(request.inner, false).await
+        self.handle_req(xlineapi::AuthRoleAddRequest { name }, false)
+            .await
     }
 
     /// Gets role.

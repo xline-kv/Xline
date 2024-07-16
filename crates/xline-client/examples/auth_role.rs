@@ -1,8 +1,8 @@
 use anyhow::Result;
 use xline_client::{
     types::auth::{
-        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest,
-        AuthRoleRevokePermissionRequest, Permission, PermissionType,
+        AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
+        Permission, PermissionType,
     },
     Client, ClientOptions,
 };
@@ -17,8 +17,8 @@ async fn main() -> Result<()> {
         .auth_client();
 
     // add roles
-    client.role_add(AuthRoleAddRequest::new("role1")).await?;
-    client.role_add(AuthRoleAddRequest::new("role2")).await?;
+    client.role_add("role1").await?;
+    client.role_add("role2").await?;
 
     // grant permissions to roles
     client
