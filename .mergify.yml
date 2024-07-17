@@ -25,6 +25,7 @@ pull_request_rules:
 
   - name: convert to draft
     conditions:
+      - base = master
       - -draft
       - -label = "CI:fail"
       - or:
@@ -46,6 +47,7 @@ pull_request_rules:
 
   - name: convert to ready-to-review
     conditions:
+      - base = master
       - label = "CI:fail"
       - draft
       - check-success = "Tests Normal"
