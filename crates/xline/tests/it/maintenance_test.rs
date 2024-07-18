@@ -6,7 +6,7 @@ use tokio::io::AsyncWriteExt;
 use xline::restore::restore;
 use xline_client::error::XlineClientError;
 use xline_test_utils::{Client, ClientOptions, Cluster};
-use xlineapi::{execute_error::ExecuteError, AlarmAction, AlarmRequest, AlarmType};
+use xlineapi::{execute_error::ExecuteError, AlarmAction, AlarmType};
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
@@ -92,7 +92,7 @@ async fn test_alarm(idx: usize) {
     }
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let res = m_client
-        .alarm(AlarmRequest::new(AlarmAction::Get, 0, AlarmType::None))
+        .alarm(AlarmAction::Get, 0, AlarmType::None)
         .await
         .unwrap();
     assert!(!res.alarms.is_empty());
