@@ -1,5 +1,5 @@
 use clap::{arg, ArgMatches, Command};
-use xline_client::{error::Result, types::auth::AuthRoleDeleteRequest, Client};
+use xline_client::{error::Result, Client};
 
 use crate::utils::printer::Printer;
 
@@ -11,9 +11,11 @@ pub(super) fn command() -> Command {
 }
 
 /// Build request from matches
-pub(super) fn build_request(matches: &ArgMatches) -> AuthRoleDeleteRequest {
+///
+/// Returns the name of the role to be deleted
+pub(super) fn build_request(matches: &ArgMatches) -> String {
     let name = matches.get_one::<String>("name").expect("required");
-    AuthRoleDeleteRequest::new(name)
+    name.to_owned()
 }
 
 /// Execute the command
@@ -30,14 +32,11 @@ mod tests {
     use super::*;
     use crate::test_case_struct;
 
-    test_case_struct!(AuthRoleDeleteRequest);
+    test_case_struct!(String);
 
     #[test]
     fn command_parse_should_be_valid() {
-        let test_cases = vec![TestCase::new(
-            vec!["delete", "Admin"],
-            Some(AuthRoleDeleteRequest::new("Admin")),
-        )];
+        let test_cases = vec![TestCase::new(vec!["delete", "Admin"], Some("Admin".into()))];
 
         for case in test_cases {
             case.run_test();

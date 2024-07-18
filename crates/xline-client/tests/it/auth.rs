@@ -2,8 +2,7 @@
 use xline_client::{
     error::Result,
     types::auth::{
-        AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
-        Permission, PermissionType,
+        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, Permission, PermissionType,
     },
 };
 
@@ -28,12 +27,8 @@ async fn role_operations_should_success_in_normal_path() -> Result<()> {
         vec![role1.to_owned(), role2.to_owned()]
     );
 
-    client
-        .role_delete(AuthRoleDeleteRequest::new(role1))
-        .await?;
-    client
-        .role_delete(AuthRoleDeleteRequest::new(role2))
-        .await?;
+    client.role_delete(role1).await?;
+    client.role_delete(role2).await?;
 
     client.role_get(role1).await.unwrap_err();
     client.role_get(role2).await.unwrap_err();
@@ -105,9 +100,7 @@ async fn permission_operations_should_success_in_normal_path() -> Result<()> {
     let role_get_resp = client.role_get(role1).await?;
     assert!(role_get_resp.perm.is_empty());
 
-    client
-        .role_delete(AuthRoleDeleteRequest::new(role1))
-        .await?;
+    client.role_delete(role1).await?;
     Ok(())
 }
 

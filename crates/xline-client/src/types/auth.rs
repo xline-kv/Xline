@@ -8,32 +8,6 @@ pub use xlineapi::{
     AuthenticateResponse, Type as PermissionType,
 };
 
-/// Request for `AuthRoleDelete`
-#[derive(Debug, PartialEq)]
-pub struct AuthRoleDeleteRequest {
-    /// Inner request
-    pub(crate) inner: xlineapi::AuthRoleDeleteRequest,
-}
-
-impl AuthRoleDeleteRequest {
-    /// Creates a new `AuthRoleDeleteRequest`
-    ///
-    /// `role` is the name of the role to delete.
-    #[inline]
-    pub fn new(role: impl Into<String>) -> Self {
-        Self {
-            inner: xlineapi::AuthRoleDeleteRequest { role: role.into() },
-        }
-    }
-}
-
-impl From<AuthRoleDeleteRequest> for xlineapi::AuthRoleDeleteRequest {
-    #[inline]
-    fn from(req: AuthRoleDeleteRequest) -> Self {
-        req.inner
-    }
-}
-
 /// Request for `AuthRoleGrantPermission`
 #[derive(Debug, PartialEq)]
 pub struct AuthRoleGrantPermissionRequest {

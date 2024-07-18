@@ -1,8 +1,7 @@
 use anyhow::Result;
 use xline_client::{
     types::auth::{
-        AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
-        Permission, PermissionType,
+        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, Permission, PermissionType,
     },
     Client, ClientOptions,
 };
@@ -55,12 +54,8 @@ async fn main() -> Result<()> {
         .await?;
 
     // delete roles
-    client
-        .role_delete(AuthRoleDeleteRequest::new("role1"))
-        .await?;
-    client
-        .role_delete(AuthRoleDeleteRequest::new("role2"))
-        .await?;
+    client.role_delete("role1").await?;
+    client.role_delete("role2").await?;
 
     Ok(())
 }

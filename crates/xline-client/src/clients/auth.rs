@@ -13,9 +13,7 @@ use xlineapi::{
 
 use crate::{
     error::{Result, XlineClientError},
-    types::auth::{
-        AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
-    },
+    types::auth::{AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest},
     AuthService, CurpClient,
 };
 
@@ -626,7 +624,7 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::auth::AuthRoleDeleteRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -640,18 +638,16 @@ impl AuthClient {
     ///     // add the role
     ///
     ///     client
-    ///         .role_delete(AuthRoleDeleteRequest::new("role"))
+    ///         .role_delete("role")
     ///         .await?;
     ///
     ///     Ok(())
     /// }
     ///```
     #[inline]
-    pub async fn role_delete(
-        &self,
-        request: AuthRoleDeleteRequest,
-    ) -> Result<AuthRoleDeleteResponse> {
-        self.handle_req(request.inner, false).await
+    pub async fn role_delete(&self, name: impl Into<String>) -> Result<AuthRoleDeleteResponse> {
+        self.handle_req(xlineapi::AuthRoleDeleteRequest { role: name.into() }, false)
+            .await
     }
 
     /// Grants role permission.
