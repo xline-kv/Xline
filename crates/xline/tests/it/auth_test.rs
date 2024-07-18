@@ -6,9 +6,7 @@ use utils::config::{
     TraceConfig, XlineServerConfig,
 };
 use xline_test_utils::{
-    enable_auth, set_user,
-    types::{auth::AuthRoleDeleteRequest, kv::RangeRequest},
-    Client, ClientOptions, Cluster,
+    enable_auth, set_user, types::kv::RangeRequest, Client, ClientOptions, Cluster,
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -145,9 +143,7 @@ async fn test_role_delete() -> Result<(), Box<dyn Error>> {
     set_user(client, "u", "123", "r", b"foo", &[]).await?;
     let user = auth_client.user_get("u").await?;
     assert_eq!(user.roles.len(), 1);
-    auth_client
-        .role_delete(AuthRoleDeleteRequest::new("r"))
-        .await?;
+    auth_client.role_delete("r").await?;
     let user = auth_client.user_get("u").await?;
     assert_eq!(user.roles.len(), 0);
 
