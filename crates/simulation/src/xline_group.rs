@@ -12,7 +12,6 @@ use xline::server::XlineServer;
 use xline_client::{
     error::XlineClientError,
     types::{
-        cluster::{MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse},
         kv::{
             CompactionRequest, CompactionResponse, PutOptions, PutResponse, RangeRequest,
             RangeResponse,
@@ -21,7 +20,10 @@ use xline_client::{
     },
     Client, ClientOptions,
 };
-use xlineapi::{command::Command, ClusterClient, KvClient, RequestUnion, WatchClient};
+use xlineapi::{
+    command::Command, ClusterClient, KvClient, MemberAddResponse, MemberListResponse, RequestUnion,
+    WatchClient,
+};
 
 pub struct XlineNode {
     pub client_url: String,
@@ -333,15 +335,20 @@ impl SimEtcdClient {
             .unwrap()
     }
 
-    pub async fn member_add(
-        &self,
-        request: MemberAddRequest,
+    pub async fn member_add<I: Into<String>>(
+        &mut self,
+        peer_urls: impl Into<Vec<I>>,
+        is_learner: bool,
     ) -> Result<MemberAddResponse, XlineClientError<Command>> {
         let mut client = self.cluster.clone();
+        let peer_urls: Vec<String> = peer_urls.into().into_iter().map(Into::into).collect();
         self.handle
             .spawn(async move {
                 client
-                    .member_add(xlineapi::MemberAddRequest::from(request))
+                    .member_add(xlineapi::MemberAddRequest {
+                        peer_ur_ls: peer_urls,
+                        is_learner,
+                    })
                     .await
                     .map(|r| r.into_inner())
                     .map_err(Into::into)
@@ -351,14 +358,14 @@ impl SimEtcdClient {
     }
 
     pub async fn member_list(
-        &self,
-        request: MemberListRequest,
+        &mut self,
+        linearizable: bool,
     ) -> Result<MemberListResponse, XlineClientError<Command>> {
         let mut client = self.cluster.clone();
         self.handle
             .spawn(async move {
                 client
-                    .member_list(xlineapi::MemberListRequest::from(request))
+                    .member_list(xlineapi::MemberListRequest { linearizable })
                     .await
                     .map(|r| r.into_inner())
                     .map_err(Into::into)
