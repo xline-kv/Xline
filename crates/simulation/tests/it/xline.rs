@@ -3,10 +3,7 @@ use std::time::Duration;
 use curp_test_utils::init_logger;
 use madsim::time::sleep;
 use simulation::xline_group::{SimEtcdClient, XlineGroup};
-use xline_client::types::{
-    cluster::{MemberAddRequest, MemberListRequest},
-    watch::WatchOptions,
-};
+use xline_client::types::watch::WatchOptions;
 
 // TODO: Add more tests if needed
 
@@ -49,29 +46,20 @@ async fn xline_members_restore() {
     let mut group = XlineGroup::new(3).await;
     let node = group.get_node("S1");
     let addr = node.client_url.clone();
-    let client = SimEtcdClient::new(addr, group.client_handle.clone()).await;
+    let mut client = SimEtcdClient::new(addr, group.client_handle.clone()).await;
 
     let res = client
-        .member_add(MemberAddRequest::new(
-            vec!["http://192.168.1.4:12345".to_owned()],
-            true,
-        ))
+        .member_add(["http://192.168.1.4:12345"], true)
         .await
         .unwrap();
     assert_eq!(res.members.len(), 4);
-    let members = client
-        .member_list(MemberListRequest::new(false))
-        .await
-        .unwrap();
+    let members = client.member_list(false).await.unwrap();
     assert_eq!(members.members.len(), 4);
     group.crash("S1").await;
     sleep(Duration::from_secs(10)).await;
 
     group.restart("S1").await;
     sleep(Duration::from_secs(10)).await;
-    let members = client
-        .member_list(MemberListRequest::new(false))
-        .await
-        .unwrap();
+    let members = client.member_list(false).await.unwrap();
     assert_eq!(members.members.len(), 4);
 }
