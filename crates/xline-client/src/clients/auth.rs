@@ -718,17 +718,8 @@ impl AuthClient {
         key: impl Into<Vec<u8>>,
         option: impl Into<AuthRoleRevokePermissionOption>,
     ) -> Result<AuthRoleRevokePermissionResponse> {
-        let mut key = key.into();
-        let range_end = option.into().calculate_range_end(&mut key);
-        self.handle_req(
-            xlineapi::AuthRoleRevokePermissionRequest {
-                role: name.into(),
-                key,
-                range_end,
-            },
-            false,
-        )
-        .await
+        self.handle_req(option.into().into_request(name.into(), key.into()), false)
+            .await
     }
 
     /// Send request using fast path

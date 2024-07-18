@@ -449,3 +449,28 @@ impl From<Permission> for xlineapi::Permission {
         perm.inner
     }
 }
+
+/// tests
+#[cfg(test)]
+mod tests {
+    use xlineapi::command::KeyRange;
+
+    use super::AuthRoleRevokePermissionOption;
+
+    #[test]
+    fn test_role_revoke_permission_option_into_request() {
+        let option = AuthRoleRevokePermissionOption::WithRangeEnd("end".into());
+        let request = option.into_request("name".into(), "key".into());
+        assert_eq!(request.role, "name");
+        assert_eq!(request.key, b"key");
+        assert_eq!(request.range_end, b"end");
+
+        let option = AuthRoleRevokePermissionOption::WithFromKey;
+        let request = option.into_request("name".into(), "key".into());
+        assert_eq!(request.range_end, b"\0");
+
+        let option = AuthRoleRevokePermissionOption::WithPrefix;
+        let request = option.into_request("name".into(), "key".into());
+        assert_eq!(request.range_end, KeyRange::get_prefix(b"key"));
+    }
+}
