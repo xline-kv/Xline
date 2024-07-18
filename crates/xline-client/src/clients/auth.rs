@@ -9,14 +9,12 @@ use xlineapi::{
     AuthUserAddResponse, AuthUserChangePasswordResponse, AuthUserDeleteResponse,
     AuthUserGetResponse, AuthUserGrantRoleResponse, AuthUserListResponse,
     AuthUserRevokeRoleResponse, AuthenticateResponse, RequestWrapper, ResponseWrapper,
+    Type as PermissionType,
 };
 
 use crate::{
     error::{Result, XlineClientError},
-    types::{
-        auth::{AuthRoleRevokePermissionRequest, Permission, PermissionType},
-        range_end::RangeOption,
-    },
+    types::{auth::Permission, range_end::RangeOption},
     AuthService, CurpClient,
 };
 
@@ -717,9 +715,7 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{
-    ///     types::auth::AuthRoleRevokePermissionRequest, Client, ClientOptions,
-    /// };
+    /// use xline_client::{Client, ClientOptions, types::range_end::RangeOption};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -732,8 +728,13 @@ impl AuthClient {
     ///
     ///     // grant the role
     ///
+    ///     client.role_revoke_permission("role", "key", None).await?;
     ///     client
-    ///         .role_revoke_permission(AuthRoleRevokePermissionRequest::new("role", "key"))
+    ///         .role_revoke_permission(
+    ///             "role2",
+    ///             "hi",
+    ///             Some(RangeOption::RangeEnd("hjj".into())),
+    ///         )
     ///         .await?;
     ///
     ///     Ok(())
@@ -742,9 +743,21 @@ impl AuthClient {
     #[inline]
     pub async fn role_revoke_permission(
         &self,
-        request: AuthRoleRevokePermissionRequest,
+        name: impl Into<String>,
+        key: impl Into<Vec<u8>>,
+        range_option: Option<RangeOption>,
     ) -> Result<AuthRoleRevokePermissionResponse> {
-        self.handle_req(request.inner, false).await
+        let mut key = key.into();
+        let range_end = range_option.unwrap_or_default().get_range_end(&mut key);
+        self.handle_req(
+            xlineapi::AuthRoleRevokePermissionRequest {
+                role: name.into(),
+                key,
+                range_end,
+            },
+            false,
+        )
+        .await
     }
 
     /// Send request using fast path

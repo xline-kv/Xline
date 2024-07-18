@@ -1,8 +1,5 @@
 use anyhow::Result;
-use xline_client::{
-    types::auth::{AuthRoleRevokePermissionRequest, PermissionType},
-    Client, ClientOptions,
-};
+use xline_client::{types::auth::PermissionType, Client, ClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -38,12 +35,8 @@ async fn main() -> Result<()> {
     }
 
     // revoke permissions from roles
-    client
-        .role_revoke_permission(AuthRoleRevokePermissionRequest::new("role1", "key1"))
-        .await?;
-    client
-        .role_revoke_permission(AuthRoleRevokePermissionRequest::new("role2", "key2"))
-        .await?;
+    client.role_revoke_permission("role1", "key1", None).await?;
+    client.role_revoke_permission("role2", "key2", None).await?;
 
     // delete roles
     client.role_delete("role1").await?;
