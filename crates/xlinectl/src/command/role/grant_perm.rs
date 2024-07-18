@@ -1,12 +1,11 @@
 use clap::{arg, ArgMatches, Command};
-use xline_client::{
-    error::Result,
-    types::auth::{AuthRoleGrantPermissionRequest, Permission},
-    Client,
-};
+use xline_client::{error::Result, types::range_end::RangeOption, Client};
 use xlineapi::Type;
 
 use crate::utils::printer::Printer;
+
+/// Temp return type for `grant_perm` command, indicates `(name, PermissionType, key, RangeOption)`
+type AuthRoleGrantPermissionRequest = (String, Type, Vec<u8>, Option<RangeOption>);
 
 /// Definition of `grant_perm` command
 pub(super) fn command() -> Command {
@@ -32,34 +31,36 @@ pub(super) fn build_request(matches: &ArgMatches) -> AuthRoleGrantPermissionRequ
     let prefix = matches.get_flag("prefix");
     let from_key = matches.get_flag("from_key");
 
-    let perm_type = match perm_type_local.as_str() {
-        "Read" => Type::Read,
-        "Write" => Type::Write,
-        "ReadWrite" => Type::Readwrite,
+    let perm_type = match perm_type_local.to_lowercase().as_str() {
+        "read" => Type::Read,
+        "write" => Type::Write,
+        "readwrite" => Type::Readwrite,
         _ => unreachable!("should be checked by clap"),
     };
 
-    let mut perm = Permission::new(perm_type, key.as_bytes());
-
-    if let Some(range_end) = range_end {
-        perm = perm.with_range_end(range_end.as_bytes());
+    let range_option = if prefix {
+        Some(RangeOption::Prefix)
+    } else if from_key {
+        Some(RangeOption::FromKey)
+    } else {
+        range_end.map(|inner| RangeOption::RangeEnd(inner.as_bytes().to_vec()))
     };
 
-    if prefix {
-        perm = perm.with_prefix();
-    }
-
-    if from_key {
-        perm = perm.with_from_key();
-    }
-
-    AuthRoleGrantPermissionRequest::new(name, perm)
+    (
+        name.to_owned(),
+        perm_type,
+        key.as_bytes().to_vec(),
+        range_option,
+    )
 }
 
 /// Execute the command
 pub(super) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let req = build_request(matches);
-    let resp = client.auth_client().role_grant_permission(req).await?;
+    let resp = client
+        .auth_client()
+        .role_grant_permission(req.0, req.1, req.2, req.3)
+        .await?;
     resp.print();
 
     Ok(())
@@ -77,16 +78,20 @@ mod tests {
         let test_cases = vec![
             TestCase::new(
                 vec!["grant_perm", "Admin", "Read", "key1", "key2"],
-                Some(AuthRoleGrantPermissionRequest::new(
-                    "Admin",
-                    Permission::new(Type::Read, "key1").with_range_end("key2"),
+                Some((
+                    "Admin".into(),
+                    Type::Read,
+                    "key1".into(),
+                    Some(RangeOption::RangeEnd("key2".into())),
                 )),
             ),
             TestCase::new(
                 vec!["grant_perm", "Admin", "Write", "key3", "--from_key"],
-                Some(AuthRoleGrantPermissionRequest::new(
-                    "Admin",
-                    Permission::new(Type::Write, "key3").with_from_key(),
+                Some((
+                    "Admin".into(),
+                    Type::Write,
+                    "key3".into(),
+                    Some(RangeOption::FromKey),
                 )),
             ),
         ];

@@ -1,8 +1,6 @@
 use anyhow::Result;
 use xline_client::{
-    types::auth::{
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, Permission, PermissionType,
-    },
+    types::auth::{AuthRoleRevokePermissionRequest, PermissionType},
     Client, ClientOptions,
 };
 
@@ -21,16 +19,10 @@ async fn main() -> Result<()> {
 
     // grant permissions to roles
     client
-        .role_grant_permission(AuthRoleGrantPermissionRequest::new(
-            "role1",
-            Permission::new(PermissionType::Read, "key1"),
-        ))
+        .role_grant_permission("role1", PermissionType::Read, "key1", None)
         .await?;
     client
-        .role_grant_permission(AuthRoleGrantPermissionRequest::new(
-            "role2",
-            Permission::new(PermissionType::Readwrite, "key2"),
-        ))
+        .role_grant_permission("role2", PermissionType::Readwrite, "key2", None)
         .await?;
 
     // list all roles and their permissions
