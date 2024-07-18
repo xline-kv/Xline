@@ -2,8 +2,7 @@ use anyhow::Result;
 use xline_client::{
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, Permission,
-        PermissionType,
+        AuthRoleGrantPermissionRequest, Permission, PermissionType,
     },
     Client, ClientOptions,
 };
@@ -48,12 +47,8 @@ async fn main() -> Result<()> {
     }
 
     // revoke permissions from roles
-    client
-        .role_revoke_permission(AuthRoleRevokePermissionRequest::new("role1", "key1"))
-        .await?;
-    client
-        .role_revoke_permission(AuthRoleRevokePermissionRequest::new("role2", "key2"))
-        .await?;
+    client.role_revoke_permission("role1", "key1", None).await?;
+    client.role_revoke_permission("role2", "key2", None).await?;
 
     // delete roles
     client

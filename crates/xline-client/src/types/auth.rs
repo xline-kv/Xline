@@ -320,67 +320,68 @@ impl From<AuthRoleGrantPermissionRequest> for xlineapi::AuthRoleGrantPermissionR
     }
 }
 
-/// Request for `AuthRoleRevokePermission`
-#[derive(Debug, PartialEq)]
-pub struct AuthRoleRevokePermissionRequest {
-    /// Inner request
-    pub(crate) inner: xlineapi::AuthRoleRevokePermissionRequest,
-}
-
-impl AuthRoleRevokePermissionRequest {
-    /// Creates a new `RoleRevokePermissionOption` from pb role revoke permission.
-    ///
-    /// `role` is the name of the role to revoke permission,
-    /// `key` is the key to revoke from the role.
-    #[inline]
-    pub fn new(role: impl Into<String>, key: impl Into<Vec<u8>>) -> Self {
-        Self {
-            inner: xlineapi::AuthRoleRevokePermissionRequest {
-                role: role.into(),
-                key: key.into(),
-                ..Default::default()
-            },
-        }
-    }
-
+/// Option for `AuthRoleRevokePermission`, to construct a `range_end`.
+#[derive(Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum AuthRoleRevokePermissionOption {
+    /// default option
+    #[default]
+    Default,
     /// If set, Xline will return all keys with the matching prefix
-    #[inline]
-    #[must_use]
-    pub fn with_prefix(mut self) -> Self {
-        if self.inner.key.is_empty() {
-            self.inner.key = vec![0];
-            self.inner.range_end = vec![0];
-        } else {
-            self.inner.range_end = KeyRange::get_prefix(&self.inner.key);
-        }
-        self
-    }
-
+    WithPrefix,
     /// If set, Xline will return all keys that are equal or greater than the given key
-    #[inline]
-    #[must_use]
-    pub fn with_from_key(mut self) -> Self {
-        if self.inner.key.is_empty() {
-            self.inner.key = vec![0];
-        }
-        self.inner.range_end = vec![0];
-        self
-    }
-
+    WithFromKey,
     /// `range_end` is the upper bound on the requested range \[key,` range_en`d).
     /// If `range_end` is '\0', the range is all keys >= key.
+    WithRangeEnd(Vec<u8>),
+}
+
+impl AuthRoleRevokePermissionOption {
+    /// Calculate the `range_end` for the request.
     #[inline]
     #[must_use]
-    pub fn with_range_end(mut self, range_end: impl Into<Vec<u8>>) -> Self {
-        self.inner.range_end = range_end.into();
-        self
+    pub fn calculate_range_end(self, key: &mut Vec<u8>) -> Vec<u8> {
+        match self {
+            AuthRoleRevokePermissionOption::Default => vec![],
+            AuthRoleRevokePermissionOption::WithPrefix => {
+                if key.is_empty() {
+                    key.push(0);
+                    vec![0]
+                } else {
+                    KeyRange::get_prefix(key)
+                }
+            }
+            AuthRoleRevokePermissionOption::WithFromKey => {
+                if key.is_empty() {
+                    key.push(0);
+                }
+                vec![0]
+            }
+            AuthRoleRevokePermissionOption::WithRangeEnd(range_end) => range_end,
+        }
+    }
+    /// Create a request.
+    #[inline]
+    #[must_use]
+    pub fn into_request(
+        self,
+        name: String,
+        mut key: Vec<u8>,
+    ) -> xlineapi::AuthRoleRevokePermissionRequest {
+        let range_end = self.calculate_range_end(&mut key);
+        xlineapi::AuthRoleRevokePermissionRequest {
+            role: name,
+            key,
+            range_end,
+        }
     }
 }
 
-impl From<AuthRoleRevokePermissionRequest> for xlineapi::AuthRoleRevokePermissionRequest {
+/// sugar for parsing [`None`] into [`AuthRoleRevokePermissionOption`].
+impl From<Option<AuthRoleRevokePermissionOption>> for AuthRoleRevokePermissionOption {
     #[inline]
-    fn from(req: AuthRoleRevokePermissionRequest) -> Self {
-        req.inner
+    fn from(value: Option<AuthRoleRevokePermissionOption>) -> Self {
+        value.unwrap_or_default()
     }
 }
 
