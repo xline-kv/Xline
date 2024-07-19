@@ -24,13 +24,13 @@ jobs:
               name: "Normal",
               args: "",
               rustflags: "",
-              test: "llvm-cov nextest --all-features --workspace --codecov --output-path codecov.info",
+              test: "llvm-cov nextest --all-features --workspace --codecov --output-path codecov.info && cargo test --doc",
             }
           - {
               name: "Madsim",
               args: "--package=simulation",
               rustflags: "--cfg madsim",
-              test: "nextest run --package=simulation",
+              test: "nextest run --package=simulation && cargo test -p simulation --doc",
             }
     name: Tests ${{ matrix.config.name }}
     steps:
