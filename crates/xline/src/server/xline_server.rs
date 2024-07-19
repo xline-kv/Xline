@@ -318,7 +318,7 @@ impl XlineServer {
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(RpcMaintenanceServer::new(maintenance_server))
             .add_service(RpcClusterServer::new(cluster_server))
-            .add_service(ProtocolServer::new(auth_wrapper));
+            .add_service(ProtocolServer::new(auth_wrapper.clone()));
         let curp_router = builder
             .add_service(ProtocolServer::new(curp_server.clone()))
             .add_service(InnerProtocolServer::new(curp_server));

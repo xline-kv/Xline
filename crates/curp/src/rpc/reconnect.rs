@@ -7,11 +7,12 @@ use futures::Stream;
 use crate::{
     members::ServerId,
     rpc::{
-        connect::ConnectApi, CurpError, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, FetchReadStateResponse, MoveLeaderRequest, MoveLeaderResponse,
-        OpResponse, ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest,
-        PublishRequest, PublishResponse, ReadIndexResponse, RecordRequest, RecordResponse,
-        ShutdownRequest, ShutdownResponse,
+        connect::ConnectApi, AddLearnerRequest, AddLearnerResponse, CurpError, FetchClusterRequest,
+        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse, MoveLeaderRequest,
+        MoveLeaderResponse, OpResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
+        ProposeRequest, PublishRequest, PublishResponse, ReadIndexResponse, RecordRequest,
+        RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse, ShutdownRequest,
+        ShutdownResponse,
     },
 };
 
@@ -180,5 +181,23 @@ impl<C: ConnectApi> ConnectApi for Reconnect<C> {
             result = connect_ref.lease_keep_alive(client_id, interval) => result,
             _empty = self.event.listen() => Err(CurpError::RpcTransport(())),
         }
+    }
+
+    /// Add a learner to the cluster.
+    async fn add_learner(
+        &self,
+        request: AddLearnerRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<AddLearnerResponse>, CurpError> {
+        execute_with_reconnect!(self, ConnectApi::add_learner, request, timeout)
+    }
+
+    /// Remove a learner from the cluster.
+    async fn remove_learner(
+        &self,
+        request: RemoveLearnerRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
+        execute_with_reconnect!(self, ConnectApi::remove_learner, request, timeout)
     }
 }

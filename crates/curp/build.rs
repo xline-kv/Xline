@@ -5,7 +5,10 @@ fn main() {
             "#[derive(serde::Deserialize, serde::Serialize)]",
         )
         .compile(
-            &["./proto/common/src/curp-command.proto"],
+            &[
+                "./proto/common/src/curp-command.proto",
+                "./proto/common/src/member.proto",
+            ],
             &["./proto/common/src"],
         )
         .unwrap_or_else(|e| panic!("Failed to compile proto, error is {:?}", e));

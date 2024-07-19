@@ -348,7 +348,9 @@ where
             | CurpError::InvalidConfig(())
             | CurpError::NodeNotExists(())
             | CurpError::NodeAlreadyExists(())
-            | CurpError::LearnerNotCatchUp(()) => {
+            | CurpError::LearnerNotCatchUp(()) 
+            | CurpError::InvalidMemberChange(())
+            => {
                 return Err(tonic::Status::from(err.clone()));
             }
 
@@ -466,6 +468,18 @@ where
             Ok(resp)
         })
         .await
+    }
+
+    /// Add some learners to the cluster.
+    async fn add_learner(&self, addrs: Vec<String>) -> Result<Vec<u64>, Self::Error> {
+        self.retry::<_, _>(|client, ctx| client.add_learner(addrs.clone(), ctx))
+            .await
+    }
+
+    /// Remove some learners from the cluster.
+    async fn remove_learner(&self, ids: Vec<u64>) -> Result<(), Self::Error> {
+        self.retry::<_, _>(|client, ctx| client.remove_learner(ids.clone(), ctx))
+            .await
     }
 }
 

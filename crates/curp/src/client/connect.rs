@@ -83,6 +83,12 @@ pub trait ClientApi {
         // fallback to linearizable fetch
         self.fetch_leader_id(true).await
     }
+
+    /// Add some learners to the cluster.
+    async fn add_learner(&self, addrs: Vec<String>) -> Result<Vec<u64>, Self::Error>;
+
+    /// Remove some learners from the cluster.
+    async fn remove_learner(&self, ids: Vec<u64>) -> Result<(), Self::Error>;
 }
 
 /// This trait override some unrepeatable methods in ClientApi, and a client with this trait will be able to retry.
@@ -132,4 +138,10 @@ pub(crate) trait RepeatableClientApi {
         cmd: &Self::Cmd,
         ctx: Context,
     ) -> Result<ReadState, Self::Error>;
+
+    /// Add some learners to the cluster.
+    async fn add_learner(&self, addrs: Vec<String>, ctx: Context) -> Result<Vec<u64>, Self::Error>;
+
+    /// Remove some learners from the cluster.
+    async fn remove_learner(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error>;
 }

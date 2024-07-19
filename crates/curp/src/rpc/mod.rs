@@ -27,6 +27,8 @@ pub use self::proto::{
         propose_conf_change_request::{ConfChange, ConfChangeType},
         protocol_client,
         protocol_server::{Protocol, ProtocolServer},
+        AddLearnerRequest,
+        AddLearnerResponse,
         CmdResult,
         FetchClusterRequest,
         FetchClusterResponse,
@@ -49,6 +51,8 @@ pub use self::proto::{
         ReadIndexResponse,
         RecordRequest,
         RecordResponse,
+        RemoveLearnerRequest,
+        RemoveLearnerResponse,
         ShutdownRequest,
         ShutdownResponse,
         SyncedResponse,
@@ -667,6 +671,11 @@ impl CurpError {
         Self::Internal(reason.into())
     }
 
+    /// `InvalidMemberChange` error
+    pub(crate) fn invalid_member_change() -> Self {
+        Self::InvalidMemberChange(())
+    }
+
     /// Whether to abort fast round early
     pub(crate) fn should_abort_fast_round(&self) -> bool {
         matches!(
@@ -709,7 +718,8 @@ impl CurpError {
             | CurpError::ExpiredClientId(())
             | CurpError::Redirect(_)
             | CurpError::WrongClusterVersion(())
-            | CurpError::Zombie(()) => CurpErrorPriority::High,
+            | CurpError::Zombie(())
+            | CurpError::InvalidMemberChange(()) => CurpErrorPriority::High,
             CurpError::RpcTransport(())
             | CurpError::Internal(_)
             | CurpError::KeyConflict(())
@@ -815,6 +825,10 @@ impl From<CurpError> for tonic::Status {
             CurpError::Zombie(()) => (
                 tonic::Code::FailedPrecondition,
                 "Zombie leader error: The leader is a zombie with outdated term.",
+            ),
+            CurpError::InvalidMemberChange(()) => (
+                tonic::Code::FailedPrecondition,
+                "Invalid membership change error: The requeted change is invalid.",
             ),
         };
 

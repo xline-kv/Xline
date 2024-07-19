@@ -14,14 +14,21 @@ use engine::SnapshotApi;
 use futures::Stream;
 #[cfg(test)]
 use mockall::automock;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
+use tonic::transport::Channel;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
-use tonic::transport::{Channel, Endpoint};
-use tracing::{debug, error, info, instrument};
+use tonic::transport::Endpoint;
+use tower::discover::Change;
+use tracing::debug;
+use tracing::error;
+use tracing::info;
+use tracing::instrument;
+use utils::build_endpoint;
+use utils::tracing::Inject;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
-use utils::{build_endpoint, tracing::Inject};
 
 use crate::{
     members::ServerId,
@@ -44,7 +51,8 @@ use crate::{
 use super::{
     proto::commandpb::{ReadIndexRequest, ReadIndexResponse},
     reconnect::Reconnect,
-    OpResponse, RecordRequest, RecordResponse,
+    AddLearnerRequest, AddLearnerResponse, OpResponse, RecordRequest, RecordResponse,
+    RemoveLearnerRequest, RemoveLearnerResponse,
 };
 
 /// Install snapshot chunk size: 64KB
@@ -229,6 +237,20 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
 
     /// Keep send lease keep alive to server and mutate the client id
     async fn lease_keep_alive(&self, client_id: u64, interval: Duration) -> Result<u64, CurpError>;
+
+    /// Add a learner to the cluster.
+    async fn add_learner(
+        &self,
+        request: AddLearnerRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<AddLearnerResponse>, CurpError>;
+
+    /// Remove a learner from the cluster.
+    async fn remove_learner(
+        &self,
+        request: RemoveLearnerRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError>;
 }
 
 /// Inner Connect interface among different servers
@@ -306,8 +328,8 @@ impl Deref for InnerConnectApiWrapper {
     }
 }
 
-/// The connection struct to hold the real rpc connections, it may failed to connect, but it also
-/// retries the next time
+/// The connection struct to hold the real rpc connections, it may failed to
+/// connect, but it also retries the next time
 #[derive(Debug)]
 pub(crate) struct Connect<C> {
     /// Server id
@@ -315,7 +337,7 @@ pub(crate) struct Connect<C> {
     /// The rpc connection
     rpc_connect: C,
     /// The rpc connection balance sender
-    change_tx: tokio::sync::mpsc::Sender<tower::discover::Change<String, Endpoint>>,
+    change_tx: Sender<Change<String, Endpoint>>,
     /// The current rpc connection address, when the address is updated,
     /// `addrs` will be used to remove previous connection
     addrs: Mutex<Vec<String>>,
@@ -382,6 +404,7 @@ impl<C> Connect<C> {
     }
 }
 
+#[macro_export]
 /// Sets timeout for a client connection
 macro_rules! with_timeout {
     ($timeout:expr, $client_op:expr) => {
@@ -531,6 +554,28 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         info!("client_id update to {new_id}");
         Ok(new_id)
     }
+
+    async fn add_learner(
+        &self,
+        request: AddLearnerRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<AddLearnerResponse>, CurpError> {
+        let mut client = self.rpc_connect.clone();
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_current();
+        with_timeout!(timeout, client.add_learner(req)).map_err(Into::into)
+    }
+
+    async fn remove_learner(
+        &self,
+        request: RemoveLearnerRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
+        let mut client = self.rpc_connect.clone();
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_current();
+        with_timeout!(timeout, client.remove_learner(req)).map_err(Into::into)
+    }
 }
 
 #[allow(clippy::let_and_return)] // for metrics
@@ -632,8 +677,9 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
     }
 }
 
-/// A connect api implementation which bypass kernel to dispatch method directly.
-pub(crate) struct BypassedConnect<T: Protocol> {
+/// A connect api implementation which bypass kernel to dispatch method
+/// directly.
+pub(crate) struct BypassedConnect<T> {
     /// inner server
     server: T,
     /// server id
@@ -824,6 +870,28 @@ where
 
         Ok(new_id)
     }
+
+    async fn add_learner(
+        &self,
+        request: AddLearnerRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<AddLearnerResponse>, CurpError> {
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
+        req.metadata_mut().inject_current();
+        self.server.add_learner(req).await.map_err(Into::into)
+    }
+
+    async fn remove_learner(
+        &self,
+        request: RemoveLearnerRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
+        req.metadata_mut().inject_current();
+        self.server.remove_learner(req).await.map_err(Into::into)
+    }
 }
 
 /// Generate heartbeat stream
@@ -889,8 +957,10 @@ fn install_snapshot_stream(
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use engine::{EngineType, Snapshot as EngineSnapshot};
-    use futures::{pin_mut, StreamExt};
+    use engine::EngineType;
+    use engine::Snapshot as EngineSnapshot;
+    use futures::pin_mut;
+    use futures::StreamExt;
     use test_macros::abort_on_panic;
     use tracing_test::traced_test;
 

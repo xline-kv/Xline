@@ -3,11 +3,12 @@ use std::sync::Arc;
 use curp::{
     cmd::PbCodec,
     rpc::{
-        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse, OpResponse,
-        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, Protocol,
-        PublishRequest, PublishResponse, ReadIndexRequest, ReadIndexResponse, RecordRequest,
-        RecordResponse, ShutdownRequest, ShutdownResponse,
+        AddLearnerRequest, AddLearnerResponse, FetchClusterRequest, FetchClusterResponse,
+        FetchReadStateRequest, FetchReadStateResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
+        MoveLeaderResponse, OpResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
+        ProposeRequest, Protocol, PublishRequest, PublishResponse, ReadIndexRequest,
+        ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
+        RemoveLearnerResponse, ShutdownRequest, ShutdownResponse,
     },
 };
 use flume::r#async::RecvStream;
@@ -18,6 +19,7 @@ use super::xline_server::CurpServer;
 use crate::storage::AuthStore;
 
 /// Auth wrapper
+#[derive(Clone)]
 pub(crate) struct AuthWrapper {
     /// Curp server
     curp_server: CurpServer,
@@ -119,5 +121,19 @@ impl Protocol for AuthWrapper {
         request: tonic::Request<tonic::Streaming<LeaseKeepAliveMsg>>,
     ) -> Result<tonic::Response<LeaseKeepAliveMsg>, tonic::Status> {
         self.curp_server.lease_keep_alive(request).await
+    }
+
+    async fn add_learner(
+        &self,
+        request: tonic::Request<AddLearnerRequest>,
+    ) -> Result<tonic::Response<AddLearnerResponse>, tonic::Status> {
+        self.curp_server.add_learner(request).await
+    }
+
+    async fn remove_learner(
+        &self,
+        request: tonic::Request<RemoveLearnerRequest>,
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, tonic::Status> {
+        self.curp_server.remove_learner(request).await
     }
 }

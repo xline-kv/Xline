@@ -15,8 +15,8 @@ use super::{
 use crate::{
     members::ServerId,
     rpc::{
-        ConfChange, CurpError, FetchReadStateRequest, Member, MoveLeaderRequest,
-        ProposeConfChangeRequest, PublishRequest, ReadState, ShutdownRequest,
+        AddLearnerRequest, ConfChange, CurpError, FetchReadStateRequest, Member, MoveLeaderRequest,
+        ProposeConfChangeRequest, PublishRequest, ReadState, RemoveLearnerRequest, ShutdownRequest,
     },
 };
 
@@ -152,5 +152,29 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
             .unwrap_or_else(|| unreachable!("read_state must be set in fetch read state response"));
 
         Ok(state)
+    }
+
+    /// Add some learners to the cluster.
+    async fn add_learner(&self, addrs: Vec<String>, ctx: Context) -> Result<Vec<u64>, Self::Error> {
+        let req = AddLearnerRequest { node_addrs: addrs };
+        let timeout = self.config.wait_synced_timeout();
+        let resp = ctx
+            .cluster_state()
+            .map_leader(|conn| async move { conn.add_learner(req, timeout).await })
+            .await?;
+
+        Ok(resp.into_inner().node_ids)
+    }
+
+    /// Remove some learners from the cluster.
+    async fn remove_learner(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error> {
+        let req = RemoveLearnerRequest { node_ids: ids };
+        let timeout = self.config.wait_synced_timeout();
+        let _ig = ctx
+            .cluster_state()
+            .map_leader(|conn| async move { conn.remove_learner(req, timeout).await })
+            .await?;
+
+        Ok(())
     }
 }

@@ -64,6 +64,9 @@ use crate::{
     snapshot::{Snapshot, SnapshotMeta},
 };
 
+/// `CurpNode` member implementation
+mod member_impl;
+
 /// After sync entry, composed of a log entry and response sender
 pub(crate) type AfterSyncEntry<C> = (Arc<LogEntry<C>>, Option<Arc<ResponseSender>>);
 
@@ -636,7 +639,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)]
     async fn election_task(curp: Arc<RawCurp<C, RC>>, shutdown_listener: Listener) {
         let heartbeat_interval = curp.cfg().heartbeat_interval;
-        // wait for some random time before tick starts to minimize vote split possibility
+        // wait for some random time before tick starts to minimize vote split
+        // possibility
         let rand = thread_rng()
             .gen_range(0..heartbeat_interval.as_millis())
             .numeric_cast();
@@ -653,8 +657,9 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 }
             }
             if let Some(pre_vote_or_vote) = curp.tick_election() {
-                // bcast pre vote or vote, if it is a pre vote and success, it will return Some(vote)
-                // then we need to bcast normal vote, and bcast normal vote always return None
+                // bcast pre vote or vote, if it is a pre vote and success, it will return
+                // Some(vote) then we need to bcast normal vote, and bcast
+                // normal vote always return None
                 if let Some(vote) = Self::bcast_vote(curp.as_ref(), pre_vote_or_vote.clone()).await
                 {
                     debug_assert!(
@@ -763,7 +768,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         let mut is_shutdown_state = false;
         let mut ae_fail_count = 0;
         loop {
-            // a sync is either triggered by an heartbeat timeout event or when new log entries arrive
+            // a sync is either triggered by an heartbeat timeout event or when new log
+            // entries arrive
             tokio::select! {
                 state = shutdown_listener.wait_state(), if !is_shutdown_state => {
                     match state {
@@ -1138,7 +1144,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 });
                 // (hb_opt, entries) status combination
                 // (false, empty) => send heartbeat to followers
-                // (true, empty) => indicates that `batch_timeout` expired, and during this period there is not any log generated. Do nothing
+                // (true, empty) => indicates that `batch_timeout` expired, and during this
+                // period there is not any log generated. Do nothing
                 // (true | false, not empty) => send append entries
                 if !*hb_opt || !is_empty {
                     match Self::send_ae(connect, curp, ae).await {
@@ -1169,9 +1176,12 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                                 debug!("ae rejected by {}", connect.id());
                             }
                             // Check Follower shutdown
-                            // When the leader is in the shutdown state, its last log must be shutdown, and if the follower is
-                            // already synced with leader and current AE is a heartbeat, then the follower will commit the shutdown
-                            // log after AE, or when the follower is not synced with the leader, the current AE will send and directly commit
+                            // When the leader is in the shutdown state, its last log must be
+                            // shutdown, and if the follower is
+                            // already synced with leader and current AE is a heartbeat, then the
+                            // follower will commit the shutdown
+                            // log after AE, or when the follower is not synced with the leader, the
+                            // current AE will send and directly commit
                             // shutdown log.
                             if is_shutdown_state
                                 && ((curp.is_synced(connect_id) && is_empty)
