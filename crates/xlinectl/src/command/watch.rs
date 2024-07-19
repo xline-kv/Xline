@@ -6,7 +6,7 @@ use clap::{arg, value_parser, ArgMatches, Command};
 use std::process::Command as StdCommand;
 use xline_client::{
     error::XlineClientError,
-    types::watch::{WatchRequest, Watcher},
+    types::watch::{WatchOptions, Watcher},
     Client,
 };
 use xlineapi::command::Command as XlineCommand;
@@ -38,7 +38,7 @@ pub(crate) fn command() -> Command {
 }
 
 /// a function that builds a watch request with existing fields
-type BuildRequestFn = dyn Fn(&str, Option<&str>) -> WatchRequest;
+type BuildRequestFn = dyn Fn(Option<&str>) -> WatchOptions;
 
 /// Build request from matches
 pub(crate) fn build_request(matches: &ArgMatches) -> Box<BuildRequestFn> {
@@ -47,8 +47,8 @@ pub(crate) fn build_request(matches: &ArgMatches) -> Box<BuildRequestFn> {
     let pre_kv = matches.get_flag("pre_kv");
     let progress_notify = matches.get_flag("progress_notify");
 
-    Box::new(move |key: &str, range_end: Option<&str>| -> WatchRequest {
-        let mut request = WatchRequest::new(key.as_bytes());
+    Box::new(move |range_end: Option<&str>| -> WatchOptions {
+        let mut request = WatchOptions::default();
 
         if prefix {
             request = request.with_prefix();
@@ -87,7 +87,7 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 async fn exec_non_interactive(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let key = matches.get_one::<String>("key").expect("required");
     let range_end = matches.get_one::<String>("range_end");
-    let request = build_request(matches)(key, range_end.map(String::as_str));
+    let watch_options = build_request(matches)(range_end.map(String::as_str));
 
     // extract the command provided by user
     let command_to_execute: Vec<OsString> = matches
@@ -96,7 +96,10 @@ async fn exec_non_interactive(client: &mut Client, matches: &ArgMatches) -> Resu
         .map(OsString::from)
         .collect();
 
-    let (_watcher, mut stream) = client.watch_client().watch(request).await?;
+    let (_watcher, mut stream) = client
+        .watch_client()
+        .watch(key.as_bytes(), Some(watch_options))
+        .await?;
     while let Some(resp) = stream
         .message()
         .await
@@ -217,8 +220,11 @@ async fn exec_interactive(client: &mut Client, matches: &ArgMatches) -> Result<(
                 let Some(key) = args.next() else {
                     failed!(line);
                 };
-                let request = req_builder(key, args.next());
-                let (new_watcher, mut stream) = client.watch_client().watch(request).await?;
+                let watch_options = req_builder(args.next());
+                let (new_watcher, mut stream) = client
+                    .watch_client()
+                    .watch(key.as_bytes(), Some(watch_options))
+                    .await?;
                 watcher = Some(new_watcher);
                 let _handle = tokio::spawn(async move {
                     while let Some(resp) = stream.message().await? {
@@ -259,12 +265,21 @@ mod tests {
 
     struct TestCase {
         arg: Vec<&'static str>,
-        req: Option<WatchRequest>,
+        key: String,
+        req: Option<WatchOptions>,
     }
 
     impl TestCase {
-        fn new(arg: Vec<&'static str>, req: Option<WatchRequest>) -> TestCase {
-            TestCase { arg, req }
+        fn new(
+            arg: Vec<&'static str>,
+            key: impl Into<String>,
+            req: Option<WatchOptions>,
+        ) -> TestCase {
+            TestCase {
+                arg,
+                key: key.into(),
+                req,
+            }
         }
 
         fn run_test(&self) {
@@ -282,7 +297,8 @@ mod tests {
             };
             let key = matches.get_one::<String>("key").expect("required");
             let range_end = matches.get_one::<String>("range_end");
-            let req = build_request(&matches)(key, range_end.map(String::as_str));
+            let req = build_request(&matches)(range_end.map(String::as_str));
+            assert_eq!(key.to_owned(), self.key);
             assert_eq!(Some(req), self.req);
             // Extract the command to execute from the matches
             let command_to_execute: Vec<OsString> = matches
@@ -314,12 +330,14 @@ mod tests {
         let test_cases = vec![
             TestCase::new(
                 vec!["watch", "key1", "key11"],
-                Some(WatchRequest::new("key1").with_range_end("key11")),
+                "key1",
+                Some(WatchOptions::default().with_range_end("key11")),
             ),
             TestCase::new(
                 vec!["watch", "key1", "key11", "--rev", "100", "--pre_kv"],
+                "key1",
                 Some(
-                    WatchRequest::new("key1")
+                    WatchOptions::default()
                         .with_range_end("key11")
                         .with_start_revision(100)
                         .with_prev_kv(),
@@ -327,11 +345,8 @@ mod tests {
             ),
             TestCase::new(
                 vec!["watch", "key1", "--prefix", "--progress_notify"],
-                Some(
-                    WatchRequest::new("key1")
-                        .with_prefix()
-                        .with_progress_notify(),
-                ),
+                "key1",
+                Some(WatchOptions::default().with_prefix().with_progress_notify()),
             ),
             // newly added test case:
             // testing command `-- echo watch event received`
@@ -345,11 +360,8 @@ mod tests {
                     "echo",
                     "watch event received",
                 ],
-                Some(
-                    WatchRequest::new("key1")
-                        .with_prefix()
-                        .with_progress_notify(),
-                ),
+                "key1",
+                Some(WatchOptions::default().with_prefix().with_progress_notify()),
             ),
             // newly added test case:
             // testing command `-- sh -c ls`
@@ -364,11 +376,8 @@ mod tests {
                     "-c",
                     "ls",
                 ],
-                Some(
-                    WatchRequest::new("key1")
-                        .with_prefix()
-                        .with_progress_notify(),
-                ),
+                "key1",
+                Some(WatchOptions::default().with_prefix().with_progress_notify()),
             ),
             // newly added test case:
             // testing command `-- sh -c "env | grep XLINE_WATCH_"`
@@ -383,11 +392,8 @@ mod tests {
                     "-c",
                     "env | grep XLINE_WATCH_",
                 ],
-                Some(
-                    WatchRequest::new("key1")
-                        .with_prefix()
-                        .with_progress_notify(),
-                ),
+                "key1",
+                Some(WatchOptions::default().with_prefix().with_progress_notify()),
             ),
         ];
 

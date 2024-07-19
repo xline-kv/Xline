@@ -1,8 +1,5 @@
 //! The following tests are originally from `etcd-client`
-use xline_client::{
-    error::Result,
-    types::watch::{EventType, WatchRequest},
-};
+use xline_client::{error::Result, types::watch::EventType};
 
 use super::common::get_cluster_client;
 
@@ -12,7 +9,7 @@ async fn watch_should_receive_consistent_events() -> Result<()> {
     let mut watch_client = client.watch_client();
     let kv_client = client.kv_client();
 
-    let (mut watcher, mut stream) = watch_client.watch(WatchRequest::new("watch01")).await?;
+    let (mut watcher, mut stream) = watch_client.watch("watch01", None).await?;
 
     kv_client.put("watch01", "01", None).await?;
 
@@ -41,7 +38,7 @@ async fn watch_stream_should_work_after_watcher_dropped() -> Result<()> {
     let mut watch_client = client.watch_client();
     let kv_client = client.kv_client();
 
-    let (_, mut stream) = watch_client.watch(WatchRequest::new("watch01")).await?;
+    let (_, mut stream) = watch_client.watch("watch01", None).await?;
 
     kv_client.put("watch01", "01", None).await?;
 

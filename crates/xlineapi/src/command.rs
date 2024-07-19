@@ -131,7 +131,8 @@ impl KeyRange {
     #[allow(clippy::indexing_slicing)] // end[i] is always valid
     #[must_use]
     #[inline]
-    pub fn get_prefix(key: &[u8]) -> Vec<u8> {
+    pub fn get_prefix(key: impl AsRef<[u8]>) -> Vec<u8> {
+        let key = key.as_ref();
         let mut end = key.to_vec();
         for i in (0..key.len()).rev() {
             if key[i] < 0xFF {
