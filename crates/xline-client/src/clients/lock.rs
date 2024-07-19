@@ -263,7 +263,7 @@ impl Xutex {
     /// use anyhow::Result;
     /// use xline_client::{
     ///     clients::Xutex,
-    ///     types::kv::{Compare, CompareResult, PutRequest, TxnOp},
+    ///     types::kv::{Compare, CompareResult, PutOptions, TxnOp},
     ///     Client, ClientOptions,
     /// };
     ///
@@ -283,9 +283,7 @@ impl Xutex {
     ///     let txn_req = xutex_guard
     ///         .txn_check_locked_key()
     ///         .when([Compare::value("key2", CompareResult::Equal, "value2")])
-    ///         .and_then([TxnOp::put(
-    ///             PutRequest::new("key2", "value3").with_prev_kv(true),
-    ///         )])
+    ///         .and_then([TxnOp::put("key2", "value3", Some(PutOptions::default().with_prev_kv(true)))])
     ///         .or_else(&[]);
     ///
     ///     let _resp = kv_client.txn(txn_req).await?;
