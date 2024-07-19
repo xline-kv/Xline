@@ -1,49 +1,74 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::{Debug, Formatter},
-    ops::Deref,
-    sync::{atomic::AtomicU64, Arc},
-    time::Duration,
-};
+/// Member RPCs
+mod member;
+
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fmt::Debug;
+use std::fmt::Formatter;
+use std::ops::Deref;
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
+use std::time::Duration;
 
 use async_stream::stream;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use clippy_utilities::NumericCast;
 use engine::SnapshotApi;
-use futures::{stream::FuturesUnordered, Stream};
+use futures::stream::FuturesUnordered;
+use futures::Stream;
 #[cfg(test)]
 use mockall::automock;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
+use tonic::transport::Channel;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
-use tonic::transport::{Channel, Endpoint};
-use tracing::{debug, error, info, instrument};
+use tonic::transport::Endpoint;
+use tower::discover::Change;
+use tracing::debug;
+use tracing::error;
+use tracing::info;
+use tracing::instrument;
+use utils::build_endpoint;
+use utils::tracing::Inject;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
-use utils::{build_endpoint, tracing::Inject};
 
-use crate::{
-    members::ServerId,
-    rpc::{
-        proto::{
-            commandpb::protocol_client::ProtocolClient,
-            inner_messagepb::inner_protocol_client::InnerProtocolClient,
-        },
-        AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchClusterRequest,
-        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
-        MoveLeaderResponse, ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest,
-        Protocol, PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse,
-        TriggerShutdownRequest, TryBecomeLeaderNowRequest, VoteRequest, VoteResponse,
-    },
-    snapshot::Snapshot,
-};
+use crate::members::ServerId;
+use crate::rpc::proto::commandpb::protocol_client::ProtocolClient;
+use crate::rpc::proto::inner_messagepb::inner_protocol_client::InnerProtocolClient;
+use crate::rpc::AppendEntriesRequest;
+use crate::rpc::AppendEntriesResponse;
+use crate::rpc::CurpError;
+use crate::rpc::FetchClusterRequest;
+use crate::rpc::FetchClusterResponse;
+use crate::rpc::FetchReadStateRequest;
+use crate::rpc::FetchReadStateResponse;
+use crate::rpc::InstallSnapshotRequest;
+use crate::rpc::InstallSnapshotResponse;
+use crate::rpc::LeaseKeepAliveMsg;
+use crate::rpc::MoveLeaderRequest;
+use crate::rpc::MoveLeaderResponse;
+use crate::rpc::ProposeConfChangeRequest;
+use crate::rpc::ProposeConfChangeResponse;
+use crate::rpc::ProposeRequest;
+use crate::rpc::Protocol;
+use crate::rpc::PublishRequest;
+use crate::rpc::PublishResponse;
+use crate::rpc::ShutdownRequest;
+use crate::rpc::ShutdownResponse;
+use crate::rpc::TriggerShutdownRequest;
+use crate::rpc::TryBecomeLeaderNowRequest;
+use crate::rpc::VoteRequest;
+use crate::rpc::VoteResponse;
+use crate::snapshot::Snapshot;
 
-use super::{
-    proto::commandpb::{ReadIndexRequest, ReadIndexResponse},
-    OpResponse, RecordRequest, RecordResponse,
-};
+use super::proto::commandpb::ReadIndexRequest;
+use super::proto::commandpb::ReadIndexResponse;
+use super::OpResponse;
+use super::RecordRequest;
+use super::RecordResponse;
 
 /// Install snapshot chunk size: 64KB
 const SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
@@ -69,19 +94,28 @@ impl FromTonicChannel for InnerProtocolClient<Channel> {
     }
 }
 
+/// Build a channel
+async fn build_tonic_channel(
+    addrs: &[String],
+    tls_config: Option<&ClientTlsConfig>,
+) -> Result<(Channel, Sender<Change<String, Endpoint>>), tonic::transport::Error> {
+    let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE);
+    for addr in addrs {
+        let endpoint = build_endpoint(addr, tls_config)?;
+        let _ig = change_tx
+            .send(tower::discover::Change::Insert(addr.clone(), endpoint))
+            .await;
+    }
+    Ok((channel, change_tx))
+}
+
 /// Connect to a server
 async fn connect_to<Client: FromTonicChannel>(
     id: ServerId,
     addrs: Vec<String>,
     tls_config: Option<ClientTlsConfig>,
 ) -> Result<Arc<Connect<Client>>, tonic::transport::Error> {
-    let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE);
-    for addr in &addrs {
-        let endpoint = build_endpoint(addr, tls_config.as_ref())?;
-        let _ig = change_tx
-            .send(tower::discover::Change::Insert(addr.clone(), endpoint))
-            .await;
-    }
+    let (channel, change_tx) = build_tonic_channel(&addrs, tls_config.as_ref()).await?;
     let client = Client::from_channel(channel);
     let connect = Arc::new(Connect {
         id,
@@ -128,7 +162,8 @@ pub(crate) async fn connects(
     members: HashMap<ServerId, Vec<String>>,
     tls_config: Option<&ClientTlsConfig>,
 ) -> Result<impl Iterator<Item = (ServerId, Arc<dyn ConnectApi>)>, tonic::transport::Error> {
-    // It seems that casting high-rank types cannot be inferred, so we allow trivial_casts to cast manually
+    // It seems that casting high-rank types cannot be inferred, so we allow
+    // trivial_casts to cast manually
     #[allow(trivial_casts)]
     #[allow(clippy::as_conversions)]
     let conns = connect_all(members, tls_config)
@@ -138,7 +173,8 @@ pub(crate) async fn connects(
     Ok(conns)
 }
 
-/// Wrapper of [`connect_all`], hide the details of [`Connect<InnerProtocolClient>`]
+/// Wrapper of [`connect_all`], hide the details of
+/// [`Connect<InnerProtocolClient>`]
 pub(crate) async fn inner_connects(
     members: HashMap<ServerId, Vec<String>>,
     tls_config: Option<&ClientTlsConfig>,
@@ -306,8 +342,8 @@ impl Deref for InnerConnectApiWrapper {
     }
 }
 
-/// The connection struct to hold the real rpc connections, it may failed to connect, but it also
-/// retries the next time
+/// The connection struct to hold the real rpc connections, it may failed to
+/// connect, but it also retries the next time
 #[derive(Debug)]
 pub(crate) struct Connect<C> {
     /// Server id
@@ -315,7 +351,7 @@ pub(crate) struct Connect<C> {
     /// The rpc connection
     rpc_connect: C,
     /// The rpc connection balance sender
-    change_tx: tokio::sync::mpsc::Sender<tower::discover::Change<String, Endpoint>>,
+    change_tx: Sender<Change<String, Endpoint>>,
     /// The current rpc connection address, when the address is updated,
     /// `addrs` will be used to remove previous connection
     addrs: Mutex<Vec<String>>,
@@ -382,6 +418,7 @@ impl<C> Connect<C> {
     }
 }
 
+#[macro_export]
 /// Sets timeout for a client connection
 macro_rules! with_timeout {
     ($timeout:expr, $client_op:expr) => {
@@ -636,7 +673,8 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
     }
 }
 
-/// A connect api implementation which bypass kernel to dispatch method directly.
+/// A connect api implementation which bypass kernel to dispatch method
+/// directly.
 pub(crate) struct BypassedConnect<T: Protocol> {
     /// inner server
     server: T,
@@ -885,8 +923,10 @@ fn install_snapshot_stream(
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use engine::{EngineType, Snapshot as EngineSnapshot};
-    use futures::{pin_mut, StreamExt};
+    use engine::EngineType;
+    use engine::Snapshot as EngineSnapshot;
+    use futures::pin_mut;
+    use futures::StreamExt;
     use test_macros::abort_on_panic;
     use tracing_test::traced_test;
 

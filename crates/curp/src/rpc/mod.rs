@@ -18,6 +18,11 @@ pub(crate) use self::proto::{
     },
 };
 pub use self::proto::{
+    memberpb::member_protocol_server::MemberProtocol,
+    memberpb::AddLearnerRequest,
+    memberpb::AddLearnerResponse,
+    memberpb::RemoveLearnerRequest,
+    memberpb::RemoveLearnerResponse,
     commandpb::{
         cmd_result::Result as CmdResultInner,
         curp_error::Err as CurpError, // easy for match
@@ -84,6 +89,10 @@ pub(crate) use connect::{connect, connects, inner_connects};
 mod proto {
     pub(crate) mod commandpb {
         tonic::include_proto!("commandpb");
+    }
+
+    pub(crate) mod memberpb {
+        tonic::include_proto!("memberpb");
     }
 
     pub(crate) mod inner_messagepb {

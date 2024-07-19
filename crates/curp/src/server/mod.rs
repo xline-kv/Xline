@@ -1,4 +1,5 @@
-use std::{fmt::Debug, sync::Arc};
+use std::fmt::Debug;
+use std::sync::Arc;
 
 use engine::SnapshotAllocator;
 use flume::r#async::RecvStream;
@@ -6,34 +7,56 @@ use tokio::sync::broadcast;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::instrument;
+use utils::config::CurpConfig;
+use utils::task_manager::TaskManager;
+use utils::tracing::Extract;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
-use utils::{config::CurpConfig, task_manager::TaskManager, tracing::Extract};
 
+pub use self::conflict::spec_pool_new::SpObject;
+pub use self::conflict::uncommitted_pool::UcpObject;
 use self::curp_node::CurpNode;
-pub use self::{
-    conflict::{spec_pool_new::SpObject, uncommitted_pool::UcpObject},
-    raw_curp::RawCurp,
-};
-use crate::rpc::{OpResponse, RecordRequest, RecordResponse};
-use crate::{
-    cmd::{Command, CommandExecutor},
-    members::{ClusterInfo, ServerId},
-    role_change::RoleChange,
-    rpc::{
-        connect::Bypass, AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest,
-        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
-        MoveLeaderResponse, ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest,
-        PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
-        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
-        VoteRequest, VoteResponse,
-    },
-};
-use crate::{
-    response::ResponseSender,
-    rpc::{ReadIndexRequest, ReadIndexResponse},
-};
+pub use self::raw_curp::RawCurp;
+use crate::cmd::Command;
+use crate::cmd::CommandExecutor;
+use crate::members::ClusterInfo;
+use crate::members::ServerId;
+use crate::response::ResponseSender;
+use crate::role_change::RoleChange;
+use crate::rpc::connect::Bypass;
+use crate::rpc::AddLearnerRequest;
+use crate::rpc::AddLearnerResponse;
+use crate::rpc::AppendEntriesRequest;
+use crate::rpc::AppendEntriesResponse;
+use crate::rpc::FetchClusterRequest;
+use crate::rpc::FetchClusterResponse;
+use crate::rpc::FetchReadStateRequest;
+use crate::rpc::FetchReadStateResponse;
+use crate::rpc::InstallSnapshotRequest;
+use crate::rpc::InstallSnapshotResponse;
+use crate::rpc::LeaseKeepAliveMsg;
+use crate::rpc::MoveLeaderRequest;
+use crate::rpc::MoveLeaderResponse;
+use crate::rpc::OpResponse;
+use crate::rpc::ProposeConfChangeRequest;
+use crate::rpc::ProposeConfChangeResponse;
+use crate::rpc::ProposeRequest;
+use crate::rpc::PublishRequest;
+use crate::rpc::PublishResponse;
+use crate::rpc::ReadIndexRequest;
+use crate::rpc::ReadIndexResponse;
+use crate::rpc::RecordRequest;
+use crate::rpc::RecordResponse;
+use crate::rpc::RemoveLearnerRequest;
+use crate::rpc::RemoveLearnerResponse;
+use crate::rpc::ShutdownRequest;
+use crate::rpc::ShutdownResponse;
+use crate::rpc::TriggerShutdownRequest;
+use crate::rpc::TriggerShutdownResponse;
+use crate::rpc::TryBecomeLeaderNowRequest;
+use crate::rpc::TryBecomeLeaderNowResponse;
+use crate::rpc::VoteRequest;
+use crate::rpc::VoteResponse;
 
 /// Command worker to do execution and after sync
 mod cmd_worker;
@@ -62,14 +85,17 @@ mod lease_manager;
 /// Curp metrics
 mod metrics;
 
-pub use storage::{db::DB, StorageApi, StorageError};
+pub use storage::db::DB;
+pub use storage::StorageApi;
+pub use storage::StorageError;
 
 /// The Rpc Server to handle rpc requests
 ///
 /// This Wrapper is introduced due to the `MadSim` rpc lib
 #[derive(Debug)]
 pub struct Rpc<C: Command, CE: CommandExecutor<C>, RC: RoleChange> {
-    /// The inner server is wrapped in an Arc so that its state can be shared while cloning the rpc wrapper
+    /// The inner server is wrapped in an Arc so that its state can be shared
+    /// while cloning the rpc wrapper
     inner: Arc<CurpNode<C, CE, RC>>,
 }
 
@@ -256,6 +282,33 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::InnerProtoc
     }
 }
 
+#[tonic::async_trait]
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::MemberProtocol
+    for Rpc<C, CE, RC>
+{
+    #[instrument(skip_all, name = "add_learner")]
+    async fn add_learner(
+        &self,
+        request: tonic::Request<AddLearnerRequest>,
+    ) -> Result<tonic::Response<AddLearnerResponse>, tonic::Status> {
+        self.inner
+            .add_learner(request.into_inner())
+            .map(tonic::Response::new)
+            .map_err(Into::into)
+    }
+
+    #[instrument(skip_all, name = "remove_learner")]
+    async fn remove_learner(
+        &self,
+        request: tonic::Request<RemoveLearnerRequest>,
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, tonic::Status> {
+        self.inner
+            .remove_learner(request.into_inner())
+            .map(tonic::Response::new)
+            .map_err(Into::into)
+    }
+}
+
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     /// New `Rpc`
     ///
@@ -304,7 +357,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
         }
     }
 
-    /// Run a new rpc server on a specific addr, designed to be used in the tests
+    /// Run a new rpc server on a specific addr, designed to be used in the
+    /// tests
     ///
     /// # Errors
     ///
@@ -329,7 +383,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     ) -> Result<(), crate::error::ServerError> {
         use utils::task_manager::tasks::TaskName;
 
-        use crate::rpc::{InnerProtocolServer, ProtocolServer};
+        use crate::rpc::InnerProtocolServer;
+        use crate::rpc::ProtocolServer;
 
         let n = task_manager.get_shutdown_listener(TaskName::TonicServer);
         let server = Self::new(
