@@ -5,11 +5,17 @@ use futures::Future;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
-use super::{ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
+use super::{
+    connect::{ClientError, LeaderStateUpdate, RepeatableClientApi},
+    ClientApi, ProposeResponse,
+};
 use crate::{
     members::ServerId,
     rpc::{ConfChange, CurpError, FetchClusterResponse, Member, ReadState, Redirect},
 };
+
+/// Member API implementation
+mod member_impl;
 
 /// Backoff config
 #[derive(Debug, Clone)]
@@ -149,7 +155,8 @@ where
                 | CurpError::InvalidConfig(())
                 | CurpError::NodeNotExists(())
                 | CurpError::NodeAlreadyExists(())
-                | CurpError::LearnerNotCatchUp(()) => {
+                | CurpError::LearnerNotCatchUp(())
+                | CurpError::InvalidMemberChange(()) => {
                     return Err(tonic::Status::from(err));
                 }
 
@@ -205,14 +212,16 @@ where
     }
 }
 
+impl<Api> ClientError for Retry<Api> {
+    /// The client error
+    type Error = tonic::Status;
+}
+
 #[async_trait]
 impl<Api> ClientApi for Retry<Api>
 where
     Api: RepeatableClientApi<Error = CurpError> + LeaderStateUpdate + Send + Sync + 'static,
 {
-    /// The client error
-    type Error = tonic::Status;
-
     /// Inherit the command type
     type Cmd = Api::Cmd;
 

@@ -5,6 +5,7 @@ pub use kv::KvClient;
 pub use lease::LeaseClient;
 pub use lock::{LockClient, Session, Xutex};
 pub use maintenance::MaintenanceClient;
+pub use member::MemberClient;
 pub use watch::WatchClient;
 
 /// Auth client.
@@ -23,6 +24,9 @@ pub mod lock;
 mod maintenance;
 /// Watch client.
 mod watch;
+
+/// New Membership client.
+mod member;
 
 /// Default session ttl
 pub const DEFAULT_SESSION_TTL: i64 = 60;

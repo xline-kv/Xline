@@ -5,7 +5,7 @@ use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp::{
     client::ClientBuilder as CurpClientBuilder,
     members::{get_cluster_info_from_remote, ClusterInfo},
-    rpc::{InnerProtocolServer, ProtocolServer},
+    rpc::{InnerProtocolServer, MemberProtocolServer, ProtocolServer},
     server::{Rpc, StorageApi as _, DB as CurpDB},
 };
 use dashmap::DashMap;
@@ -17,7 +17,9 @@ use tokio::fs;
 #[cfg(not(madsim))]
 use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(not(madsim))]
-use tonic::transport::{server::Connected, Certificate, ClientTlsConfig, Identity, ServerTlsConfig};
+use tonic::transport::{
+    server::Connected, Certificate, ClientTlsConfig, Identity, ServerTlsConfig,
+};
 use tonic::transport::{server::Router, Server};
 use tracing::{info, warn};
 use utils::{
@@ -317,9 +319,11 @@ impl XlineServer {
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(RpcMaintenanceServer::new(maintenance_server))
             .add_service(RpcClusterServer::new(cluster_server))
-            .add_service(ProtocolServer::new(auth_wrapper));
+            .add_service(ProtocolServer::new(auth_wrapper.clone()))
+            .add_service(MemberProtocolServer::new(auth_wrapper));
         let curp_router = builder
             .add_service(ProtocolServer::new(curp_server.clone()))
+            .add_service(MemberProtocolServer::new(curp_server.clone()))
             .add_service(InnerProtocolServer::new(curp_server));
         #[cfg(not(madsim))]
         let xline_router = {

@@ -206,6 +206,9 @@ mod snapshot;
 /// Propose response sender
 mod response;
 
+/// Membership state
+mod member;
+
 /// Calculate the super quorum
 #[inline]
 #[must_use]
@@ -223,7 +226,8 @@ fn quorum(size: usize) -> usize {
     size / 2 + 1
 }
 
-/// Calculate the `recover_quorum`: the smallest number of servers who must contain a command in speculative pool for it to be recovered
+/// Calculate the `recover_quorum`: the smallest number of servers who must
+/// contain a command in speculative pool for it to be recovered
 #[inline]
 #[must_use]
 #[allow(clippy::arithmetic_side_effects)] // it's safe

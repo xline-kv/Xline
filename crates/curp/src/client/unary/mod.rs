@@ -13,8 +13,9 @@ use tonic::{Response, Status};
 use tracing::{debug, warn};
 
 use super::{
-    state::State, ClientApi, LeaderStateUpdate, ProposeIdGuard, ProposeResponse,
-    RepeatableClientApi,
+    connect::{ClientError, LeaderStateUpdate, ProposeIdGuard, RepeatableClientApi},
+    state::State,
+    ClientApi, ProposeResponse,
 };
 use crate::{
     members::ServerId,
@@ -29,6 +30,9 @@ use crate::{
     super_quorum,
     tracker::Tracker,
 };
+
+/// Member API implementation
+mod member_impl;
 
 /// The unary client config
 #[derive(Debug)]
@@ -202,11 +206,13 @@ impl<C: Command> Unary<C> {
     }
 }
 
-#[async_trait]
-impl<C: Command> ClientApi for Unary<C> {
+impl<C: Command> ClientError for Unary<C> {
     /// The error is generated from server
     type Error = CurpError;
+}
 
+#[async_trait]
+impl<C: Command> ClientApi for Unary<C> {
     /// The command type
     type Cmd = C;
 

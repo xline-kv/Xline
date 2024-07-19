@@ -1,15 +1,14 @@
-use std::{
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
+use std::hash::{Hash, Hasher};
 
 use curp_external_api::{cmd::Command, InflightId, LogIndex};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    members::ServerId,
-    rpc::{ConfChange, ProposeId, PublishRequest},
-};
+use crate::rpc::ProposeId;
+
+pub(crate) use entry_data::EntryData;
+
+/// Definition of different entry data types
+mod entry_data;
 
 /// Log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,40 +22,6 @@ pub struct LogEntry<C> {
     pub(crate) propose_id: ProposeId,
     /// Entry data
     pub(crate) entry_data: EntryData<C>,
-}
-
-/// Entry data of a `LogEntry`
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(PartialEq))]
-pub(crate) enum EntryData<C> {
-    /// Empty entry
-    Empty,
-    /// `Command` entry
-    Command(Arc<C>),
-    /// `ConfChange` entry
-    ConfChange(Vec<ConfChange>),
-    /// `Shutdown` entry
-    Shutdown,
-    /// `SetNodeState` entry
-    SetNodeState(ServerId, String, Vec<String>),
-}
-
-impl<C> From<Arc<C>> for EntryData<C> {
-    fn from(cmd: Arc<C>) -> Self {
-        EntryData::Command(cmd)
-    }
-}
-
-impl<C> From<Vec<ConfChange>> for EntryData<C> {
-    fn from(value: Vec<ConfChange>) -> Self {
-        Self::ConfChange(value)
-    }
-}
-
-impl<C> From<PublishRequest> for EntryData<C> {
-    fn from(value: PublishRequest) -> Self {
-        EntryData::SetNodeState(value.node_id, value.name, value.client_urls)
-    }
 }
 
 impl<C> LogEntry<C>
