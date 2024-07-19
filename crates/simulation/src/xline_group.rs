@@ -17,7 +17,7 @@ use xline_client::{
             CompactionRequest, CompactionResponse, PutOptions, PutResponse, RangeRequest,
             RangeResponse,
         },
-        watch::{WatchRequest, WatchStreaming, Watcher},
+        watch::{WatchOptions, WatchStreaming, Watcher},
     },
     Client, ClientOptions,
 };
@@ -191,7 +191,18 @@ impl SimClient {
     }
     impl_client_method!(range, kv_client, RangeRequest, RangeResponse);
     impl_client_method!(compact, kv_client, CompactionRequest, CompactionResponse);
-    impl_client_method!(watch, watch_client, WatchRequest, (Watcher, WatchStreaming));
+    pub async fn watch(
+        &self,
+        key: impl Into<Vec<u8>>,
+        options: Option<WatchOptions>,
+    ) -> Result<(Watcher, WatchStreaming), XlineClientError<Command>> {
+        let client = self.inner.clone();
+        let key = key.into();
+        self.handle
+            .spawn(async move { client.watch_client().watch(key, options).await })
+            .await
+            .unwrap()
+    }
 }
 
 impl Drop for XlineGroup {
@@ -279,17 +290,20 @@ impl SimEtcdClient {
 
     pub async fn watch(
         &self,
-        request: WatchRequest,
+        key: impl Into<Vec<u8>>,
+        options: Option<WatchOptions>,
     ) -> Result<(Watcher, WatchStreaming), XlineClientError<Command>> {
         let mut client = self.watch.clone();
-
+        let key = key.into();
         self.handle
             .spawn(async move {
                 let (mut request_sender, request_receiver) =
                     futures::channel::mpsc::channel::<xlineapi::WatchRequest>(128);
 
                 let request = xlineapi::WatchRequest {
-                    request_union: Some(RequestUnion::CreateRequest(request.into())),
+                    request_union: Some(RequestUnion::CreateRequest(
+                        options.unwrap_or_default().with_key(key).into(),
+                    )),
                 };
 
                 request_sender

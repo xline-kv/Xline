@@ -6,7 +6,7 @@ use simulation::xline_group::{SimEtcdClient, XlineGroup};
 use xline_client::types::{
     cluster::{MemberAddRequest, MemberListRequest},
     kv::CompactionRequest,
-    watch::WatchRequest,
+    watch::WatchOptions,
 };
 
 // TODO: Add more tests if needed
@@ -39,7 +39,7 @@ async fn watch_compacted_revision_should_receive_canceled_response() {
     assert!(result.is_ok());
 
     let (_, mut watch_stream) = client
-        .watch(WatchRequest::new("key").with_start_revision(4))
+        .watch("key", Some(WatchOptions::default().with_start_revision(4)))
         .await
         .unwrap();
     let r = watch_stream.message().await.unwrap().unwrap();
