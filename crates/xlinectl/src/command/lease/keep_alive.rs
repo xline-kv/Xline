@@ -5,7 +5,7 @@ use tokio::signal::ctrl_c;
 use tonic::Streaming;
 use xline_client::{
     error::{Result, XlineClientError},
-    types::lease::{LeaseKeepAliveRequest, LeaseKeeper},
+    types::lease::LeaseKeeper,
     Client,
 };
 use xlineapi::LeaseKeepAliveResponse;
@@ -21,9 +21,9 @@ pub(super) fn command() -> Command {
 }
 
 /// Build request from matches
-pub(super) fn build_request(matches: &ArgMatches) -> LeaseKeepAliveRequest {
+pub(super) fn build_request(matches: &ArgMatches) -> i64 {
     let lease_id = matches.get_one::<i64>("leaseId").expect("required");
-    LeaseKeepAliveRequest::new(*lease_id)
+    *lease_id
 }
 
 /// Execute the command
@@ -80,19 +80,13 @@ mod tests {
     use super::*;
     use crate::test_case_struct;
 
-    test_case_struct!(LeaseKeepAliveRequest);
+    test_case_struct!(i64);
 
     #[test]
     fn command_parse_should_be_valid() {
         let test_cases = vec![
-            TestCase::new(
-                vec!["keep_alive", "123"],
-                Some(LeaseKeepAliveRequest::new(123)),
-            ),
-            TestCase::new(
-                vec!["keep_alive", "456", "--once"],
-                Some(LeaseKeepAliveRequest::new(456)),
-            ),
+            TestCase::new(vec!["keep_alive", "123"], Some(123)),
+            TestCase::new(vec!["keep_alive", "456", "--once"], Some(456)),
         ];
 
         for case in test_cases {

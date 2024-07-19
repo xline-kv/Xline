@@ -3,10 +3,7 @@ use std::{error::Error, time::Duration};
 use test_macros::abort_on_panic;
 use tracing::info;
 use xline_test_utils::{
-    types::{
-        kv::{PutOptions, RangeRequest},
-        lease::{LeaseGrantRequest, LeaseKeepAliveRequest},
-    },
+    types::kv::{PutOptions, RangeRequest},
     Client, ClientOptions, Cluster,
 };
 
@@ -17,10 +14,7 @@ async fn test_lease_expired() -> Result<(), Box<dyn Error>> {
     cluster.start().await;
     let client = cluster.client().await;
 
-    let res = client
-        .lease_client()
-        .grant(LeaseGrantRequest::new(1))
-        .await?;
+    let res = client.lease_client().grant(1, None).await?;
     let lease_id = res.id;
     assert!(lease_id > 0);
 
@@ -52,10 +46,7 @@ async fn test_lease_keep_alive() -> Result<(), Box<dyn Error>> {
     let non_leader_ep = cluster.get_client_url(1);
     let client = cluster.client().await;
 
-    let res = client
-        .lease_client()
-        .grant(LeaseGrantRequest::new(1))
-        .await?;
+    let res = client.lease_client().grant(1, None).await?;
     let lease_id = res.id;
     assert!(lease_id > 0);
 
@@ -74,7 +65,7 @@ async fn test_lease_keep_alive() -> Result<(), Box<dyn Error>> {
     let mut c = Client::connect(vec![non_leader_ep], ClientOptions::default())
         .await?
         .lease_client();
-    let (mut keeper, mut stream) = c.keep_alive(LeaseKeepAliveRequest::new(lease_id)).await?;
+    let (mut keeper, mut stream) = c.keep_alive(lease_id).await?;
     let handle = tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_millis(500)).await;

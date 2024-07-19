@@ -16,11 +16,7 @@ use crate::{
     clients::{lease::LeaseClient, watch::WatchClient, DEFAULT_SESSION_TTL},
     error::{Result, XlineClientError},
     lease_gen::LeaseIdGenerator,
-    types::{
-        kv::TxnRequest as KvTxnRequest,
-        lease::{LeaseGrantRequest, LeaseKeepAliveRequest},
-        watch::WatchRequest,
-    },
+    types::{kv::TxnRequest as KvTxnRequest, watch::WatchRequest},
     CurpClient,
 };
 
@@ -130,19 +126,14 @@ impl Xutex {
         let lease_id = if let Some(id) = lease_id {
             id
         } else {
-            let lease_response = client
-                .lease_client
-                .grant(LeaseGrantRequest::new(ttl))
-                .await?;
+            let lease_response = client.lease_client.grant(ttl, None).await?;
             lease_response.id
         };
         let mut lease_client = client.lease_client.clone();
         let keep_alive = Some(tokio::spawn(async move {
             /// The renew interval factor of which value equals 60% of one second.
             const RENEW_INTERVAL_FACTOR: u64 = 600;
-            let (mut keeper, mut stream) = lease_client
-                .keep_alive(LeaseKeepAliveRequest::new(lease_id))
-                .await?;
+            let (mut keeper, mut stream) = lease_client.keep_alive(lease_id).await?;
             loop {
                 keeper.keep_alive()?;
                 if let Some(resp) = stream.message().await? {
