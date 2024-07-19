@@ -1,10 +1,5 @@
 use anyhow::Result;
-use xline_client::{
-    types::lease::{
-        LeaseGrantRequest, LeaseKeepAliveRequest, LeaseRevokeRequest, LeaseTimeToLiveRequest,
-    },
-    Client, ClientOptions,
-};
+use xline_client::{Client, ClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -16,24 +11,20 @@ async fn main() -> Result<()> {
         .lease_client();
 
     // grant new lease
-    let resp1 = client.grant(LeaseGrantRequest::new(60)).await?;
-    let resp2 = client.grant(LeaseGrantRequest::new(60)).await?;
+    let resp1 = client.grant(60, None).await?;
+    let resp2 = client.grant(60, None).await?;
     let lease_id1 = resp1.id;
     let lease_id2 = resp2.id;
     println!("lease id 1: {}", lease_id1);
     println!("lease id 2: {}", lease_id2);
 
     // get the ttl of lease1
-    let resp = client
-        .time_to_live(LeaseTimeToLiveRequest::new(lease_id1))
-        .await?;
+    let resp = client.time_to_live(lease_id1, false).await?;
 
     println!("remaining ttl: {}", resp.ttl);
 
     // keep alive lease2
-    let (mut keeper, mut stream) = client
-        .keep_alive(LeaseKeepAliveRequest::new(lease_id2))
-        .await?;
+    let (mut keeper, mut stream) = client.keep_alive(lease_id2).await?;
 
     if let Some(resp) = stream.message().await? {
         println!("new ttl: {}", resp.ttl);
@@ -48,8 +39,8 @@ async fn main() -> Result<()> {
     }
 
     // revoke the leases
-    let _resp = client.revoke(LeaseRevokeRequest::new(lease_id1)).await?;
-    let _resp = client.revoke(LeaseRevokeRequest::new(lease_id2)).await?;
+    let _resp = client.revoke(lease_id1).await?;
+    let _resp = client.revoke(lease_id2).await?;
 
     Ok(())
 }
