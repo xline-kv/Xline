@@ -77,7 +77,7 @@ impl KvClient {
     ///         .kv_client();
     ///
     ///     client.put("key1", "value1", None).await?;
-    ///     client.put("key1", "value1", PutOptions::default().with_prev_kv(true)).await?;
+    ///     client.put("key2", "value2", Some(PutOptions::default().with_prev_kv(true))).await?;
     ///
     ///     Ok(())
     /// }
@@ -191,7 +191,7 @@ impl KvClient {
     ///
     /// ```no_run
     /// use xline_client::{
-    ///     types::kv::{Compare, PutRequest, RangeRequest, TxnOp, TxnRequest, CompareResult},
+    ///     types::kv::{Compare, PutOptions, RangeRequest, TxnOp, TxnRequest, CompareResult},
     ///     Client, ClientOptions,
     /// };
     /// use anyhow::Result;
@@ -207,9 +207,7 @@ impl KvClient {
     ///     let txn_req = TxnRequest::new()
     ///         .when(&[Compare::value("key2", CompareResult::Equal, "value2")][..])
     ///         .and_then(
-    ///             &[TxnOp::put(
-    ///                 PutRequest::new("key2", "value3").with_prev_kv(true),
-    ///             )][..],
+    ///             &[TxnOp::put("key2", "value3", Some(PutOptions::default().with_prev_kv(true)))][..],
     ///         )
     ///         .or_else(&[TxnOp::range(RangeRequest::new("key2"))][..]);
     ///
@@ -249,7 +247,7 @@ impl KvClient {
     ///
     ///```no_run
     /// use xline_client::{
-    ///     types::kv::{CompactionRequest, PutRequest},
+    ///     types::kv::{CompactionRequest},
     ///     Client, ClientOptions,
     /// };
     /// use anyhow::Result;
@@ -262,7 +260,7 @@ impl KvClient {
     ///         .await?
     ///         .kv_client();
     ///
-    ///     let resp_put = client.put(PutRequest::new("key", "val")).await?;
+    ///     let resp_put = client.put("key", "val", None).await?;
     ///     let rev = resp_put.header.unwrap().revision;
     ///
     ///     let _resp = client.compact(CompactionRequest::new(rev)).await?;

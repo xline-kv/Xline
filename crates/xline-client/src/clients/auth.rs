@@ -170,7 +170,7 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::auth::AuthenticateRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
