@@ -81,7 +81,7 @@ To create a xline client:
 
  ```rust, no_run
  use xline_client::{
-     types::kv::{PutOptions, RangeRequest},
+     types::kv::{PutOptions, RangeOptions},
      Client, ClientOptions,
  };
  use anyhow::Result;
@@ -97,7 +97,8 @@ To create a xline client:
 
      client.put("key", "value", None).await?;
 
-     let resp = client.range(RangeRequest::new("key")).await?;
+     let resp = client.range("key", None).await?;
+     // let resp = client.range("key2", Some(RangeOptions::default().with_limit(6))).await?;
 
      if let Some(kv) = resp.kvs.first() {
          println!(

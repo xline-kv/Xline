@@ -4,7 +4,7 @@ use anyhow::Result;
 use etcd_client::{Client as EtcdClient, ConnectOptions};
 use thiserror::Error;
 #[cfg(test)]
-use xline_client::types::kv::{RangeRequest, RangeResponse};
+use xline_client::types::kv::{RangeOptions, RangeResponse};
 use xline_client::{
     error::XlineClientError,
     types::kv::{PutOptions, PutResponse},
@@ -125,15 +125,16 @@ impl BenchClient {
     #[cfg(test)]
     pub(crate) async fn get(
         &mut self,
-        request: RangeRequest,
+        key: impl Into<Vec<u8>>,
+        options: Option<RangeOptions>,
     ) -> Result<RangeResponse, BenchClientError> {
         match self.kv_client {
             KVClient::Xline(ref mut xline_client) => {
-                let response = xline_client.kv_client().range(request).await?;
+                let response = xline_client.kv_client().range(key, options).await?;
                 Ok(response)
             }
             KVClient::Etcd(ref mut etcd_client) => {
-                let response = etcd_client.get(request.key(), None).await?;
+                let response = etcd_client.get(key.into(), None).await?;
                 Ok(convert::get_res(response))
             }
         }
@@ -215,7 +216,6 @@ mod convert {
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::indexing_slicing)]
 mod test {
-    use xline_client::types::kv::RangeRequest;
     use xline_test_utils::Cluster;
 
     use crate::bench_client::{BenchClient, ClientOptions};
@@ -232,8 +232,7 @@ mod test {
             .unwrap();
         //check xline client put value exist
         let _put_response = client.put("put", "123", None).await;
-        let range_request = RangeRequest::new("put");
-        let response = client.get(range_request).await.unwrap();
+        let response = client.get("put", None).await.unwrap();
         assert_eq!(response.kvs[0].value, b"123");
     }
 
@@ -248,8 +247,7 @@ mod test {
             .unwrap();
 
         let _put_response = client.put("put", "123", None).await;
-        let range_request = RangeRequest::new("put");
-        let response = client.get(range_request).await.unwrap();
+        let response = client.get("put", None).await.unwrap();
         assert_eq!(response.kvs[0].value, b"123");
     }
 }

@@ -145,7 +145,7 @@ fn parse_op_line(line: &str) -> Result<TxnOp> {
         "get" => {
             let matches = get_cmd.try_get_matches_from(args.clone())?;
             let req = get::build_request(&matches);
-            Ok(TxnOp::range(req))
+            Ok(TxnOp::range(req.0, Some(req.1)))
         }
         "delete" => {
             let matches = delete_cmd.try_get_matches_from(args.clone())?;
@@ -167,7 +167,7 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 
 #[cfg(test)]
 mod tests {
-    use xline_client::types::kv::RangeRequest;
+    use xline_client::types::kv::RangeOptions;
 
     use super::*;
 
@@ -191,11 +191,14 @@ mod tests {
         );
         assert_eq!(
             parse_op_line(r"get key1 key11").unwrap(),
-            TxnOp::range(RangeRequest::new("key1").with_range_end("key11"))
+            TxnOp::range(
+                "key1",
+                Some(RangeOptions::default().with_range_end("key11"))
+            )
         );
         assert_eq!(
             parse_op_line(r"get key1 --from_key").unwrap(),
-            TxnOp::range(RangeRequest::new("key1").with_from_key())
+            TxnOp::range("key1", Some(RangeOptions::default().with_from_key()))
         );
     }
 }
