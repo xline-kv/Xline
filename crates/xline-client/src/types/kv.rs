@@ -4,6 +4,8 @@ pub use xlineapi::{
     RangeResponse, Response, ResponseOp, SortOrder, SortTarget, TargetUnion, TxnResponse,
 };
 
+use super::range_end::RangeOption;
+
 /// Options for `Put`, as same as the `PutRequest` for `Put`.
 #[derive(Debug, PartialEq, Default)]
 pub struct PutOptions {
@@ -108,37 +110,29 @@ impl From<PutOptions> for xlineapi::PutRequest {
     }
 }
 
-/// Request type for `Range`
-#[derive(Debug, PartialEq)]
-pub struct RangeRequest {
-    /// Inner request
+/// Options for `range` function.
+#[derive(Debug, PartialEq, Default)]
+pub struct RangeOptions {
+    /// Inner request, RangeRequest = inner + key + range_end
     inner: xlineapi::RangeRequest,
+    /// Range end options, indicates how to generate `range_end` from key.
+    range_end_options: RangeOption,
 }
 
-impl RangeRequest {
-    /// Creates a new `RangeRequest`
-    ///
+impl RangeOptions {
     /// `key` is the first key for the range. If `range_end` is not given, the request only looks up key.
     #[inline]
-    pub fn new(key: impl Into<Vec<u8>>) -> Self {
-        Self {
-            inner: xlineapi::RangeRequest {
-                key: key.into(),
-                ..Default::default()
-            },
-        }
+    #[must_use]
+    pub fn with_key(mut self, key: impl Into<Vec<u8>>) -> Self {
+        self.inner.key = key.into();
+        self
     }
 
     /// If set, Xline will return all keys with the matching prefix
     #[inline]
     #[must_use]
     pub fn with_prefix(mut self) -> Self {
-        if self.inner.key.is_empty() {
-            self.inner.key = vec![0];
-            self.inner.range_end = vec![0];
-        } else {
-            self.inner.range_end = KeyRange::get_prefix(&self.inner.key);
-        }
+        self.range_end_options = RangeOption::Prefix;
         self
     }
 
@@ -146,10 +140,7 @@ impl RangeRequest {
     #[inline]
     #[must_use]
     pub fn with_from_key(mut self) -> Self {
-        if self.inner.key.is_empty() {
-            self.inner.key = vec![0];
-        }
-        self.inner.range_end = vec![0];
+        self.range_end_options = RangeOption::FromKey;
         self
     }
 
@@ -158,7 +149,7 @@ impl RangeRequest {
     #[inline]
     #[must_use]
     pub fn with_range_end(mut self, range_end: impl Into<Vec<u8>>) -> Self {
-        self.inner.range_end = range_end.into();
+        self.range_end_options = RangeOption::RangeEnd(range_end.into());
         self
     }
 
@@ -263,18 +254,11 @@ impl RangeRequest {
         self
     }
 
-    /// Get `key`
+    /// Get `range_end_options`
     #[inline]
     #[must_use]
-    pub fn key(&self) -> &[u8] {
-        &self.inner.key
-    }
-
-    /// Get `range_end`
-    #[inline]
-    #[must_use]
-    pub fn range_end(&self) -> &[u8] {
-        &self.inner.range_end
+    pub fn range_end_options(&self) -> &RangeOption {
+        &self.range_end_options
     }
 
     /// Get `limit`
@@ -355,9 +339,10 @@ impl RangeRequest {
     }
 }
 
-impl From<RangeRequest> for xlineapi::RangeRequest {
+impl From<RangeOptions> for xlineapi::RangeRequest {
     #[inline]
-    fn from(req: RangeRequest) -> Self {
+    fn from(mut req: RangeOptions) -> Self {
+        req.inner.range_end = req.range_end_options.get_range_end(&mut req.inner.key);
         req.inner
     }
 }
@@ -580,9 +565,9 @@ impl TxnOp {
     /// Creates a `Range` operation.
     #[inline]
     #[must_use]
-    pub fn range(request: RangeRequest) -> Self {
+    pub fn range(key: impl Into<Vec<u8>>, option: Option<RangeOptions>) -> Self {
         TxnOp {
-            inner: xlineapi::Request::RequestRange(request.into()),
+            inner: xlineapi::Request::RequestRange(option.unwrap_or_default().with_key(key).into()),
         }
     }
 

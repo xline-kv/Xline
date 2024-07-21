@@ -14,7 +14,7 @@ use xline_client::{
     types::{
         cluster::{MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse},
         kv::{
-            CompactionRequest, CompactionResponse, PutOptions, PutResponse, RangeRequest,
+            CompactionRequest, CompactionResponse, PutOptions, PutResponse, RangeOptions,
             RangeResponse,
         },
         watch::{WatchOptions, WatchStreaming, Watcher},
@@ -189,7 +189,18 @@ impl SimClient {
             .await
             .unwrap()
     }
-    impl_client_method!(range, kv_client, RangeRequest, RangeResponse);
+    pub async fn range(
+        &self,
+        key: impl Into<Vec<u8>>,
+        options: Option<RangeOptions>,
+    ) -> Result<RangeResponse, XlineClientError<Command>> {
+        let client = self.inner.clone();
+        let key = key.into();
+        self.handle
+            .spawn(async move { client.kv_client().range(key, options).await })
+            .await
+            .unwrap()
+    }
     impl_client_method!(compact, kv_client, CompactionRequest, CompactionResponse);
     pub async fn watch(
         &self,
