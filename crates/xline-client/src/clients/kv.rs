@@ -8,7 +8,7 @@ use xlineapi::{
 
 use crate::{
     error::Result,
-    types::kv::{CompactionRequest, DeleteRangeRequest, PutOptions, RangeRequest, TxnRequest},
+    types::kv::{CompactionRequest, DeleteRangeRequest, PutOptions, RangeOptions, TxnRequest},
     AuthService, CurpClient,
 };
 
@@ -109,7 +109,7 @@ impl KvClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::kv::RangeRequest, Client, ClientOptions};
+    /// use xline_client::{types::kv::RangeOptions, Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -120,7 +120,8 @@ impl KvClient {
     ///         .await?
     ///         .kv_client();
     ///
-    ///     let resp = client.range(RangeRequest::new("key1")).await?;
+    ///     let resp = client.range("key1", None).await?;
+    ///     let resp = client.range("key2", Some(RangeOptions::default().with_limit(6))).await?;
     ///
     ///     if let Some(kv) = resp.kvs.first() {
     ///         println!(
@@ -134,8 +135,14 @@ impl KvClient {
     /// }
     /// ```
     #[inline]
-    pub async fn range(&self, request: RangeRequest) -> Result<RangeResponse> {
-        let request = RequestWrapper::from(xlineapi::RangeRequest::from(request));
+    pub async fn range(
+        &self,
+        key: impl Into<Vec<u8>>,
+        options: Option<RangeOptions>,
+    ) -> Result<RangeResponse> {
+        let request = RequestWrapper::from(xlineapi::RangeRequest::from(
+            options.unwrap_or_default().with_key(key),
+        ));
         let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client
@@ -191,7 +198,7 @@ impl KvClient {
     ///
     /// ```no_run
     /// use xline_client::{
-    ///     types::kv::{Compare, PutOptions, RangeRequest, TxnOp, TxnRequest, CompareResult},
+    ///     types::kv::{Compare, PutOptions, TxnOp, TxnRequest, CompareResult},
     ///     Client, ClientOptions,
     /// };
     /// use anyhow::Result;
@@ -209,7 +216,7 @@ impl KvClient {
     ///         .and_then(
     ///             &[TxnOp::put("key2", "value3", Some(PutOptions::default().with_prev_kv(true)))][..],
     ///         )
-    ///         .or_else(&[TxnOp::range(RangeRequest::new("key2"))][..]);
+    ///         .or_else(&[TxnOp::range("key2", None)][..]);
     ///
     ///     let _resp = client.txn(txn_req).await?;
     ///

@@ -1,9 +1,12 @@
 use anyhow::Result;
 use clap::{arg, value_parser, ArgMatches, Command};
-use xline_client::{types::kv::RangeRequest, Client};
+use xline_client::{types::kv::RangeOptions, Client};
 use xlineapi::{SortOrder, SortTarget};
 
 use crate::utils::printer::Printer;
+
+/// Temp struct for building command, indicates `(key, rangeoptions)`
+type RangeRequest = (Vec<u8>, RangeOptions);
 
 /// Definition of `get` command
 pub(crate) fn command() -> Command {
@@ -66,24 +69,24 @@ pub(crate) fn build_request(matches: &ArgMatches) -> RangeRequest {
     let keys_only = matches.get_flag("keys_only");
     let count_only = matches.get_flag("count_only");
 
-    let mut request = RangeRequest::new(key.as_bytes());
+    let mut options = RangeOptions::default();
     if let Some(range_end) = range_end {
-        request = request.with_range_end(range_end.as_bytes());
+        options = options.with_range_end(range_end.as_bytes());
     }
-    request = match consistency.as_str() {
-        "L" => request.with_serializable(false),
-        "S" => request.with_serializable(true),
+    options = match consistency.as_str() {
+        "L" => options.with_serializable(false),
+        "S" => options.with_serializable(true),
         _ => unreachable!("The format should be checked by Clap."),
     };
     if let Some(order) = order {
-        request = request.with_sort_order(match order.as_str() {
+        options = options.with_sort_order(match order.as_str() {
             "ASCEND" => SortOrder::Ascend,
             "DESCEND" => SortOrder::Descend,
             _ => unreachable!("The format should be checked by Clap."),
         });
     }
     if let Some(sort_by) = sort_by {
-        request = request.with_sort_target(match sort_by.as_str() {
+        options = options.with_sort_target(match sort_by.as_str() {
             "CREATE" => SortTarget::Create,
             "KEY" => SortTarget::Key,
             "MODIFY" => SortTarget::Mod,
@@ -92,24 +95,24 @@ pub(crate) fn build_request(matches: &ArgMatches) -> RangeRequest {
             _ => unreachable!("The format should be checked by Clap."),
         });
     }
-    request = request.with_limit(*limit);
+    options = options.with_limit(*limit);
     if prefix {
-        request = request.with_prefix();
+        options = options.with_prefix();
     }
     if from_key {
-        request = request.with_from_key();
+        options = options.with_from_key();
     }
-    request = request.with_revision(*rev);
-    request = request.with_keys_only(keys_only);
-    request = request.with_count_only(count_only);
+    options = options.with_revision(*rev);
+    options = options.with_keys_only(keys_only);
+    options = options.with_count_only(count_only);
 
-    request
+    (key.as_bytes().to_vec(), options)
 }
 
 /// Execute the command
 pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
-    let req = build_request(matches);
-    let resp = client.kv_client().range(req).await?;
+    let (key, options) = build_request(matches);
+    let resp = client.kv_client().range(key, Some(options)).await?;
     resp.print();
 
     Ok(())
@@ -127,47 +130,59 @@ mod tests {
         let test_cases = vec![
             TestCase::new(
                 vec!["get", "key"],
-                Some(RangeRequest::new("key".as_bytes())),
+                Some(("key".into(), RangeOptions::default())),
             ),
             TestCase::new(
                 vec!["get", "key", "key2"],
-                Some(RangeRequest::new("key".as_bytes()).with_range_end("key2".as_bytes())),
+                Some((
+                    "key".into(),
+                    RangeOptions::default().with_range_end("key2".as_bytes()),
+                )),
             ),
             TestCase::new(
                 vec!["get", "key", "--consistency", "L"],
-                Some(RangeRequest::new("key".as_bytes()).with_serializable(false)),
+                Some((
+                    "key".into(),
+                    RangeOptions::default().with_serializable(false),
+                )),
             ),
             TestCase::new(
                 vec!["get", "key", "--order", "DESCEND"],
-                Some(RangeRequest::new("key".as_bytes()).with_sort_order(SortOrder::Descend)),
+                Some((
+                    "key".into(),
+                    RangeOptions::default().with_sort_order(SortOrder::Descend),
+                )),
             ),
             TestCase::new(
                 vec!["get", "key", "--sort_by", "MODIFY"],
-                Some(RangeRequest::new("key".as_bytes()).with_sort_target(SortTarget::Mod)),
+                Some((
+                    "key".into(),
+                    RangeOptions::default().with_sort_target(SortTarget::Mod),
+                )),
             ),
             TestCase::new(
                 vec!["get", "key", "--limit", "10"],
-                Some(RangeRequest::new("key".as_bytes()).with_limit(10)),
+                Some(("key".into(), RangeOptions::default().with_limit(10))),
             ),
             TestCase::new(
                 vec!["get", "key", "--prefix"],
-                Some(RangeRequest::new("key".as_bytes()).with_prefix()),
+                Some(("key".into(), RangeOptions::default().with_prefix())),
             ),
             TestCase::new(
                 vec!["get", "key", "--from_key"],
-                Some(RangeRequest::new("key".as_bytes()).with_from_key()),
+                Some(("key".into(), RangeOptions::default().with_from_key())),
             ),
             TestCase::new(
                 vec!["get", "key", "--rev", "5"],
-                Some(RangeRequest::new("key".as_bytes()).with_revision(5)),
+                Some(("key".into(), RangeOptions::default().with_revision(5))),
             ),
             TestCase::new(
                 vec!["get", "key", "--keys_only"],
-                Some(RangeRequest::new("key".as_bytes()).with_keys_only(true)),
+                Some(("key".into(), RangeOptions::default().with_keys_only(true))),
             ),
             TestCase::new(
                 vec!["get", "key", "--count_only"],
-                Some(RangeRequest::new("key".as_bytes()).with_count_only(true)),
+                Some(("key".into(), RangeOptions::default().with_count_only(true))),
             ),
         ];
 

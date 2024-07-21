@@ -5,7 +5,7 @@ use tokio::io::AsyncWriteExt;
 #[cfg(test)]
 use xline::restore::restore;
 use xline_client::error::XlineClientError;
-use xline_test_utils::{types::kv::RangeRequest, Client, ClientOptions, Cluster};
+use xline_test_utils::{Client, ClientOptions, Cluster};
 use xlineapi::{execute_error::ExecuteError, AlarmAction, AlarmRequest, AlarmType};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -42,7 +42,7 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
     let mut new_cluster = Cluster::new_with_configs(restore_cluster_configs).await;
     new_cluster.start().await;
     let client = new_cluster.client().await.kv_client();
-    let res = client.range(RangeRequest::new("key")).await?;
+    let res = client.range("key", None).await?;
     assert_eq!(res.kvs.len(), 1);
     assert_eq!(res.kvs[0].key, b"key");
     assert_eq!(res.kvs[0].value, b"value");

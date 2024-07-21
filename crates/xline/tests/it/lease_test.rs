@@ -2,10 +2,7 @@ use std::{error::Error, time::Duration};
 
 use test_macros::abort_on_panic;
 use tracing::info;
-use xline_test_utils::{
-    types::kv::{PutOptions, RangeRequest},
-    Client, ClientOptions, Cluster,
-};
+use xline_test_utils::{types::kv::PutOptions, Client, ClientOptions, Cluster};
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
@@ -26,13 +23,13 @@ async fn test_lease_expired() -> Result<(), Box<dyn Error>> {
             Some(PutOptions::default().with_lease(lease_id)),
         )
         .await?;
-    let res = client.kv_client().range(RangeRequest::new("foo")).await?;
+    let res = client.kv_client().range("foo", None).await?;
     assert_eq!(res.kvs.len(), 1);
     assert_eq!(res.kvs[0].value, b"bar");
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    let res = client.kv_client().range(RangeRequest::new("foo")).await?;
+    let res = client.kv_client().range("foo", None).await?;
     assert_eq!(res.kvs.len(), 0);
 
     Ok(())
@@ -58,7 +55,7 @@ async fn test_lease_keep_alive() -> Result<(), Box<dyn Error>> {
             Some(PutOptions::default().with_lease(lease_id)),
         )
         .await?;
-    let res = client.kv_client().range(RangeRequest::new("foo")).await?;
+    let res = client.kv_client().range("foo", None).await?;
     assert_eq!(res.kvs.len(), 1);
     assert_eq!(res.kvs[0].value, b"bar");
 
@@ -77,13 +74,13 @@ async fn test_lease_keep_alive() -> Result<(), Box<dyn Error>> {
     });
 
     tokio::time::sleep(Duration::from_secs(3)).await;
-    let res = client.kv_client().range(RangeRequest::new("foo")).await?;
+    let res = client.kv_client().range("foo", None).await?;
     assert_eq!(res.kvs.len(), 1);
     assert_eq!(res.kvs[0].value, b"bar");
 
     handle.abort();
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let res = client.kv_client().range(RangeRequest::new("foo")).await?;
+    let res = client.kv_client().range("foo", None).await?;
     assert_eq!(res.kvs.len(), 0);
 
     Ok(())

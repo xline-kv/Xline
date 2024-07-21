@@ -6,7 +6,7 @@ use utils::config::{
     TraceConfig, XlineServerConfig,
 };
 use xline_test_utils::{
-    enable_auth, set_user, types::kv::RangeRequest, Client, ClientOptions, Cluster,
+    enable_auth, set_user, types::kv::RangeOptions, Client, ClientOptions, Cluster,
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -17,7 +17,7 @@ async fn test_auth_empty_user_get() -> Result<(), Box<dyn Error>> {
     let client = cluster.client().await;
 
     enable_auth(client).await?;
-    let res = client.kv_client().range(RangeRequest::new("foo")).await;
+    let res = client.kv_client().range("foo", None).await;
     assert!(res.is_err());
 
     Ok(())
@@ -122,11 +122,11 @@ async fn test_kv_authorization() -> Result<(), Box<dyn Error>> {
     assert!(result.is_err());
 
     let result = u2_client
-        .range(RangeRequest::new("foo").with_range_end("fox"))
+        .range("foo", Some(RangeOptions::default().with_range_end("fox")))
         .await;
     assert!(result.is_ok());
     let result = u2_client
-        .range(RangeRequest::new("foo").with_range_end("foz"))
+        .range("foo", Some(RangeOptions::default().with_range_end("foz")))
         .await;
     assert!(result.is_err());
 
