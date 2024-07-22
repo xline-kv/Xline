@@ -1,7 +1,7 @@
 use anyhow::Result;
 use xline_client::{
     types::kv::{
-        CompactionRequest, Compare, CompareResult, DeleteRangeRequest, PutOptions, TxnOp,
+        CompactionRequest, Compare, CompareResult, DeleteRangeOptions, PutOptions, TxnOp,
         TxnRequest,
     },
     Client, ClientOptions,
@@ -33,7 +33,10 @@ async fn main() -> Result<()> {
 
     // delete
     let resp = client
-        .delete(DeleteRangeRequest::new("key1").with_prev_kv(true))
+        .delete(
+            "key1",
+            Some(DeleteRangeOptions::default().with_prev_kv(true)),
+        )
         .await?;
 
     for kv in resp.prev_kvs {

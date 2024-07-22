@@ -150,7 +150,7 @@ fn parse_op_line(line: &str) -> Result<TxnOp> {
         "delete" => {
             let matches = delete_cmd.try_get_matches_from(args.clone())?;
             let req = delete::build_request(&matches);
-            Ok(TxnOp::delete(req))
+            Ok(TxnOp::delete(req.0, Some(req.1)))
         }
         _ => Err(anyhow!(format!("parse op failed in: `{line}`"))),
     }
