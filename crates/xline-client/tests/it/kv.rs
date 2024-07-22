@@ -4,7 +4,7 @@ use test_macros::abort_on_panic;
 use xline_client::{
     error::Result,
     types::kv::{
-        CompactionRequest, Compare, CompareResult, DeleteRangeRequest, PutOptions, RangeOptions,
+        CompactionRequest, Compare, CompareResult, DeleteRangeOptions, PutOptions, RangeOptions,
         TxnOp, TxnRequest,
     },
 };
@@ -116,7 +116,10 @@ async fn delete_should_remove_previously_put_kvs() -> Result<()> {
     // delete key
     {
         let resp = client
-            .delete(DeleteRangeRequest::new("del11").with_prev_kv(true))
+            .delete(
+                "del11",
+                Some(DeleteRangeOptions::default().with_prev_kv(true)),
+            )
             .await?;
         assert_eq!(resp.deleted, 1);
         assert_eq!(&resp.prev_kvs[0].key, "del11".as_bytes());
@@ -131,9 +134,12 @@ async fn delete_should_remove_previously_put_kvs() -> Result<()> {
     {
         let resp = client
             .delete(
-                DeleteRangeRequest::new("del11")
-                    .with_range_end("del22")
-                    .with_prev_kv(true),
+                "del11",
+                Some(
+                    DeleteRangeOptions::default()
+                        .with_range_end("del22")
+                        .with_prev_kv(true),
+                ),
             )
             .await?;
         assert_eq!(resp.deleted, 2);
@@ -158,9 +164,12 @@ async fn delete_should_remove_previously_put_kvs() -> Result<()> {
     {
         let resp = client
             .delete(
-                DeleteRangeRequest::new("del3")
-                    .with_prefix()
-                    .with_prev_kv(true),
+                "del3",
+                Some(
+                    DeleteRangeOptions::default()
+                        .with_prefix()
+                        .with_prev_kv(true),
+                ),
             )
             .await?;
         assert_eq!(resp.deleted, 2);

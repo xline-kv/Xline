@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use test_macros::abort_on_panic;
-use xline_test_utils::{types::kv::DeleteRangeRequest, Cluster};
+use xline_test_utils::Cluster;
 use xlineapi::EventType;
 
 fn event_type(event_type: i32) -> EventType {
@@ -40,7 +40,7 @@ async fn test_watch() -> Result<(), Box<dyn Error>> {
     });
 
     kv_client.put("foo", "bar", None).await?;
-    kv_client.delete(DeleteRangeRequest::new("foo")).await?;
+    kv_client.delete("foo", None).await?;
 
     handle.await?;
 
