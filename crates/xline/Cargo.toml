@@ -25,7 +25,7 @@ curp = { path = "../curp", version = "0.1.0", features = ["client-metrics"] }
 curp-external-api = { path = "../curp-external-api" }
 dashmap = "5.5.3"
 engine = { path = "../engine" }
-event-listener = "5.3.0"
+event-listener = "5.3.1"
 futures = "0.3.25"
 hyper = "0.14.27"
 itertools = "0.13"
