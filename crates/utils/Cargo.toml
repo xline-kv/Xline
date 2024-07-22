@@ -22,7 +22,7 @@ async-trait = { version = "0.1.80", optional = true }
 clippy-utilities = "0.2.0"
 dashmap = "5.5.3"
 derive_builder = "0.20.0"
-event-listener = "5.3.0"
+event-listener = "5.3.1"
 futures = "0.3.30"
 getset = "0.1"
 opentelemetry = { version = "0.22.0", features = ["trace"] }
