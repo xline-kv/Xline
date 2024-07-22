@@ -1,9 +1,6 @@
 use anyhow::Result;
 use xline_client::{
-    types::kv::{
-        CompactionRequest, Compare, CompareResult, DeleteRangeOptions, PutOptions, TxnOp,
-        TxnRequest,
-    },
+    types::kv::{Compare, CompareResult, DeleteRangeOptions, PutOptions, TxnOp, TxnRequest},
     Client, ClientOptions,
 };
 
@@ -72,7 +69,7 @@ async fn main() -> Result<()> {
 
     // compact
     let rev = resp.header.unwrap().revision;
-    let _resp = client.compact(CompactionRequest::new(rev)).await?;
+    let _resp = client.compact(rev, false).await?;
 
     Ok(())
 }

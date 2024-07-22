@@ -5,7 +5,6 @@ use madsim::time::sleep;
 use simulation::xline_group::{SimEtcdClient, XlineGroup};
 use xline_client::types::{
     cluster::{MemberAddRequest, MemberListRequest},
-    kv::CompactionRequest,
     watch::WatchOptions,
 };
 
@@ -33,9 +32,7 @@ async fn watch_compacted_revision_should_receive_canceled_response() {
         assert!(result.is_ok());
     }
 
-    let result = client
-        .compact(CompactionRequest::new(5).with_physical())
-        .await;
+    let result = client.compact(5, true).await;
     assert!(result.is_ok());
 
     let (_, mut watch_stream) = client
