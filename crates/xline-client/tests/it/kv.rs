@@ -4,8 +4,7 @@ use test_macros::abort_on_panic;
 use xline_client::{
     error::Result,
     types::kv::{
-        CompactionRequest, Compare, CompareResult, DeleteRangeOptions, PutOptions, RangeOptions,
-        TxnOp, TxnRequest,
+        Compare, CompareResult, DeleteRangeOptions, PutOptions, RangeOptions, TxnOp, TxnRequest,
     },
 };
 
@@ -272,7 +271,7 @@ async fn compact_should_remove_previous_revision() -> Result<()> {
         .await?;
     assert_eq!(rev1_resp.kvs[0].value, b"1");
 
-    client.compact(CompactionRequest::new(3)).await?;
+    client.compact(3, false).await?;
 
     // after compacting
     let rev0_resp = client

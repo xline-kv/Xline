@@ -1,8 +1,11 @@
 use anyhow::Result;
 use clap::{arg, value_parser, ArgMatches, Command};
-use xline_client::{types::kv::CompactionRequest, Client};
+use xline_client::Client;
 
 use crate::utils::printer::Printer;
+
+/// Temp type for build a compaction request, indicates `(revision, physical)`
+type CompactionRequest = (i64, bool);
 
 /// Definition of `compaction` command
 pub(crate) fn command() -> Command {
@@ -17,19 +20,13 @@ pub(crate) fn build_request(matches: &ArgMatches) -> CompactionRequest {
     let revision = matches.get_one::<i64>("revision").expect("required");
     let physical = matches.get_flag("physical");
 
-    let mut request = CompactionRequest::new(*revision);
-
-    if physical {
-        request = request.with_physical();
-    }
-
-    request
+    (*revision, physical)
 }
 
 /// Execute the command
 pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let req = build_request(matches);
-    let resp = client.kv_client().compact(req).await?;
+    let resp = client.kv_client().compact(req.0, req.1).await?;
     resp.print();
 
     Ok(())
@@ -45,11 +42,8 @@ mod tests {
     #[test]
     fn command_parse_should_be_valid() {
         let test_cases = vec![
-            TestCase::new(vec!["compaction", "123"], Some(CompactionRequest::new(123))),
-            TestCase::new(
-                vec!["compaction", "123", "--physical"],
-                Some(CompactionRequest::new(123).with_physical()),
-            ),
+            TestCase::new(vec!["compaction", "123"], Some((123, false))),
+            TestCase::new(vec!["compaction", "123", "--physical"], Some((123, true))),
         ];
 
         for case in test_cases {
