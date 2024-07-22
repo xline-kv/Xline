@@ -3,7 +3,7 @@ use std::{error::Error, time::Duration};
 use test_macros::abort_on_panic;
 use xline_test_utils::{
     types::kv::{
-        Compare, CompareResult, DeleteRangeRequest, PutOptions, RangeOptions, Response, SortOrder,
+        Compare, CompareResult, DeleteRangeOptions, PutOptions, RangeOptions, Response, SortOrder,
         SortTarget, TxnOp, TxnRequest,
     },
     Client, ClientOptions, Cluster,
@@ -226,7 +226,8 @@ async fn test_range_redirect() -> Result<(), Box<dyn Error>> {
 #[abort_on_panic]
 async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
     struct TestCase<'a> {
-        req: DeleteRangeRequest,
+        key: Vec<u8>,
+        opt: Option<DeleteRangeOptions>,
         want_deleted: i64,
         want_keys: &'a [&'a str],
     }
@@ -239,37 +240,44 @@ async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
 
     let tests = [
         TestCase {
-            req: DeleteRangeRequest::new("").with_prefix(),
+            key: "".into(),
+            opt: Some(DeleteRangeOptions::default().with_prefix()),
             want_deleted: 5,
             want_keys: &[],
         },
         TestCase {
-            req: DeleteRangeRequest::new("").with_from_key(),
+            key: "".into(),
+            opt: Some(DeleteRangeOptions::default().with_from_key()),
             want_deleted: 5,
             want_keys: &[],
         },
         TestCase {
-            req: DeleteRangeRequest::new("a").with_range_end("c"),
+            key: "a".into(),
+            opt: Some(DeleteRangeOptions::default().with_range_end("c")),
             want_deleted: 2,
             want_keys: &["c", "c/abc", "d"],
         },
         TestCase {
-            req: DeleteRangeRequest::new("c"),
+            key: "c".into(),
+            opt: None,
             want_deleted: 1,
             want_keys: &["a", "b", "c/abc", "d"],
         },
         TestCase {
-            req: DeleteRangeRequest::new("c").with_prefix(),
+            key: "c".into(),
+            opt: Some(DeleteRangeOptions::default().with_prefix()),
             want_deleted: 2,
             want_keys: &["a", "b", "d"],
         },
         TestCase {
-            req: DeleteRangeRequest::new("c").with_from_key(),
+            key: "c".into(),
+            opt: Some(DeleteRangeOptions::default().with_from_key()),
             want_deleted: 3,
             want_keys: &["a", "b"],
         },
         TestCase {
-            req: DeleteRangeRequest::new("e"),
+            key: "e".into(),
+            opt: None,
             want_deleted: 0,
             want_keys: &keys,
         },
@@ -280,7 +288,7 @@ async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
             client.put(key, "bar", None).await?;
         }
 
-        let res = client.delete(test.req).await?;
+        let res = client.delete(test.key, test.opt).await?;
         assert_eq!(res.deleted, test.want_deleted);
 
         let res = client

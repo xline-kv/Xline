@@ -8,7 +8,7 @@ use xlineapi::{
 
 use crate::{
     error::Result,
-    types::kv::{CompactionRequest, DeleteRangeRequest, PutOptions, RangeOptions, TxnRequest},
+    types::kv::{CompactionRequest, DeleteRangeOptions, PutOptions, RangeOptions, TxnRequest},
     AuthService, CurpClient,
 };
 
@@ -159,7 +159,7 @@ impl KvClient {
     ///
     /// # Examples
     /// ```no_run
-    /// use xline_client::{types::kv::DeleteRangeRequest, Client, ClientOptions};
+    /// use xline_client::{types::kv::DeleteRangeOptions, Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -171,15 +171,21 @@ impl KvClient {
     ///         .kv_client();
     ///
     ///     client
-    ///         .delete(DeleteRangeRequest::new("key1").with_prev_kv(true))
+    ///         .delete("key1", Some(DeleteRangeOptions::default().with_prev_kv(true)))
     ///         .await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     #[inline]
-    pub async fn delete(&self, request: DeleteRangeRequest) -> Result<DeleteRangeResponse> {
-        let request = RequestWrapper::from(xlineapi::DeleteRangeRequest::from(request));
+    pub async fn delete(
+        &self,
+        key: impl Into<Vec<u8>>,
+        options: Option<DeleteRangeOptions>,
+    ) -> Result<DeleteRangeResponse> {
+        let request = RequestWrapper::from(xlineapi::DeleteRangeRequest::from(
+            options.unwrap_or_default().with_key(key),
+        ));
         let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client

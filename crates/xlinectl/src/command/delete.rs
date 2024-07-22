@@ -1,8 +1,11 @@
 use anyhow::Result;
 use clap::{arg, ArgMatches, Command};
-use xline_client::{types::kv::DeleteRangeRequest, Client};
+use xline_client::{types::kv::DeleteRangeOptions, Client};
 
 use crate::utils::printer::Printer;
+
+/// temp type to pass `(key, delete range options)`
+type DeleteRangeRequest = (String, DeleteRangeOptions);
 
 /// Definition of `delete` command
 pub(crate) fn command() -> Command {
@@ -32,25 +35,25 @@ pub(crate) fn build_request(matches: &ArgMatches) -> DeleteRangeRequest {
     let prev_kv = matches.get_flag("prev_kv");
     let from_key = matches.get_flag("from_key");
 
-    let mut request = DeleteRangeRequest::new(key.as_bytes());
+    let mut options = DeleteRangeOptions::default();
     if let Some(range_end) = range_end {
-        request = request.with_range_end(range_end.as_bytes());
+        options = options.with_range_end(range_end.as_bytes());
     }
     if prefix {
-        request = request.with_prefix();
+        options = options.with_prefix();
     }
-    request = request.with_prev_kv(prev_kv);
+    options = options.with_prev_kv(prev_kv);
     if from_key {
-        request = request.with_from_key();
+        options = options.with_from_key();
     }
 
-    request
+    (key.to_owned(), options)
 }
 
 /// Execute the command
 pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let req = build_request(matches);
-    let resp = client.kv_client().delete(req).await?;
+    let resp = client.kv_client().delete(req.0, Some(req.1)).await?;
     resp.print();
 
     Ok(())
@@ -68,23 +71,29 @@ mod tests {
         let test_cases = vec![
             TestCase::new(
                 vec!["delete", "key1"],
-                Some(DeleteRangeRequest::new("key1".as_bytes())),
+                Some(("key1".into(), DeleteRangeOptions::default())),
             ),
             TestCase::new(
                 vec!["delete", "key2", "end2"],
-                Some(DeleteRangeRequest::new("key2".as_bytes()).with_range_end("end2".as_bytes())),
+                Some((
+                    "key2".into(),
+                    DeleteRangeOptions::default().with_range_end("end2".as_bytes()),
+                )),
             ),
             TestCase::new(
                 vec!["delete", "key3", "--prefix"],
-                Some(DeleteRangeRequest::new("key3".as_bytes()).with_prefix()),
+                Some(("key3".into(), DeleteRangeOptions::default().with_prefix())),
             ),
             TestCase::new(
                 vec!["delete", "key4", "--prev_kv"],
-                Some(DeleteRangeRequest::new("key4".as_bytes()).with_prev_kv(true)),
+                Some((
+                    "key4".into(),
+                    DeleteRangeOptions::default().with_prev_kv(true),
+                )),
             ),
             TestCase::new(
                 vec!["delete", "key5", "--from_key"],
-                Some(DeleteRangeRequest::new("key5".as_bytes()).with_from_key()),
+                Some(("key5".into(), DeleteRangeOptions::default().with_from_key())),
             ),
         ];
 
