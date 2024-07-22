@@ -8,7 +8,7 @@ use xlineapi::{
 
 use crate::{
     error::Result,
-    types::kv::{CompactionRequest, DeleteRangeOptions, PutOptions, RangeOptions, TxnRequest},
+    types::kv::{DeleteRangeOptions, PutOptions, RangeOptions, TxnRequest},
     AuthService, CurpClient,
 };
 
@@ -252,6 +252,11 @@ impl KvClient {
     /// We compact at revision 3. After the compaction, the revision list will become [(A, 3), (A, 4), (A, 5)].
     /// All revisions less than 3 are deleted. The latest revision, 3, will be kept.
     ///
+    /// `Revision` is the key-value store revision for the compaction operation.
+    /// `Physical` is set so the RPC will wait until the compaction is physically
+    /// applied to the local database such that compacted entries are totally
+    /// removed from the backend database.
+    ///
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
@@ -260,8 +265,7 @@ impl KvClient {
     ///
     ///```no_run
     /// use xline_client::{
-    ///     types::kv::{CompactionRequest},
-    ///     Client, ClientOptions,
+    ///     Client, ClientOptions
     /// };
     /// use anyhow::Result;
     ///
@@ -276,23 +280,23 @@ impl KvClient {
     ///     let resp_put = client.put("key", "val", None).await?;
     ///     let rev = resp_put.header.unwrap().revision;
     ///
-    ///     let _resp = client.compact(CompactionRequest::new(rev)).await?;
+    ///     let _resp = client.compact(rev, false).await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     #[inline]
-    pub async fn compact(&self, request: CompactionRequest) -> Result<CompactionResponse> {
-        if request.physical() {
+    pub async fn compact(&self, revision: i64, physical: bool) -> Result<CompactionResponse> {
+        let request = xlineapi::CompactionRequest { revision, physical };
+        if physical {
             let mut kv_client = self.kv_client.clone();
             return kv_client
-                .compact(xlineapi::CompactionRequest::from(request))
+                .compact(request)
                 .await
                 .map(tonic::Response::into_inner)
                 .map_err(Into::into);
         }
-        let request = RequestWrapper::from(xlineapi::CompactionRequest::from(request));
-        let cmd = Command::new(request);
+        let cmd = Command::new(RequestWrapper::from(request));
         let (cmd_res, _sync_res) = self
             .curp_client
             .propose(&cmd, self.token.as_ref(), true)
