@@ -224,9 +224,12 @@ async fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             }
             // The no-op command has been applied to state machine
             (EntryData::Empty, _) => curp.set_no_op_applied(),
+            (EntryData::Member(config), _) => curp.commit_membership(config.clone()),
+
             _ => unreachable!(),
         }
         ce.trigger(entry.inflight_id());
+        curp.trigger(&entry.propose_id);
         debug!("{id} cmd({}) after sync is called", entry.propose_id);
     }
 }

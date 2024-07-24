@@ -18,18 +18,31 @@ use super::CurpNode;
 
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Adds a learner to the cluster
-    pub(crate) fn add_learner(
+    pub(crate) async fn add_learner(
         &self,
-        _request: AddLearnerRequest,
+        request: AddLearnerRequest,
     ) -> Result<AddLearnerResponse, CurpError> {
-        unimplemented!()
+        let addrs = request.node_addrs;
+        let ret = self.curp.add_learner(&addrs);
+        self.curp.wait_propose_ids(Some(ret.propose_id())).await;
+
+        Ok(AddLearnerResponse {
+            node_ids: ret.into_inner(),
+        })
     }
 
     /// Removes a learner from the cluster
-    pub(crate) fn remove_learner(
+    pub(crate) async fn remove_learner(
         &self,
-        _request: RemoveLearnerRequest,
+        request: RemoveLearnerRequest,
     ) -> Result<RemoveLearnerResponse, CurpError> {
-        unimplemented!()
+        let node_ids = request.node_ids;
+        let ret = self
+            .curp
+            .remove_learner(node_ids)
+            .ok_or(CurpError::invalid_member_change())?;
+        self.curp.wait_propose_ids(Some(ret.propose_id())).await;
+
+        Ok(RemoveLearnerResponse {})
     }
 }

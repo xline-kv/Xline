@@ -1,6 +1,7 @@
 //! READ THIS BEFORE YOU START WRITING CODE FOR THIS MODULE
 //! To avoid deadlock, let's make some rules:
-//! 1. To group similar functions, I divide Curp impl into three scope: one for utils(don't grab lock here), one for tick, one for handlers
+//! 1. To group similar functions, I divide Curp impl into three scope: one for
+//!    utils(don't grab lock here), one for tick, one for handlers
 //! 2. Lock order should be:
 //!     1. self.st
 //!     2. self.cst
@@ -9,73 +10,86 @@
 #![allow(clippy::similar_names)] // st, lst, cst is similar but not confusing
 #![allow(clippy::arithmetic_side_effects)] // u64 is large enough and won't overflow
 
-use std::{
-    cmp::{self, min},
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    sync::{
-        atomic::{AtomicU64, AtomicU8, Ordering},
-        Arc,
-    },
-};
+use std::cmp;
+use std::cmp::min;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fmt::Debug;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::AtomicU8;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
-use clippy_utilities::{NumericCast, OverflowArithmetic};
+use clippy_utilities::NumericCast;
+use clippy_utilities::OverflowArithmetic;
 use dashmap::DashMap;
 use derive_builder::Builder;
 use event_listener::Event;
 use futures::Future;
 use itertools::Itertools;
 use opentelemetry::KeyValue;
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
-use tokio::sync::{broadcast, oneshot};
+use parking_lot::Mutex;
+use parking_lot::RwLock;
+use parking_lot::RwLockUpgradableReadGuard;
+use parking_lot::RwLockWriteGuard;
+use tokio::sync::broadcast;
+use tokio::sync::oneshot;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
-use tracing::{
-    debug, error,
-    log::{log_enabled, Level},
-    trace, warn,
-};
+use tracing::debug;
+use tracing::error;
+use tracing::log::log_enabled;
+use tracing::log::Level;
+use tracing::trace;
+use tracing::warn;
+use utils::barrier::IdBarrier;
+use utils::config::CurpConfig;
+use utils::parking_lot_lock::MutexMap;
+use utils::parking_lot_lock::RwLockMap;
+use utils::task_manager::TaskManager;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
-use utils::{
-    barrier::IdBarrier,
-    config::CurpConfig,
-    parking_lot_lock::{MutexMap, RwLockMap},
-    task_manager::TaskManager,
-};
 
-use self::{
-    log::Log,
-    state::{CandidateState, LeaderState, State},
-};
-use super::{
-    cmd_board::CommandBoard,
-    conflict::{spec_pool_new::SpeculativePool, uncommitted_pool::UncommittedPool},
-    curp_node::TaskType,
-    lease_manager::LeaseManagerRef,
-    storage::StorageApi,
-    DB,
-};
-use crate::{
-    cmd::Command,
-    log_entry::{EntryData, LogEntry},
-    members::{ClusterInfo, ServerId},
-    quorum, recover_quorum,
-    response::ResponseSender,
-    role_change::RoleChange,
-    rpc::{
-        connect::{InnerConnectApi, InnerConnectApiWrapper},
-        ConfChange, ConfChangeType, CurpError, IdSet, Member, PoolEntry, ProposeId, PublishRequest,
-        ReadState, Redirect,
-    },
-    server::{
-        cmd_board::CmdBoardRef,
-        metrics,
-        raw_curp::{log::FallbackContext, state::VoteResult},
-    },
-    snapshot::{Snapshot, SnapshotMeta},
-    LogIndex,
-};
+use self::log::Log;
+use self::state::CandidateState;
+use self::state::LeaderState;
+use self::state::State;
+use super::cmd_board::CommandBoard;
+use super::conflict::spec_pool_new::SpeculativePool;
+use super::conflict::uncommitted_pool::UncommittedPool;
+use super::curp_node::TaskType;
+use super::lease_manager::LeaseManagerRef;
+use super::storage::StorageApi;
+use super::DB;
+use crate::cmd::Command;
+use crate::log_entry::EntryData;
+use crate::log_entry::LogEntry;
+use crate::member::MembershipState;
+use crate::members::ClusterInfo;
+use crate::members::ServerId;
+use crate::quorum;
+use crate::recover_quorum;
+use crate::response::ResponseSender;
+use crate::role_change::RoleChange;
+use crate::rpc::connect::InnerConnectApi;
+use crate::rpc::connect::InnerConnectApiWrapper;
+use crate::rpc::ConfChange;
+use crate::rpc::ConfChangeType;
+use crate::rpc::CurpError;
+use crate::rpc::IdSet;
+use crate::rpc::Member;
+use crate::rpc::PoolEntry;
+use crate::rpc::ProposeId;
+use crate::rpc::PublishRequest;
+use crate::rpc::ReadState;
+use crate::rpc::Redirect;
+use crate::server::cmd_board::CmdBoardRef;
+use crate::server::metrics;
+use crate::server::raw_curp::log::FallbackContext;
+use crate::server::raw_curp::state::VoteResult;
+use crate::snapshot::Snapshot;
+use crate::snapshot::SnapshotMeta;
+use crate::LogIndex;
 
 /// Curp state
 mod state;
@@ -86,6 +100,9 @@ mod log;
 /// test utils
 #[cfg(test)]
 mod tests;
+
+/// Membership implementation
+mod member_impl;
 
 /// Default Size of channel
 const CHANGE_CHANNEL_SIZE: usize = 128;
@@ -107,6 +124,8 @@ pub struct RawCurp<C: Command, RC: RoleChange> {
     ctx: Context<C, RC>,
     /// Task manager
     task_manager: Arc<TaskManager>,
+    /// Membership state
+    ms: RwLock<MembershipState>,
 }
 
 /// Tmp struct for building `RawCurp`
@@ -200,6 +219,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             log,
             ctx,
             task_manager: args.task_manager,
+            ms: RwLock::default(),
         };
 
         if args.is_leader {
@@ -577,14 +597,14 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Persistent log entries
     ///
-    /// NOTE: A `&Log<C>` is required because we do not want the `Log` structure gets mutated
-    /// during the persistent
+    /// NOTE: A `&Log<C>` is required because we do not want the `Log` structure
+    /// gets mutated during the persistent
     #[allow(clippy::panic)]
     #[allow(dropping_references)]
     fn persistent_log_entries(&self, entries: &[&LogEntry<C>], _log: &Log<C>) {
-        // We panic when the log persistence fails because it likely indicates an unrecoverable error.
-        // Our WAL implementation does not support rollback on failure, as a file write syscall is not
-        // guaranteed to be atomic.
+        // We panic when the log persistence fails because it likely indicates an
+        // unrecoverable error. Our WAL implementation does not support rollback
+        // on failure, as a file write syscall is not guaranteed to be atomic.
         if let Err(e) = self.ctx.curp_storage.put_log_entries(entries) {
             panic!("log persistent failed: {e}");
         }
@@ -601,6 +621,14 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .map(|e| e.id)
             .collect();
         self.ctx.id_barrier.wait_all(conflict_cmds)
+    }
+
+    /// Wait for propose id synced
+    pub(super) fn wait_propose_ids<Ids: IntoIterator<Item = ProposeId>>(
+        &self,
+        propose_ids: Ids,
+    ) -> impl Future<Output = ()> + Send {
+        self.ctx.id_barrier.wait_all(propose_ids)
     }
 
     /// Wait all logs in previous term have been applied to state machine
@@ -879,7 +907,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Handle `vote`
     /// Return `Ok(term, spec_pool)` if the vote is granted
     /// Return `Err(Some(term))` if the vote is rejected
-    /// The `Err(None)` will never be returned here, just to keep the return type consistent with the `handle_pre_vote`
+    /// The `Err(None)` will never be returned here, just to keep the return
+    /// type consistent with the `handle_pre_vote`
     pub(super) fn handle_vote(
         &self,
         term: u64,
@@ -969,7 +998,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                     EntryData::Empty
                     | EntryData::Command(_)
                     | EntryData::Shutdown
-                    | EntryData::SetNodeState(_, _, _) => false,
+                    | EntryData::SetNodeState(_, _, _)
+                    | EntryData::Member(_) => false,
                 });
         // extra check to shutdown removed node
         if !contains_candidate && !remove_candidate_is_not_committed {
@@ -1130,7 +1160,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Handle `install_snapshot` resp
-    /// Return Err(()) if the current node isn't a leader or current term is less than the given term
+    /// Return Err(()) if the current node isn't a leader or current term is
+    /// less than the given term
     pub(super) fn handle_snapshot_resp(
         &self,
         follower_id: ServerId,
@@ -1263,7 +1294,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.ctx.leader_tx.subscribe()
     }
 
-    /// Get `append_entries` request for `follower_id` that contains the latest log entries
+    /// Get `append_entries` request for `follower_id` that contains the latest
+    /// log entries
     pub(super) fn sync(&self, follower_id: ServerId) -> Option<SyncAction<C>> {
         let term = {
             let st_r = self.st.read();
@@ -1290,9 +1322,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 )
             });
             // TODO: buffer a local snapshot: if a follower is down for a long time,
-            // the leader will take a snapshot itself every time `sync` is called in effort to
-            // calibrate it. Since taking a snapshot will block the leader's execute workers, we should
-            // not take snapshot so often. A better solution would be to keep a snapshot cache.
+            // the leader will take a snapshot itself every time `sync` is called in effort
+            // to calibrate it. Since taking a snapshot will block the leader's
+            // execute workers, we should not take snapshot so often. A better
+            // solution would be to keep a snapshot cache.
             let meta = SnapshotMeta {
                 last_included_index: entry.index,
                 last_included_term: entry.term,
@@ -1874,7 +1907,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 EntryData::ConfChange(_)
                 | EntryData::Shutdown
                 | EntryData::Empty
-                | EntryData::SetNodeState(_, _, _) => {}
+                | EntryData::SetNodeState(_, _, _)
+                | EntryData::Member(_) => {}
             }
         }
     }
@@ -1919,9 +1953,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Switch to a new config and return old member infos for fallback
     ///
-    /// FIXME: The state of `ctx.cluster_info` might be inconsistent with the log. A potential
-    /// fix would be to include the entire cluster info in the conf change log entry and
-    /// overwrite `ctx.cluster_info` when switching
+    /// FIXME: The state of `ctx.cluster_info` might be inconsistent with the
+    /// log. A potential fix would be to include the entire cluster info in
+    /// the conf change log entry and overwrite `ctx.cluster_info` when
+    /// switching
     fn switch_config(&self, conf_change: ConfChange) -> Option<(Vec<String>, String, bool)> {
         let node_id = conf_change.node_id;
         let mut cst_l = self.cst.lock();
@@ -1987,7 +2022,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .change_tx
             .send(conf_change)
             .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
-        // TODO: We could wrap lst inside a role checking to prevent accidental lst mutation
+        // TODO: We could wrap lst inside a role checking to prevent accidental lst
+        // mutation
         if self.is_leader()
             && self
                 .lst
@@ -2055,7 +2091,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.update_index_single_node(log_w, index, term);
     }
 
-    /// Process deduplication and acknowledge the `first_incomplete` for this client id
+    /// Process deduplication and acknowledge the `first_incomplete` for this
+    /// client id
     pub(crate) fn deduplicate(
         &self,
         ProposeId(client_id, seq_num): ProposeId,
@@ -2066,7 +2103,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let mut cb_w = self.ctx.cb.write();
             let tracker = cb_w.tracker(client_id);
             if tracker.only_record(seq_num) {
-                // TODO: obtain the previous ER from cmd_board and packed into CurpError::Duplicated as an entry.
+                // TODO: obtain the previous ER from cmd_board and packed into
+                // CurpError::Duplicated as an entry.
                 return Err(CurpError::duplicated());
             }
             if let Some(first_incomplete) = first_incomplete {

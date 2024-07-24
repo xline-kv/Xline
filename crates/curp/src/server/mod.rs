@@ -233,6 +233,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
     ) -> Result<tonic::Response<AddLearnerResponse>, tonic::Status> {
         self.inner
             .add_learner(request.into_inner())
+            .await
             .map(tonic::Response::new)
             .map_err(Into::into)
     }
@@ -244,6 +245,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
     ) -> Result<tonic::Response<RemoveLearnerResponse>, tonic::Status> {
         self.inner
             .remove_learner(request.into_inner())
+            .await
             .map(tonic::Response::new)
             .map_err(Into::into)
     }
