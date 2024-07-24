@@ -11,6 +11,9 @@ use crate::{
     rpc::{ConfChange, ProposeId, PublishRequest},
 };
 
+/// Membership entry definition
+mod member;
+
 /// Log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(PartialEq))]
