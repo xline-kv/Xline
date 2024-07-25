@@ -4,23 +4,30 @@
 use std::sync::Arc;
 
 use curp_external_api::cmd::AfterSyncCmd;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
+use parking_lot::RwLock;
 use tokio::sync::oneshot;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
 
-use super::{
-    cmd_board::CommandBoard,
-    conflict::{spec_pool_new::SpeculativePool, uncommitted_pool::UncommittedPool},
-    curp_node::AfterSyncEntry,
-    raw_curp::RawCurp,
-};
-use crate::{
-    cmd::{Command, CommandExecutor},
-    log_entry::{EntryData, LogEntry},
-    role_change::RoleChange,
-    rpc::{ConfChangeType, PoolEntry, ProposeResponse, SyncedResponse},
-    snapshot::{Snapshot, SnapshotMeta},
-};
+use super::cmd_board::CommandBoard;
+use super::conflict::spec_pool_new::SpeculativePool;
+use super::conflict::uncommitted_pool::UncommittedPool;
+use super::curp_node::AfterSyncEntry;
+use super::raw_curp::RawCurp;
+use crate::cmd::Command;
+use crate::cmd::CommandExecutor;
+use crate::log_entry::EntryData;
+use crate::log_entry::LogEntry;
+use crate::role_change::RoleChange;
+use crate::rpc::ConfChangeType;
+use crate::rpc::PoolEntry;
+use crate::rpc::ProposeResponse;
+use crate::rpc::SyncedResponse;
+use crate::snapshot::Snapshot;
+use crate::snapshot::SnapshotMeta;
 
 /// Removes an entry from sp and ucp
 fn remove_from_sp_ucp<C: Command>(
@@ -62,7 +69,8 @@ pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         EntryData::ConfChange(_)
         | EntryData::Shutdown
         | EntryData::Empty
-        | EntryData::SetNodeState(_, _, _) => {
+        | EntryData::SetNodeState(_, _, _)
+        | EntryData::Member(_) => {
             unreachable!("should not speculative execute {:?}", entry.entry_data)
         }
     }
@@ -224,6 +232,8 @@ async fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             }
             // The no-op command has been applied to state machine
             (EntryData::Empty, _) => curp.set_no_op_applied(),
+            (EntryData::Member(config), _) => curp.commit_membership(config.clone()),
+
             _ => unreachable!(),
         }
         ce.trigger(entry.inflight_id());

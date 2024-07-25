@@ -149,7 +149,8 @@ where
                 | CurpError::InvalidConfig(())
                 | CurpError::NodeNotExists(())
                 | CurpError::NodeAlreadyExists(())
-                | CurpError::LearnerNotCatchUp(()) => {
+                | CurpError::LearnerNotCatchUp(())
+                | CurpError::InvalidMemberChange(()) => {
                     return Err(tonic::Status::from(err));
                 }
 

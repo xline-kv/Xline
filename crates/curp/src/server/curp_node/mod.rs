@@ -64,7 +64,7 @@ use crate::{
     snapshot::{Snapshot, SnapshotMeta},
 };
 
-/// CurpNode member implementation
+/// `CurpNode` member implementation
 mod member_impl;
 
 /// After sync entry, composed of a log entry and response sender
