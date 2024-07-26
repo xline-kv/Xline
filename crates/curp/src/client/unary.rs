@@ -13,8 +13,9 @@ use tonic::{Response, Status};
 use tracing::{debug, warn};
 
 use super::{
-    state::State, ClientApi, LeaderStateUpdate, ProposeIdGuard, ProposeResponse,
-    RepeatableClientApi,
+    connect::{LeaderStateUpdate, ProposeIdGuard, RepeatableClientApi},
+    state::State,
+    ClientApi, ProposeResponse,
 };
 use crate::{
     members::ServerId,

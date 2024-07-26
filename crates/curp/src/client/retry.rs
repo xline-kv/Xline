@@ -5,7 +5,10 @@ use futures::Future;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
-use super::{ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
+use super::{
+    connect::{LeaderStateUpdate, RepeatableClientApi},
+    ClientApi, ProposeResponse,
+};
 use crate::{
     members::ServerId,
     rpc::{ConfChange, CurpError, FetchClusterResponse, Member, ReadState, Redirect},
