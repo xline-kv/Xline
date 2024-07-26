@@ -299,8 +299,26 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
         for i in 0..10 {
             let cmd = TestCommand::new_put(vec![i], i);
             let res = req_client.propose(&cmd, None, true).await;
-            if res.is_ok() && res.unwrap().is_ok() {
-                collection.push(i);
+            match res {
+                Ok(res) => {
+                    if res.is_ok() {
+                        collection.push(i);
+                    }
+                }
+                Err(err) => {
+                    // Here we suppose that the CurpError::RpcTransport(()) error is
+                    // due to the cluster has been shutted down.
+                    // If we do not break here, it may retry 3 times (10.5s) for all
+                    // 10 nodes, that will cause the test timeout failure.
+                    if err.code() == tonic::Code::DeadlineExceeded
+                        || matches!(
+                            err.into(),
+                            CurpError::ShuttingDown(_) | CurpError::RpcTransport(())
+                        )
+                    {
+                        return collection;
+                    }
+                }
             }
         }
         collection
