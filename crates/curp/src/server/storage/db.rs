@@ -159,6 +159,9 @@ impl<C: Command> StorageApi for DB<C> {
 
 impl<C> DB<C> {
     /// Create a new CURP `DB`
+    ///
+    /// WARN: The `recover` method must be called before any call to `put_log_entries`.
+    ///
     /// # Errors
     /// Will return `StorageError` if failed to open the storage
     #[inline]
