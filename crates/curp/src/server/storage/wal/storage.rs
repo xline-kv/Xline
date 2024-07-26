@@ -58,7 +58,7 @@ impl<C> WALStorage<C> {
 
 impl<C> WALStorageOps<C> for WALStorage<C>
 where
-    C: Serialize + DeserializeOwned + Unpin + 'static + std::fmt::Debug,
+    C: Serialize + DeserializeOwned + std::fmt::Debug,
 {
     /// Recover from the given directory if there's any segments
     fn recover(&mut self) -> io::Result<Vec<LogEntry<C>>> {
@@ -189,7 +189,7 @@ where
 
 impl<C> WALStorage<C>
 where
-    C: Serialize + DeserializeOwned + Unpin + 'static + std::fmt::Debug,
+    C: Serialize + DeserializeOwned + std::fmt::Debug,
 {
     /// Opens a new WAL segment
     fn open_new_segment(&mut self) -> io::Result<()> {

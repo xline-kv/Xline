@@ -26,7 +26,7 @@ impl<T> pri::Serializable for T where T: pri::ThreadSafe + Clone + Serialize + D
 
 /// Command to execute on the server side
 #[async_trait]
-pub trait Command: pri::Serializable + ConflictCheck + PbCodec + Unpin {
+pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
     /// Error type
     type Error: pri::Serializable + PbCodec + std::error::Error + Clone;
 
