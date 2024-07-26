@@ -102,7 +102,7 @@ impl WALSegment {
         &mut self,
     ) -> Result<impl Iterator<Item = LogEntry<C>>, WALError>
     where
-        C: Serialize + DeserializeOwned + 'static + std::fmt::Debug,
+        C: Serialize + DeserializeOwned + std::fmt::Debug,
     {
         let frame_batches = self.read_all(WAL::<C>::new())?;
         let frame_batches_filtered: Vec<_> = frame_batches

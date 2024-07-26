@@ -88,7 +88,7 @@ impl<C> WALStorage<C> {
 
 impl<C> WALStorageOps<C> for WALStorage<C>
 where
-    C: Serialize + DeserializeOwned + Unpin + 'static + std::fmt::Debug + Clone,
+    C: Serialize + DeserializeOwned + std::fmt::Debug + Clone,
 {
     fn recover(&mut self) -> io::Result<Vec<LogEntry<C>>> {
         match *self {
