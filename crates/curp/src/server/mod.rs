@@ -308,7 +308,9 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
 
         use crate::rpc::{InnerProtocolServer, ProtocolServer};
 
-        let n = task_manager.get_shutdown_listener(TaskName::TonicServer);
+        let n = task_manager
+            .get_shutdown_listener(TaskName::TonicServer)
+            .unwrap_or_else(|| unreachable!("task TonicServer should exist"));
         let server = Self::new(
             cluster_info,
             is_leader,
