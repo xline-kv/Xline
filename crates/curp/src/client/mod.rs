@@ -26,7 +26,8 @@ mod tests;
 
 use std::{collections::HashMap, sync::Arc};
 
-use connect::ClientApi;
+#[allow(clippy::module_name_repetitions)] // better than just Api
+pub use connect::ClientApi;
 use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, StreamExt};
 use tokio::task::JoinHandle;
@@ -44,7 +45,10 @@ use self::{
 };
 use crate::{
     members::ServerId,
-    rpc::{protocol_client::ProtocolClient, FetchClusterRequest, FetchClusterResponse, Protocol},
+    rpc::{
+        protocol_client::ProtocolClient, FetchClusterRequest, FetchClusterResponse, MemberProtocol,
+        Protocol,
+    },
 };
 
 /// The response of propose command, deserialized from [`crate::rpc::ProposeResponse`] or
@@ -273,7 +277,7 @@ impl ClientBuilder {
     }
 }
 
-impl<P: Protocol> ClientBuilderWithBypass<P> {
+impl<P: Protocol + MemberProtocol> ClientBuilderWithBypass<P> {
     /// Build the client with local server
     ///
     /// # Errors

@@ -1,5 +1,5 @@
 /// Member RPCs
-mod member;
+pub(crate) mod member;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -17,6 +17,7 @@ use clippy_utilities::NumericCast;
 use engine::SnapshotApi;
 use futures::stream::FuturesUnordered;
 use futures::Stream;
+use member::MemberApi;
 #[cfg(test)]
 use mockall::automock;
 use tokio::sync::mpsc::Sender;
@@ -66,9 +67,15 @@ use crate::snapshot::Snapshot;
 
 use super::proto::commandpb::ReadIndexRequest;
 use super::proto::commandpb::ReadIndexResponse;
+use super::proto::memberpb::member_protocol_client::MemberProtocolClient;
+use super::AddLearnerRequest;
+use super::AddLearnerResponse;
+use super::MemberProtocol;
 use super::OpResponse;
 use super::RecordRequest;
 use super::RecordResponse;
+use super::RemoveLearnerRequest;
+use super::RemoveLearnerResponse;
 
 /// Install snapshot chunk size: 64KB
 const SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
@@ -85,6 +92,21 @@ trait FromTonicChannel {
 impl FromTonicChannel for ProtocolClient<Channel> {
     fn from_channel(channel: Channel) -> Self {
         ProtocolClient::new(channel)
+    }
+}
+
+impl FromTonicChannel for MemberProtocolClient<Channel> {
+    fn from_channel(channel: Channel) -> Self {
+        MemberProtocolClient::new(channel)
+    }
+}
+
+impl FromTonicChannel for (ProtocolClient<Channel>, MemberProtocolClient<Channel>) {
+    fn from_channel(channel: Channel) -> Self {
+        (
+            ProtocolClient::new(channel.clone()),
+            MemberProtocolClient::new(channel),
+        )
     }
 }
 
@@ -153,7 +175,10 @@ pub(crate) async fn connect(
     addrs: Vec<String>,
     tls_config: Option<ClientTlsConfig>,
 ) -> Result<Arc<dyn ConnectApi>, tonic::transport::Error> {
-    let conn = connect_to::<ProtocolClient<Channel>>(id, addrs, tls_config).await?;
+    let conn = connect_to::<(ProtocolClient<Channel>, MemberProtocolClient<Channel>)>(
+        id, addrs, tls_config,
+    )
+    .await?;
     Ok(conn)
 }
 
@@ -190,7 +215,7 @@ pub(crate) async fn inner_connects(
 #[allow(clippy::module_name_repetitions)] // better for recognizing than just "Api"
 #[cfg_attr(test, automock)]
 #[async_trait]
-pub(crate) trait ConnectApi: Send + Sync + 'static {
+pub(crate) trait ConnectApi: MemberApi + Send + Sync + 'static {
     /// Get server id
     fn id(&self) -> ServerId;
 
@@ -429,7 +454,28 @@ macro_rules! with_timeout {
 }
 
 #[async_trait]
-impl ConnectApi for Connect<ProtocolClient<Channel>> {
+impl MemberApi for Connect<(ProtocolClient<Channel>, MemberProtocolClient<Channel>)> {
+    async fn add_learner(
+        &self,
+        request: AddLearnerRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<AddLearnerResponse>, tonic::Status> {
+        let (_, client) = self.rpc_connect.clone();
+        client.add_learner(request, timeout).await
+    }
+
+    async fn remove_learner(
+        &self,
+        request: RemoveLearnerRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, tonic::Status> {
+        let (_, client) = self.rpc_connect.clone();
+        client.remove_learner(request, timeout).await
+    }
+}
+
+#[async_trait]
+impl ConnectApi for Connect<(ProtocolClient<Channel>, MemberProtocolClient<Channel>)> {
     /// Get server id
     fn id(&self) -> ServerId {
         self.id
@@ -450,7 +496,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         tonic::Response<Box<dyn Stream<Item = Result<OpResponse, tonic::Status>> + Send>>,
         CurpError,
     > {
-        let mut client = self.rpc_connect.clone();
+        let (mut client, _) = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         if let Some(token) = token {
             _ = req.metadata_mut().insert("token", token.parse()?);
@@ -468,7 +514,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         request: RecordRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<RecordResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
+        let (mut client, _) = self.rpc_connect.clone();
         let req = tonic::Request::new(request);
         with_timeout!(timeout, client.record(req)).map_err(Into::into)
     }
@@ -478,7 +524,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         &self,
         timeout: Duration,
     ) -> Result<tonic::Response<ReadIndexResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
+        let (mut client, _) = self.rpc_connect.clone();
         let req = tonic::Request::new(ReadIndexRequest {});
         with_timeout!(timeout, client.read_index(req)).map_err(Into::into)
     }
@@ -490,7 +536,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         request: ShutdownRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<ShutdownResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
+        let (mut client, _) = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_current();
         with_timeout!(timeout, client.shutdown(req)).map_err(Into::into)
@@ -503,7 +549,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         request: ProposeConfChangeRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<ProposeConfChangeResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
+        let (mut client, _) = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_current();
         with_timeout!(timeout, client.propose_conf_change(req)).map_err(Into::into)
@@ -516,7 +562,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         request: PublishRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<PublishResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
+        let (mut client, _) = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_current();
         with_timeout!(timeout, client.publish(req)).map_err(Into::into)
@@ -528,7 +574,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         request: FetchClusterRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<FetchClusterResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
+        let (mut client, _) = self.rpc_connect.clone();
         let req = tonic::Request::new(request);
         with_timeout!(timeout, client.fetch_cluster(req)).map_err(Into::into)
     }
@@ -539,7 +585,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         request: FetchReadStateRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<FetchReadStateResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
+        let (mut client, _) = self.rpc_connect.clone();
         let req = tonic::Request::new(request);
         with_timeout!(timeout, client.fetch_read_state(req)).map_err(Into::into)
     }
@@ -550,14 +596,14 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         request: MoveLeaderRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<MoveLeaderResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
+        let (mut client, _) = self.rpc_connect.clone();
         let req = tonic::Request::new(request);
         with_timeout!(timeout, client.move_leader(req)).map_err(Into::into)
     }
 
     /// Keep send lease keep alive to server and mutate the client id
     async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>, interval: Duration) -> CurpError {
-        let mut client = self.rpc_connect.clone();
+        let (mut client, _) = self.rpc_connect.clone();
         loop {
             let stream = heartbeat_stream(
                 client_id.load(std::sync::atomic::Ordering::Relaxed),
@@ -675,7 +721,7 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
 
 /// A connect api implementation which bypass kernel to dispatch method
 /// directly.
-pub(crate) struct BypassedConnect<T: Protocol> {
+pub(crate) struct BypassedConnect<T> {
     /// inner server
     server: T,
     /// server id
@@ -721,9 +767,37 @@ impl Bypass for tonic::metadata::MetadataMap {
 }
 
 #[async_trait]
+impl<T> MemberApi for BypassedConnect<T>
+where
+    T: MemberProtocol,
+{
+    async fn add_learner(
+        &self,
+        request: AddLearnerRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<AddLearnerResponse>, tonic::Status> {
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
+        req.metadata_mut().inject_current();
+        self.server.add_learner(req).await.map_err(Into::into)
+    }
+
+    async fn remove_learner(
+        &self,
+        request: RemoveLearnerRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, tonic::Status> {
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
+        req.metadata_mut().inject_current();
+        self.server.remove_learner(req).await.map_err(Into::into)
+    }
+}
+
+#[async_trait]
 impl<T> ConnectApi for BypassedConnect<T>
 where
-    T: Protocol,
+    T: Protocol + MemberProtocol,
 {
     /// Get server id
     fn id(&self) -> ServerId {

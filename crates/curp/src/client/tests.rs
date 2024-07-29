@@ -25,12 +25,13 @@ use crate::{
     },
     members::ServerId,
     rpc::{
-        connect::{ConnectApi, MockConnectApi},
-        CurpError, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
-        FetchReadStateResponse, Member, MoveLeaderRequest, MoveLeaderResponse, OpResponse,
-        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
-        PublishRequest, PublishResponse, ReadIndexResponse, RecordRequest, RecordResponse,
-        ResponseOp, ShutdownRequest, ShutdownResponse, SyncedResponse,
+        connect::{member::MemberApi, ConnectApi, MockConnectApi},
+        AddLearnerRequest, AddLearnerResponse, CurpError, FetchClusterRequest,
+        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse, Member,
+        MoveLeaderRequest, MoveLeaderResponse, OpResponse, ProposeConfChangeRequest,
+        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, PublishRequest,
+        PublishResponse, ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
+        RemoveLearnerResponse, ResponseOp, ShutdownRequest, ShutdownResponse, SyncedResponse,
     },
 };
 
@@ -597,6 +598,25 @@ struct MockedStreamConnectApi {
     id: ServerId,
     lease_keep_alive_handle:
         Box<dyn Fn(Arc<AtomicU64>) -> BoxFuture<'static, CurpError> + Send + Sync + 'static>,
+}
+
+#[async_trait::async_trait]
+impl MemberApi for MockedStreamConnectApi {
+    async fn add_learner(
+        &self,
+        request: AddLearnerRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<AddLearnerResponse>, Status> {
+        unreachable!("please use MockedConnectApi")
+    }
+
+    async fn remove_learner(
+        &self,
+        request: RemoveLearnerRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, Status> {
+        unreachable!("please use MockedConnectApi")
+    }
 }
 
 #[async_trait::async_trait]

@@ -20,7 +20,7 @@ use crate::{
     rpc::{
         self,
         connect::{BypassedConnect, ConnectApi},
-        CurpError, FetchClusterRequest, FetchClusterResponse, Protocol,
+        CurpError, FetchClusterRequest, FetchClusterResponse, MemberProtocol, Protocol,
     },
 };
 
@@ -396,7 +396,7 @@ impl StateBuilder {
     }
 
     /// Build the state with local server
-    pub(super) async fn build_bypassed<P: Protocol>(
+    pub(super) async fn build_bypassed<P: Protocol + MemberProtocol>(
         mut self,
         local_server_id: ServerId,
         local_server: P,
