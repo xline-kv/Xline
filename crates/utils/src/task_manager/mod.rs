@@ -7,6 +7,7 @@ use std::{
     },
 };
 
+use atomic_enum::atomic_enum;
 use clippy_utilities::OverflowArithmetic;
 use dashmap::DashMap;
 use tokio::{sync::Notify, task::JoinHandle};
@@ -23,7 +24,7 @@ pub struct TaskManager {
     /// All tasks
     tasks: Arc<DashMap<TaskName, Task>>,
     /// State of task manager
-    state: Arc<AtomicU8>,
+    state: Arc<AtomicState>,
     /// Cluster shutdown tracker
     cluster_shutdown_tracker: Arc<ClusterShutdownTracker>,
 }
@@ -116,7 +117,7 @@ impl TaskManager {
                 .get_mut(&to)
                 .map(|mut t| t.depend_cnt = t.depend_cnt.overflow_add(1));
         }
-        let state = Arc::new(AtomicU8::new(0));
+        let state = Arc::new(AtomicState::new(State::Running));
         let cluster_shutdown_tracker = Arc::new(ClusterShutdownTracker::new());
         Self {
             tasks,
@@ -129,7 +130,7 @@ impl TaskManager {
     #[must_use]
     #[inline]
     pub fn is_shutdown(&self) -> bool {
-        self.state.load(Ordering::Acquire) != 0
+        !matches!(self.state.load(Ordering::Acquire), State::Running)
     }
 
     /// Get shutdown listener
@@ -180,9 +181,9 @@ impl TaskManager {
     }
 
     /// Inner shutdown task
-    async fn inner_shutdown(tasks: Arc<DashMap<TaskName, Task>>, state: Arc<AtomicU8>) {
+    async fn inner_shutdown(tasks: Arc<DashMap<TaskName, Task>>, state: Arc<AtomicState>) {
         let mut queue = Self::root_tasks_queue(&tasks);
-        state.store(1, Ordering::Release);
+        state.store(State::Shutdown, Ordering::Release);
         while let Some(v) = queue.pop_front() {
             let Some((_name, mut task)) = tasks.remove(&v) else {
                 continue;
@@ -226,7 +227,7 @@ impl TaskManager {
         let tracker = Arc::clone(&self.cluster_shutdown_tracker);
         let _ig = tokio::spawn(async move {
             info!("cluster shutdown start");
-            state.store(2, Ordering::Release);
+            state.store(State::ClusterShutdown, Ordering::Release);
             for name in [TaskName::SyncFollower, TaskName::ConflictCheckedMpmc] {
                 _ = tasks.get(&name).map(|n| n.notifier.notify_waiters());
             }
@@ -306,7 +307,7 @@ impl Task {
 }
 
 /// State of task manager
-#[derive(Debug, Clone, Copy)]
+#[atomic_enum]
 #[allow(clippy::exhaustive_enums)]
 pub enum State {
     /// Running
@@ -323,7 +324,7 @@ pub struct Listener {
     /// Shutdown notify
     notify: Arc<Notify>,
     /// State of task manager
-    state: Arc<AtomicU8>,
+    state: Arc<AtomicState>,
     /// Cluster shutdown tracker
     cluster_shutdown_tracker: Arc<ClusterShutdownTracker>,
 }
@@ -331,7 +332,7 @@ pub struct Listener {
 impl Listener {
     /// Create a new `Listener`
     fn new(
-        state: Arc<AtomicU8>,
+        state: Arc<AtomicState>,
         notify: Arc<Notify>,
         cluster_shutdown_tracker: Arc<ClusterShutdownTracker>,
     ) -> Self {
@@ -344,13 +345,7 @@ impl Listener {
 
     /// Get current state
     fn state(&self) -> State {
-        let state = self.state.load(Ordering::Acquire);
-        match state {
-            0 => State::Running,
-            1 => State::Shutdown,
-            2 => State::ClusterShutdown,
-            _ => unreachable!("invalid state: {}", state),
-        }
+        self.state.load(Ordering::Acquire)
     }
 
     /// Wait for self shutdown

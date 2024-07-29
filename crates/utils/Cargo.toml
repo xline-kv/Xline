@@ -19,6 +19,7 @@ parking_lot = ["dep:parking_lot"]
 
 [dependencies]
 async-trait = { version = "0.1.80", optional = true }
+atomic_enum = "0.3.0"
 clippy-utilities = "0.2.0"
 dashmap = "5.5.3"
 derive_builder = "0.20.0"
