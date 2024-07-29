@@ -3,8 +3,8 @@ use std::{fs, path::Path, sync::Arc};
 use bytes::BytesMut;
 use curp_test_utils::test_cmd::TestCommand;
 use parking_lot::Mutex;
-use tempfile::TempDir;
 use tokio_util::codec::Encoder;
+use util::tempdir;
 
 use crate::{
     log_entry::{EntryData, LogEntry},
@@ -20,7 +20,7 @@ const TEST_SEGMENT_SIZE: u64 = 512;
 
 #[test]
 fn simple_append_and_recovery_is_ok() {
-    let wal_test_path = tempfile::tempdir().unwrap();
+    let wal_test_path = tempdir();
     test_follow_up_append_recovery(wal_test_path.path(), 100);
 }
 
@@ -28,7 +28,7 @@ fn simple_append_and_recovery_is_ok() {
 fn log_head_truncation_is_ok() {
     for num_entries in 1..40 {
         for truncate_at in 1..=num_entries {
-            let wal_test_path = tempfile::tempdir().unwrap();
+            let wal_test_path = tempdir();
             test_head_truncate_at(wal_test_path.path(), num_entries, truncate_at as u64);
             test_follow_up_append_recovery(wal_test_path.path(), 10);
         }
@@ -39,7 +39,7 @@ fn log_head_truncation_is_ok() {
 fn log_tail_truncation_is_ok() {
     for num_entries in 1..40 {
         for truncate_at in 1..=num_entries {
-            let wal_test_path = tempfile::tempdir().unwrap();
+            let wal_test_path = tempdir();
             test_tail_truncate_at(wal_test_path.path(), num_entries, truncate_at as u64);
             test_follow_up_append_recovery(wal_test_path.path(), 10);
         }

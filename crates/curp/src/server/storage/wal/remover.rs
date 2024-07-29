@@ -12,6 +12,7 @@ use tokio::{
 };
 
 use super::{
+    fs,
     segment::WALSegment,
     util::{get_checksum, get_file_paths_with_ext, is_exist, parse_u64, validate_data, LockedFile},
 };
@@ -140,8 +141,8 @@ impl SegmentRemover {
         }
 
         for path in to_remove_paths.clone() {
-            let _ignore = std::fs::metadata(path.as_ref())?;
-            std::fs::remove_file(path.as_ref())?;
+            let _ignore = fs::metadata(path.as_ref())?;
+            fs::remove_file(path.as_ref())?;
         }
 
         // Check if all record have been removed from fs
@@ -157,7 +158,7 @@ impl SegmentRemover {
 
     /// Remove the RWAL
     fn remove_rwal(wal_path: impl AsRef<Path>) -> io::Result<()> {
-        std::fs::remove_file(wal_path.as_ref())?;
+        fs::remove_file(wal_path.as_ref())?;
         if is_exist(wal_path.as_ref()) {
             return Err(io::Error::from(io::ErrorKind::Other));
         }
@@ -176,11 +177,13 @@ impl SegmentRemover {
 mod tests {
     use futures::future::join_all;
 
+    use crate::server::storage::wal::util::tempdir;
+
     use super::*;
 
     #[test]
     fn wal_removal_is_ok() {
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdir();
         let dir_path = PathBuf::from(temp_dir.path());
 
         let mut segments = vec![];
@@ -205,7 +208,7 @@ mod tests {
 
     #[test]
     fn wal_remove_recover_is_ok() {
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdir();
         let dir_path = PathBuf::from(temp_dir.path());
         ABORT_REMOVE.with(|f| *f.borrow_mut() = true);
 

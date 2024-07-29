@@ -14,7 +14,7 @@ use event_listener::Event;
 use thiserror::Error;
 use tracing::error;
 
-use super::util::LockedFile;
+use super::{fs, util::LockedFile};
 
 /// The temp file extension
 const TEMP_FILE_EXT: &str = ".tmp";
@@ -116,11 +116,11 @@ impl FilePipeline {
 
     /// Cleans up all unused tempfiles
     fn clean_up(dir: &PathBuf) -> io::Result<()> {
-        for result in std::fs::read_dir(dir)? {
+        for result in fs::read_dir(dir)? {
             let file = result?;
             if let Some(filename) = file.file_name().to_str() {
                 if filename.ends_with(TEMP_FILE_EXT) {
-                    std::fs::remove_file(file.path())?;
+                    fs::remove_file(file.path())?;
                 }
             }
         }
@@ -175,12 +175,12 @@ impl std::fmt::Debug for FilePipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::storage::wal::util::get_file_paths_with_ext;
+    use crate::server::storage::wal::util::{get_file_paths_with_ext, tempdir};
 
     #[tokio::test]
     async fn file_pipeline_is_ok() {
         let file_size = 1024;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempdir();
         let mut pipeline = FilePipeline::new(dir.as_ref().into(), file_size);
 
         let check_size = |mut file: LockedFile| {
