@@ -10,23 +10,26 @@ use crate::rpc::proto::memberpb::AddLearnerRequest;
 use crate::rpc::proto::memberpb::AddLearnerResponse;
 use crate::rpc::proto::memberpb::RemoveLearnerRequest;
 use crate::rpc::proto::memberpb::RemoveLearnerResponse;
+use crate::rpc::CurpError;
 use crate::with_timeout;
 
 /// Membership APIs.
 #[cfg_attr(test, automock)]
 #[async_trait]
 pub(crate) trait MemberApi: Send + Sync + 'static {
+    /// Add a learner to the cluster.
     async fn add_learner(
         &self,
         request: AddLearnerRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<AddLearnerResponse>, tonic::Status>;
+    ) -> Result<tonic::Response<AddLearnerResponse>, CurpError>;
 
+    /// Remove a learner from the cluster.
     async fn remove_learner(
         &self,
         request: RemoveLearnerRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<RemoveLearnerResponse>, tonic::Status>;
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError>;
 }
 
 #[async_trait]
@@ -35,7 +38,7 @@ impl MemberApi for MemberProtocolClient<Channel> {
         &self,
         request: AddLearnerRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<AddLearnerResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<AddLearnerResponse>, CurpError> {
         let mut client = self.clone();
         let req = tonic::Request::new(request);
         with_timeout!(timeout, Self::add_learner(&mut client, req)).map_err(Into::into)
@@ -45,7 +48,7 @@ impl MemberApi for MemberProtocolClient<Channel> {
         &self,
         request: RemoveLearnerRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<RemoveLearnerResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
         let mut client = self.clone();
         let req = tonic::Request::new(request);
         with_timeout!(timeout, Self::remove_learner(&mut client, req)).map_err(Into::into)

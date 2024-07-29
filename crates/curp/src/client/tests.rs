@@ -606,7 +606,7 @@ impl MemberApi for MockedStreamConnectApi {
         &self,
         request: AddLearnerRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<AddLearnerResponse>, Status> {
+    ) -> Result<tonic::Response<AddLearnerResponse>, CurpError> {
         unreachable!("please use MockedConnectApi")
     }
 
@@ -614,7 +614,7 @@ impl MemberApi for MockedStreamConnectApi {
         &self,
         request: RemoveLearnerRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<RemoveLearnerResponse>, Status> {
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
         unreachable!("please use MockedConnectApi")
     }
 }

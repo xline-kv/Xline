@@ -15,14 +15,17 @@ use crate::tracker::Tracker;
 
 use super::ProposeResponse;
 
+/// `ClientError`, the error type for client
+pub trait ClientError {
+    /// The client error
+    type Error;
+}
+
 /// `ClientApi`, a higher wrapper for `ConnectApi`, providing some methods for communicating to
 /// the whole curp cluster. Automatically discovery curp server to update it's quorum.
 #[async_trait]
 #[allow(clippy::module_name_repetitions)] // better than just Api
-pub trait ClientApi {
-    /// The client error
-    type Error;
-
+pub trait ClientApi: ClientError + MemberClientApi {
     /// The command type
     type Cmd: Command;
 
@@ -156,4 +159,14 @@ impl Drop for ProposeIdGuard<'_> {
     fn drop(&mut self) {
         let _ig = self.tracker.write().record(self.propose_id.1);
     }
+}
+
+/// A higher wrapper of `MemberApi`
+#[async_trait]
+pub trait MemberClientApi: ClientError {
+    /// Add some learners to the cluster.
+    async fn add_learner(&self, addrs: Vec<String>) -> Result<Vec<u64>, Self::Error>;
+
+    /// Remove some learners from the cluster.
+    async fn remove_learner(&self, ids: Vec<u64>) -> Result<(), Self::Error>;
 }

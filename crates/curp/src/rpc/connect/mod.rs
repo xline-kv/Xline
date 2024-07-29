@@ -459,7 +459,7 @@ impl MemberApi for Connect<(ProtocolClient<Channel>, MemberProtocolClient<Channe
         &self,
         request: AddLearnerRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<AddLearnerResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<AddLearnerResponse>, CurpError> {
         let (_, client) = self.rpc_connect.clone();
         client.add_learner(request, timeout).await
     }
@@ -468,7 +468,7 @@ impl MemberApi for Connect<(ProtocolClient<Channel>, MemberProtocolClient<Channe
         &self,
         request: RemoveLearnerRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<RemoveLearnerResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
         let (_, client) = self.rpc_connect.clone();
         client.remove_learner(request, timeout).await
     }
@@ -775,7 +775,7 @@ where
         &self,
         request: AddLearnerRequest,
         _timeout: Duration,
-    ) -> Result<tonic::Response<AddLearnerResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<AddLearnerResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
@@ -786,7 +786,7 @@ where
         &self,
         request: RemoveLearnerRequest,
         _timeout: Duration,
-    ) -> Result<tonic::Response<RemoveLearnerResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
