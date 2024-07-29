@@ -237,6 +237,7 @@ async fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             _ => unreachable!(),
         }
         ce.trigger(entry.inflight_id());
+        curp.trigger(&entry.propose_id);
         debug!("{id} cmd({}) after sync is called", entry.propose_id);
     }
 }
