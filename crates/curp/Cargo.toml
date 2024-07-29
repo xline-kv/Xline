@@ -19,7 +19,7 @@ bytes = "1.4.0"
 clippy-utilities = "0.2.0"
 curp-external-api = { path = "../curp-external-api" }
 curp-test-utils = { path = "../curp-test-utils" }
-dashmap = "5.5.0"
+dashmap = "6.0.1"
 derive_builder = "0.20.0"
 engine = { path = "../engine" }
 event-listener = "5.3.1"

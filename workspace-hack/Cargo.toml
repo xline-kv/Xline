@@ -16,6 +16,7 @@ publish = false
 axum = { version = "0.6" }
 bytes = { version = "1" }
 clap = { version = "4", features = ["derive"] }
+crossbeam-utils = { version = "0.8" }
 crypto-common = { version = "0.1", default-features = false, features = ["std"] }
 digest = { version = "0.10", features = ["mac", "std"] }
 either = { version = "1", default-features = false, features = ["use_std"] }
