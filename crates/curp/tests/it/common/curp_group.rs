@@ -9,7 +9,7 @@ use curp::{
     client::{ClientApi, ClientBuilder},
     error::ServerError,
     members::{ClusterInfo, ServerId},
-    rpc::{InnerProtocolServer, Member, ProtocolServer},
+    rpc::{InnerProtocolServer, Member, MemberProtocol, MemberProtocolServer, ProtocolServer},
     server::{
         conflict::test_pools::{TestSpecPool, TestUncomPool},
         Rpc, DB,
@@ -219,6 +219,7 @@ impl CurpGroup {
     ) -> Result<(), tonic::transport::Error> {
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
+            .add_service(MemberProtocolServer::from_arc(Arc::clone(&server)))
             .add_service(InnerProtocolServer::from_arc(server))
             .serve_with_incoming_shutdown(
                 TcpListenerStream::new(listener),

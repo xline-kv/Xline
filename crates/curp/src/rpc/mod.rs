@@ -18,11 +18,6 @@ pub(crate) use self::proto::{
     },
 };
 pub use self::proto::{
-    memberpb::member_protocol_server::MemberProtocol,
-    memberpb::AddLearnerRequest,
-    memberpb::AddLearnerResponse,
-    memberpb::RemoveLearnerRequest,
-    memberpb::RemoveLearnerResponse,
     commandpb::{
         cmd_result::Result as CmdResultInner,
         curp_error::Err as CurpError, // easy for match
@@ -60,6 +55,11 @@ pub use self::proto::{
         WaitSyncedResponse,
     },
     inner_messagepb::inner_protocol_server::InnerProtocolServer,
+    memberpb::member_protocol_server::{MemberProtocol, MemberProtocolServer},
+    memberpb::AddLearnerRequest,
+    memberpb::AddLearnerResponse,
+    memberpb::RemoveLearnerRequest,
+    memberpb::RemoveLearnerResponse,
 };
 use crate::{cmd::Command, log_entry::LogEntry, members::ServerId, LogIndex};
 

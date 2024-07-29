@@ -386,6 +386,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
         use utils::task_manager::tasks::TaskName;
 
         use crate::rpc::InnerProtocolServer;
+        use crate::rpc::MemberProtocolServer;
         use crate::rpc::ProtocolServer;
 
         let n = task_manager.get_shutdown_listener(TaskName::TonicServer);
@@ -406,6 +407,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
 
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server.clone()))
+            .add_service(MemberProtocolServer::new(server.clone()))
             .add_service(InnerProtocolServer::new(server))
             .serve_with_shutdown(addr, n.wait())
             .await?;
