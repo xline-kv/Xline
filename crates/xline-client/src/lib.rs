@@ -180,7 +180,7 @@ use xlineapi::command::{Command, CurpClient};
 use crate::{
     clients::{
         AuthClient, ClusterClient, ElectionClient, KvClient, LeaseClient, LockClient,
-        MaintenanceClient, WatchClient,
+        MaintenanceClient, MemberClient, WatchClient,
     },
     error::XlineClientBuildError,
 };
@@ -214,6 +214,8 @@ pub struct Client {
     cluster: ClusterClient,
     /// Election client
     election: ElectionClient,
+    /// Member client
+    member: MemberClient,
 }
 
 impl Client {
@@ -274,11 +276,12 @@ impl Client {
             token.clone(),
             id_gen,
         );
-        let auth = AuthClient::new(curp_client, channel.clone(), token.clone());
+        let auth = AuthClient::new(Arc::clone(&curp_client), channel.clone(), token.clone());
         let maintenance = MaintenanceClient::new(channel.clone(), token.clone());
         let cluster = ClusterClient::new(channel.clone(), token.clone());
         let watch = WatchClient::new(channel, token);
         let election = ElectionClient::new();
+        let member = MemberClient::new(curp_client);
 
         Ok(Self {
             kv,
@@ -289,6 +292,7 @@ impl Client {
             watch,
             cluster,
             election,
+            member,
         })
     }
 
@@ -363,6 +367,13 @@ impl Client {
     #[must_use]
     pub fn election_client(&self) -> ElectionClient {
         self.election.clone()
+    }
+
+    /// Gets a member client.
+    #[inline]
+    #[must_use]
+    pub fn member_client(&self) -> MemberClient {
+        self.member.clone()
     }
 }
 
