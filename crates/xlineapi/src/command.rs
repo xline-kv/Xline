@@ -34,7 +34,7 @@ pub struct KeyRange {
 }
 
 impl KeyRange {
-    /// New `KeyRange`
+    /// New `KeyRange` from `key` and `range_end`
     #[inline]
     pub fn new(start: impl Into<Vec<u8>>, end: impl Into<Vec<u8>>) -> Self {
         let key_vec = start.into();
@@ -69,45 +69,26 @@ impl KeyRange {
         }
     }
 
-    /// Return if `KeyRange` is conflicted with another
-    #[must_use]
+    /// Construct `KeyRange` directly from `start` and `end`, both included
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `start` or `end` is `UNBOUNDED`
     #[inline]
-    pub fn is_conflicted(&self, other: &Self) -> bool {
-        // s1 < s2 ?
-        if match (self.start_bound(), other.start_bound()) {
-            (Bound::Included(s1), Bound::Included(s2)) => {
-                if s1 == s2 {
-                    return true;
-                }
-                s1 < s2
-            }
-            (Bound::Included(_), Bound::Unbounded) => false,
-            (Bound::Unbounded, Bound::Included(_)) => true,
-            (Bound::Unbounded, Bound::Unbounded) => return true,
-            _ => unreachable!("KeyRange::start_bound() cannot be Excluded"),
-        } {
-            // s1 < s2
-            // s2 < e1 ?
-            match (other.start_bound(), self.end_bound()) {
-                (Bound::Included(s2), Bound::Included(e1)) => s2 <= e1,
-                (Bound::Included(s2), Bound::Excluded(e1)) => s2 < e1,
-                (Bound::Included(_), Bound::Unbounded) => true,
-                // if other.start_bound() is Unbounded, program cannot enter this branch
-                // KeyRange::start_bound() cannot be Excluded
-                _ => unreachable!("other.start_bound() should be Include"),
-            }
-        } else {
-            // s2 < s1
-            // s1 < e2 ?
-            match (self.start_bound(), other.end_bound()) {
-                (Bound::Included(s1), Bound::Included(e2)) => s1 <= e2,
-                (Bound::Included(s1), Bound::Excluded(e2)) => s1 < e2,
-                (Bound::Included(_), Bound::Unbounded) => true,
-                // if self.start_bound() is Unbounded, program cannot enter this branch
-                // KeyRange::start_bound() cannot be Excluded
-                _ => unreachable!("self.start_bound() should be Include"),
-            }
-        }
+    pub fn new_included(start: impl Into<Vec<u8>>, end: impl Into<Vec<u8>>) -> Self {
+        let key_vec = start.into();
+        let range_end_vec = end.into();
+        assert!(
+            key_vec.as_slice() != UNBOUNDED && range_end_vec != UNBOUNDED,
+            "Unbounded key is not allowed: {key_vec:?}"
+        );
+        assert!(
+            range_end_vec.as_slice() != ONE_KEY,
+            "One key range is not allowed: {key_vec:?}"
+        );
+        let range_end = Bound::Included(range_end_vec);
+        let key = Bound::Included(key_vec);
+        KeyRange { key, range_end }
     }
 
     /// Check if `KeyRange` contains a key
@@ -211,6 +192,48 @@ impl From<KeyRange> for PbKeyRange {
     }
 }
 
+impl ConflictCheck for KeyRange {
+    /// if `KeyRange` is overlapping (conflict) with another `KeyRange`, return true
+    #[inline]
+    fn is_conflict(&self, other: &Self) -> bool {
+        // s1 < s2 ?
+        if match (self.start_bound(), other.start_bound()) {
+            (Bound::Included(s1), Bound::Included(s2)) => {
+                if s1 == s2 {
+                    return true;
+                }
+                s1 < s2
+            }
+            (Bound::Included(_), Bound::Unbounded) => false,
+            (Bound::Unbounded, Bound::Included(_)) => true,
+            (Bound::Unbounded, Bound::Unbounded) => return true,
+            _ => unreachable!("KeyRange::start_bound() cannot be Excluded"),
+        } {
+            // s1 < s2
+            // s2 < e1 ?
+            match (other.start_bound(), self.end_bound()) {
+                (Bound::Included(s2), Bound::Included(e1)) => s2 <= e1,
+                (Bound::Included(s2), Bound::Excluded(e1)) => s2 < e1,
+                (Bound::Included(_), Bound::Unbounded) => true,
+                // if other.start_bound() is Unbounded, program cannot enter this branch
+                // KeyRange::start_bound() cannot be Excluded
+                _ => unreachable!("other.start_bound() should be Include"),
+            }
+        } else {
+            // s2 < s1
+            // s1 < e2 ?
+            match (self.start_bound(), other.end_bound()) {
+                (Bound::Included(s1), Bound::Included(e2)) => s1 <= e2,
+                (Bound::Included(s1), Bound::Excluded(e2)) => s1 < e2,
+                (Bound::Included(_), Bound::Unbounded) => true,
+                // if self.start_bound() is Unbounded, program cannot enter this branch
+                // KeyRange::start_bound() cannot be Excluded
+                _ => unreachable!("self.start_bound() should be Include"),
+            }
+        }
+    }
+}
+
 /// Command to run consensus protocol
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Command {
@@ -281,15 +304,8 @@ impl ConflictCheck for Command {
             .keys()
             .iter()
             .cartesian_product(other.keys().iter())
-            .any(|(k1, k2)| k1.is_conflicted(k2));
+            .any(|(k1, k2)| k1.is_conflict(k2));
         lease_conflict || key_conflict
-    }
-}
-
-impl ConflictCheck for KeyRange {
-    #[inline]
-    fn is_conflict(&self, other: &Self) -> bool {
-        self.is_conflicted(other)
     }
 }
 
@@ -528,6 +544,12 @@ mod test {
         let kr3 = KeyRange::new_one_key("z");
         assert!(kr1.is_conflict(&kr2));
         assert!(!kr1.is_conflict(&kr3));
+        assert!(KeyRange::new_included("a", "z").is_conflict(&KeyRange::new_included("a", "y")));
+        assert!(KeyRange::new_included("c", "z").is_conflict(&KeyRange::new_included("a", "d")));
+        assert!(KeyRange::new_included("c", "z").is_conflict(&KeyRange::new_included("a", "d")));
+        assert!(KeyRange::new_included("a", "g").is_conflict(&KeyRange::new_included("e", "z")));
+        assert!(!KeyRange::new_included("a", "c").is_conflict(&KeyRange::new_included("e", "z")));
+        assert!(!KeyRange::new_included("c", "f").is_conflict(&KeyRange::new_included("i", "n")));
     }
 
     #[test]
