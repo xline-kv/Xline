@@ -174,7 +174,7 @@
 
 pub mod command;
 pub mod execute_error;
-pub mod interval;
+pub mod keyrange;
 pub mod request_validation;
 
 mod etcdserverpb {
@@ -207,7 +207,7 @@ mod errorpb {
 
 use std::fmt::Display;
 
-use command::KeyRange;
+use keyrange::KeyRange;
 use utils::write_vec;
 
 pub use self::{
@@ -215,8 +215,7 @@ pub use self::{
     commandpb::{
         command::{AuthInfo, RequestWrapper},
         command_response::ResponseWrapper,
-        Command as PbCommand, CommandResponse as PbCommandResponse, KeyRange as PbKeyRange,
-        SyncResponse as PbSyncResponse,
+        Command as PbCommand, CommandResponse as PbCommandResponse, SyncResponse as PbSyncResponse,
     },
     errorpb::{
         execute_error::Error as PbExecuteError, ExecuteError as PbExecuteErrorOuter,
@@ -341,7 +340,7 @@ pub trait CommandAttr {
 
 impl CommandAttr for RangeRequest {
     fn keys(&self) -> Vec<KeyRange> {
-        vec![KeyRange::new(
+        vec![KeyRange::new_etcd(
             self.key.as_slice(),
             self.range_end.as_slice(),
         )]
@@ -364,7 +363,7 @@ impl CommandAttr for PutRequest {
 
 impl CommandAttr for DeleteRangeRequest {
     fn keys(&self) -> Vec<KeyRange> {
-        vec![KeyRange::new(
+        vec![KeyRange::new_etcd(
             self.key.as_slice(),
             self.range_end.as_slice(),
         )]
@@ -380,7 +379,7 @@ impl CommandAttr for TxnRequest {
         let mut keys: Vec<_> = self
             .compare
             .iter()
-            .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
+            .map(|cmp| KeyRange::new_etcd(cmp.key.as_slice(), cmp.range_end.as_slice()))
             .collect();
 
         for op in self
@@ -392,14 +391,18 @@ impl CommandAttr for TxnRequest {
         {
             match *op {
                 Request::RequestRange(ref req) => {
-                    keys.push(KeyRange::new(req.key.as_slice(), req.range_end.as_slice()));
+                    keys.push(KeyRange::new_etcd(
+                        req.key.as_slice(),
+                        req.range_end.as_slice(),
+                    ));
                 }
                 Request::RequestPut(ref req) => {
                     keys.push(KeyRange::new_one_key(req.key.as_slice()))
                 }
-                Request::RequestDeleteRange(ref req) => {
-                    keys.push(KeyRange::new(req.key.as_slice(), req.range_end.as_slice()))
-                }
+                Request::RequestDeleteRange(ref req) => keys.push(KeyRange::new_etcd(
+                    req.key.as_slice(),
+                    req.range_end.as_slice(),
+                )),
                 Request::RequestTxn(ref req) => keys.append(&mut req.keys()),
             }
         }

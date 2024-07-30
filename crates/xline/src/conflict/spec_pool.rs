@@ -8,7 +8,7 @@ use std::{collections::HashMap, sync::Arc};
 use curp::rpc::PoolEntry;
 use curp_external_api::conflict::{ConflictPoolOp, EntryId, SpeculativePoolOp};
 use utils::interval_map::{Interval, IntervalMap};
-use xlineapi::{command::Command, interval::BytesAffine};
+use xlineapi::{command::Command, keyrange::BytesAffine};
 
 use crate::storage::lease_store::LeaseCollection;
 

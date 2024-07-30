@@ -15,8 +15,9 @@ use prost::Message;
 use tracing::{debug, warn};
 use utils::table_names::{KV_TABLE, META_TABLE};
 use xlineapi::{
-    command::{CommandResponse, KeyRange, SyncResponse},
+    command::{CommandResponse, SyncResponse},
     execute_error::ExecuteError,
+    keyrange::KeyRange,
 };
 
 use super::{
@@ -108,14 +109,13 @@ impl KvStoreInner {
     fn get_range<T>(
         txn_db: &T,
         index: &dyn IndexOperate,
-        key: &[u8],
-        range_end: &[u8],
+        keyrange: KeyRange,
         revision: i64,
     ) -> Result<Vec<KeyValue>, ExecuteError>
     where
         T: XlineStorageOps,
     {
-        let revisions = index.get(key, range_end, revision);
+        let revisions = index.get(keyrange, revision);
         Self::get_values(txn_db, &revisions)
     }
 
@@ -124,8 +124,7 @@ impl KvStoreInner {
     fn get_range_with_opts<T>(
         txn_db: &T,
         index: &dyn IndexOperate,
-        key: &[u8],
-        range_end: &[u8],
+        keyrange: KeyRange,
         revision: i64,
         limit: usize,
         count_only: bool,
@@ -133,7 +132,7 @@ impl KvStoreInner {
     where
         T: XlineStorageOps,
     {
-        let mut revisions = index.get(key, range_end, revision);
+        let mut revisions = index.get(keyrange, revision);
         let total = revisions.len();
         if count_only || total == 0 {
             return Ok((vec![], total));
@@ -150,8 +149,7 @@ impl KvStoreInner {
         Self::get_range(
             self.db.as_ref(),
             self.index.as_ref(),
-            &kv.key,
-            &[],
+            KeyRange::OneKey(kv.key.clone()),
             kv.mod_revision.overflow_sub(1),
         )
         .ok()?
@@ -161,12 +159,10 @@ impl KvStoreInner {
     /// Get `KeyValue` start from a revision and convert to `Event`
     pub(crate) fn get_event_from_revision(
         &self,
-        key_range: KeyRange,
+        keyrange: KeyRange,
         revision: i64,
     ) -> Result<Vec<Event>, ExecuteError> {
-        let revisions =
-            self.index
-                .get_from_rev(key_range.range_start(), key_range.range_end(), revision);
+        let revisions = self.index.get_from_rev(keyrange, revision);
         let events = Self::get_values(self.db.as_ref(), &revisions)?
             .into_iter()
             .map(|kv| {
@@ -474,8 +470,13 @@ impl KvStore {
     where
         T: XlineStorageOps,
     {
-        let kvs =
-            KvStoreInner::get_range(txn_db, index, &cmp.key, &cmp.range_end, 0).unwrap_or_default();
+        let kvs = KvStoreInner::get_range(
+            txn_db,
+            index,
+            KeyRange::new_etcd(cmp.key.clone(), cmp.range_end.clone()),
+            0,
+        )
+        .unwrap_or_default();
         if kvs.is_empty() {
             if let Some(TargetUnion::Value(_)) = cmp.target_union {
                 false
@@ -627,8 +628,7 @@ impl KvStore {
         let (mut kvs, total) = KvStoreInner::get_range_with_opts(
             tnx_db,
             index,
-            &req.key,
-            &req.range_end,
+            KeyRange::new_etcd(req.key.clone(), req.range_end.clone()),
             req.revision,
             storage_fetch_limit.numeric_cast(),
             req.count_only,
@@ -764,7 +764,12 @@ impl KvStore {
     where
         T: XlineStorageOps,
     {
-        let prev_kvs = KvStoreInner::get_range(txn_db, index, &req.key, &req.range_end, 0)?;
+        let prev_kvs = KvStoreInner::get_range(
+            txn_db,
+            index,
+            KeyRange::new_etcd(req.key.clone(), req.range_end.clone()),
+            0,
+        )?;
         let mut response = DeleteRangeResponse {
             header: Some(self.header_gen.gen_header()),
             ..DeleteRangeResponse::default()
@@ -805,8 +810,7 @@ impl KvStore {
         let _keys = Self::delete_keys(
             txn_db,
             index,
-            &req.key,
-            &req.range_end,
+            KeyRange::new_etcd(req.key.clone(), req.range_end.clone()),
             revision,
             sub_revision,
         )?;
@@ -1039,8 +1043,7 @@ impl KvStore {
         let keys = Self::delete_keys(
             txn_db,
             index,
-            &req.key,
-            &req.range_end,
+            KeyRange::new_etcd(req.key.clone(), req.range_end.clone()),
             revision,
             sub_revision,
         )?;
@@ -1202,15 +1205,14 @@ impl KvStore {
     pub(crate) fn delete_keys<T>(
         txn_db: &T,
         index: &dyn IndexOperate,
-        key: &[u8],
-        range_end: &[u8],
+        keyrange: KeyRange,
         revision: i64,
         sub_revision: &mut i64,
     ) -> Result<Vec<Vec<u8>>, ExecuteError>
     where
         T: XlineStorageOps,
     {
-        let (revisions, keys) = index.delete(key, range_end, revision, *sub_revision);
+        let (revisions, keys) = index.delete(keyrange, revision, *sub_revision);
         let (del_ops, key_revisions) = Self::mark_deletions(&revisions, &keys);
 
         index.insert(key_revisions);
@@ -1518,7 +1520,14 @@ mod test {
         let ops = vec![WriteOp::PutScheduledCompactRevision(8)];
         db.write_ops(ops)?;
         let (store, _rev_gen) = init_store(Arc::clone(&db))?;
-        assert_eq!(store.inner.index.get_from_rev(b"z", b"", 5).len(), 3);
+        assert_eq!(
+            store
+                .inner
+                .index
+                .get_from_rev(KeyRange::new_one_key("z"), 5)
+                .len(),
+            3
+        );
 
         let new_store = init_empty_store(db);
 
@@ -1543,7 +1552,14 @@ mod test {
         assert_eq!(res.kvs[0].key, b"a");
         assert_eq!(new_store.compacted_revision(), 8);
         tokio::time::sleep(Duration::from_millis(500)).await;
-        assert_eq!(new_store.inner.index.get_from_rev(b"z", b"", 5).len(), 2);
+        assert_eq!(
+            new_store
+                .inner
+                .index
+                .get_from_rev(KeyRange::new_one_key("z"), 5)
+                .len(),
+            2
+        );
 
         Ok(())
     }
@@ -1624,7 +1640,10 @@ mod test {
             }
         });
         tokio::time::sleep(std::time::Duration::from_micros(50)).await;
-        let revs = store.inner.index.get_from_rev(b"foo", b"", 1);
+        let revs = store
+            .inner
+            .index
+            .get_from_rev(KeyRange::new_one_key("foo"), 1);
         let kvs = KvStoreInner::get_values(&db.transaction(), &revs).unwrap();
         assert_eq!(
             kvs.len(),
@@ -1673,14 +1692,14 @@ mod test {
         let txn_db = store.inner.db.transaction();
         let index = store.inner.index.state();
         assert_eq!(
-            KvStoreInner::get_range(&txn_db, &index, b"a", b"", 2)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a"), 2)
                 .unwrap()
                 .len(),
             1,
             "(a, 1) should not be removed"
         );
         assert_eq!(
-            KvStoreInner::get_range(&txn_db, &index, b"b", b"", 3)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("b"), 3)
                 .unwrap()
                 .len(),
             1,
@@ -1690,20 +1709,20 @@ mod test {
         let target_revisions = index_compact(&store, 4);
         store.compact(target_revisions.as_ref())?;
         assert!(
-            KvStoreInner::get_range(&txn_db, &index, b"a", b"", 2)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a"), 2)
                 .unwrap()
                 .is_empty(),
             "(a, 1) should be removed"
         );
         assert_eq!(
-            KvStoreInner::get_range(&txn_db, &index, b"b", b"", 3)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("b"), 3)
                 .unwrap()
                 .len(),
             1,
             "(b, 2) should not be removed"
         );
         assert_eq!(
-            KvStoreInner::get_range(&txn_db, &index, b"a", b"", 4)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a"), 4)
                 .unwrap()
                 .len(),
             1,
@@ -1713,26 +1732,26 @@ mod test {
         let target_revisions = index_compact(&store, 5);
         store.compact(target_revisions.as_ref())?;
         assert!(
-            KvStoreInner::get_range(&txn_db, &index, b"a", b"", 2)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a"), 2)
                 .unwrap()
                 .is_empty(),
             "(a, 1) should be removed"
         );
         assert_eq!(
-            KvStoreInner::get_range(&txn_db, &index, b"b", b"", 3)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("b"), 3)
                 .unwrap()
                 .len(),
             1,
             "(b, 2) should not be removed"
         );
         assert!(
-            KvStoreInner::get_range(&txn_db, &index, b"a", b"", 4)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a"), 4)
                 .unwrap()
                 .is_empty(),
             "(a, 3) should be removed"
         );
         assert!(
-            KvStoreInner::get_range(&txn_db, &index, b"a", b"", 5)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a"), 5)
                 .unwrap()
                 .is_empty(),
             "(a, 4) should be removed"
