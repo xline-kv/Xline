@@ -6,7 +6,7 @@ use jsonwebtoken::{
 use merged_range::MergedRange;
 use serde::{Deserialize, Serialize};
 use utils::timestamp;
-use xlineapi::{command::KeyRange, AuthInfo};
+use xlineapi::{keyrange::KeyRange, AuthInfo};
 
 use crate::rpc::{Permission, Type};
 
@@ -123,18 +123,18 @@ impl UserPermissions {
 
     /// Insert a permission to `UserPermissions`
     pub(super) fn insert(&mut self, perm: Permission) {
-        let range = KeyRange::new(perm.key, perm.range_end).unpack();
+        let range = KeyRange::new_etcd(perm.key, perm.range_end);
         #[allow(clippy::unwrap_used)] // safe unwrap
         match Type::try_from(perm.perm_type).unwrap() {
             Type::Readwrite => {
-                self.read.insert(range.clone());
-                self.write.insert(range);
+                self.read.insert(range.clone().into_bounds());
+                self.write.insert(range.into_bounds());
             }
             Type::Write => {
-                self.write.insert(range);
+                self.write.insert(range.into_bounds());
             }
             Type::Read => {
-                self.read.insert(range);
+                self.read.insert(range.into_bounds());
             }
         }
     }

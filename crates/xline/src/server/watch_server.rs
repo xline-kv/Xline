@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tracing::{debug, warn};
 use utils::task_manager::{tasks::TaskName, Listener, TaskManager};
-use xlineapi::command::KeyRange;
+use xlineapi::keyrange::KeyRange;
 
 use crate::{
     header_gen::HeaderGenerator,
@@ -207,7 +207,7 @@ where
             return;
         };
 
-        let key_range = KeyRange::new(req.key, req.range_end);
+        let key_range = KeyRange::new_etcd(req.key, req.range_end);
         self.kv_watcher.watch(
             watch_id,
             key_range,

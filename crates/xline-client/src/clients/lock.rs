@@ -6,7 +6,8 @@ use clippy_utilities::OverflowArithmetic;
 use tokio::{task::JoinHandle, time::sleep};
 use tonic::transport::Channel;
 use xlineapi::{
-    command::{Command, CommandResponse, KeyRange, SyncResponse},
+    command::{Command, CommandResponse, SyncResponse},
+    keyrange::KeyRange,
     Compare, CompareResult, CompareTarget, DeleteRangeRequest, EventType, PutRequest, RangeRequest,
     RangeResponse, Request, RequestOp, RequestWrapper, Response, ResponseHeader, SortOrder,
     SortTarget, TargetUnion, TxnRequest, TxnResponse,

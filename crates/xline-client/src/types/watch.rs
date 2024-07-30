@@ -272,7 +272,7 @@ impl DerefMut for WatchStreaming {
 
 #[cfg(test)]
 mod tests {
-    use xlineapi::command::KeyRange;
+    use xlineapi::keyrange::KeyRange;
 
     use super::*;
 
