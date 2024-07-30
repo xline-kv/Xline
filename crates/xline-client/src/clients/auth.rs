@@ -15,7 +15,7 @@ use crate::{
     error::{Result, XlineClientError},
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, AuthUserAddRequest,
+        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionOption, AuthUserAddRequest,
         AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGetRequest,
         AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
     },
@@ -703,8 +703,13 @@ impl AuthClient {
     ///
     ///     // grant the role
     ///
+    ///     client.role_revoke_permission("role", "key", None).await?;
     ///     client
-    ///         .role_revoke_permission(AuthRoleRevokePermissionRequest::new("role", "key"))
+    ///         .role_revoke_permission(
+    ///             "role2",
+    ///             "hi",
+    ///             AuthRoleRevokePermissionOption::WithRangeEnd("hjj".into()),
+    ///         )
     ///         .await?;
     ///
     ///     Ok(())
@@ -713,9 +718,12 @@ impl AuthClient {
     #[inline]
     pub async fn role_revoke_permission(
         &self,
-        request: AuthRoleRevokePermissionRequest,
+        name: impl Into<String>,
+        key: impl Into<Vec<u8>>,
+        option: impl Into<AuthRoleRevokePermissionOption>,
     ) -> Result<AuthRoleRevokePermissionResponse> {
-        self.handle_req(request.inner, false).await
+        self.handle_req(option.into().into_request(name.into(), key.into()), false)
+            .await
     }
 
     /// Send request using fast path
