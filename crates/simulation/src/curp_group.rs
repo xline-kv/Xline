@@ -253,7 +253,7 @@ impl CurpGroup {
                         leader = leader_id;
                     }
                 }
-                leader.map(|l| (l, max_term))
+                leader.map(|l| (l.into(), max_term))
             })
             .await
             .unwrap()
