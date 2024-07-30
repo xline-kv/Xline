@@ -3,6 +3,9 @@
 // KV_UPDATES      TONIC_SERVER       ELECTION
 //       \        /      |      \       /
 //      WATCH_TASK  CONF_CHANGE  LOG_PERSIST
+//
+// Other tasks like `CompactBg`, `GcSpecPool`, `GcCmdBoard`, `RevokeExpiredLeases`, `SyncVictims`,
+// and `AutoCompactor` do not have dependent tasks.
 
 // NOTE: In integration tests, we use bottom tasks, like `WatchTask`, `ConfChange`, and `LogPersist`,
 // which are not dependent on other tasks to detect the curp group is closed or not. If you want

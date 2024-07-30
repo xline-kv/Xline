@@ -10,7 +10,7 @@ use std::{
 use clippy_utilities::OverflowArithmetic;
 use dashmap::DashMap;
 use tokio::{sync::Notify, task::JoinHandle};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use self::tasks::{TaskName, ALL_EDGES};
 
@@ -242,7 +242,7 @@ impl TaskManager {
         for t in self.tasks.iter() {
             for h in &t.handle {
                 if !h.is_finished() {
-                    println!("task: {:?} not finished", t.name);
+                    warn!("task: {:?} not finished", t.name);
                     return false;
                 }
             }
