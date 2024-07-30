@@ -289,6 +289,10 @@ impl ClusterInfo {
     }
 
     /// Calculate the member id
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the calculated id is zero
     #[inline]
     #[must_use]
     pub fn calculate_member_id(
@@ -306,7 +310,10 @@ impl ClusterInfo {
         if let Some(ts) = timestamp {
             hasher.write_u64(ts);
         }
-        hasher.finish()
+        let id = hasher.finish();
+        // We use zero as an empty server id
+        assert_ne!(id, 0, "Server id should not be zero");
+        id
     }
 
     /// Calculate the cluster id

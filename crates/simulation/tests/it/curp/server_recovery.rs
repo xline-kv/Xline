@@ -17,7 +17,7 @@ async fn leader_crash_and_recovery() {
     let mut group = CurpGroup::new(5).await;
     let client = group.new_client().await;
 
-    let leader = group.try_get_leader().await.unwrap().0;
+    let leader = group.try_get_leader().await.0;
     group.crash(leader).await;
 
     // wait for election, or we might get Duplicated Error
@@ -71,7 +71,7 @@ async fn follower_crash_and_recovery() {
     let mut group = CurpGroup::new(5).await;
     let client = group.new_client().await;
 
-    let leader = group.try_get_leader().await.unwrap().0;
+    let leader = group.try_get_leader().await.0;
     let follower = *group.nodes.keys().find(|&id| id != &leader).unwrap();
     group.crash(follower).await;
 
@@ -118,7 +118,7 @@ async fn leader_and_follower_both_crash_and_recovery() {
     let mut group = CurpGroup::new(5).await;
     let client = group.new_client().await;
 
-    let leader = group.try_get_leader().await.unwrap().0;
+    let leader = group.try_get_leader().await.0;
     let follower = *group.nodes.keys().find(|&id| id != &leader).unwrap();
     group.crash(follower).await;
 

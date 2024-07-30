@@ -110,7 +110,7 @@ impl FetchClusterResponse {
         cluster_version: u64,
     ) -> Self {
         Self {
-            leader_id,
+            leader_id: leader_id.unwrap_or(0),
             term,
             cluster_id,
             members,
@@ -674,7 +674,10 @@ impl CurpError {
 
     /// `Redirect` error
     pub(crate) fn redirect(leader_id: Option<ServerId>, term: u64) -> Self {
-        Self::Redirect(Redirect { leader_id, term })
+        Self::Redirect(Redirect {
+            leader_id: leader_id.unwrap_or(0),
+            term,
+        })
     }
 
     /// `Internal` error

@@ -348,7 +348,7 @@ impl<C: Command> ClientApi for Unary<C> {
                 }
             };
             // Ignore the response of a node that doesn't know who the leader is.
-            if inner.leader_id.is_some() {
+            if inner.leader_id != 0 {
                 #[allow(clippy::arithmetic_side_effects)]
                 match max_term.cmp(&inner.term) {
                     Ordering::Less => {
@@ -546,7 +546,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
 #[async_trait]
 impl<C: Command> LeaderStateUpdate for Unary<C> {
     /// Update leader
-    async fn update_leader(&self, leader_id: Option<ServerId>, term: u64) -> bool {
+    async fn update_leader(&self, leader_id: ServerId, term: u64) -> bool {
         self.state.check_and_update_leader(leader_id, term).await
     }
 }

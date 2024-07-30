@@ -189,7 +189,7 @@ impl State {
     fn check_and_update_leader_inner(
         &self,
         state: &mut StateMut,
-        leader_id: Option<ServerId>,
+        leader_id: ServerId,
         term: u64,
     ) -> bool {
         match state.term.cmp(&term) {
@@ -197,23 +197,23 @@ impl State {
                 // reset term only when the resp has leader id to prevent:
                 // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
                 // But if the client learns about the new term and updates its term to it, it will never get the true leader.
-                if let Some(new_leader_id) = leader_id {
-                    info!("client term updates to {term}, client leader id updates to {new_leader_id}");
+                if leader_id != 0 {
+                    info!("client term updates to {term}, client leader id updates to {leader_id}");
                     state.term = term;
-                    state.leader = Some(new_leader_id);
+                    state.leader = Some(leader_id);
                     let _ignore = self.immutable.leader_notifier.notify(usize::MAX);
                 }
             }
             Ordering::Equal => {
-                if let Some(new_leader_id) = leader_id {
+                if leader_id != 0 {
                     if state.leader.is_none() {
-                        info!("client leader id updates to {new_leader_id}");
-                        state.leader = Some(new_leader_id);
+                        info!("client leader id updates to {leader_id}");
+                        state.leader = Some(leader_id);
                         let _ignore = self.immutable.leader_notifier.notify(usize::MAX);
                     }
                     assert_eq!(
                         state.leader,
-                        Some(new_leader_id),
+                        Some(leader_id),
                         "there should never be two leader in one term"
                     );
                 }
@@ -227,11 +227,7 @@ impl State {
     }
 
     /// Update leader
-    pub(super) async fn check_and_update_leader(
-        &self,
-        leader_id: Option<ServerId>,
-        term: u64,
-    ) -> bool {
+    pub(super) async fn check_and_update_leader(&self, leader_id: ServerId, term: u64) -> bool {
         let mut state = self.mutable.write().await;
         self.check_and_update_leader_inner(&mut state, leader_id, term)
     }

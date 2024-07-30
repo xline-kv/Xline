@@ -49,11 +49,7 @@ async fn election() {
 
     // check after some time, the term and the leader is still not changed
     sleep_secs(15).await;
-    let leader2 = group
-        .try_get_leader()
-        .await
-        .expect("There should be one leader")
-        .0;
+    let leader2 = group.try_get_leader().await.0;
     let term2 = group.get_term_checked().await;
     check_role_state(&group, 5, leader0);
 
@@ -102,7 +98,7 @@ async fn reelect() {
 
     // after some time, no leader should be elected
     sleep_secs(15).await;
-    assert!(group.try_get_leader().await.is_none());
+    assert_eq!(group.try_get_leader().await.0, 0);
 
     // recover network partition
     println!("enable all");

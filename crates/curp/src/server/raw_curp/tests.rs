@@ -845,7 +845,7 @@ fn follower_handle_shutdown_will_reject() {
     assert!(matches!(
         res,
         Err(CurpError::Redirect(Redirect {
-            leader_id: None,
+            leader_id: 0,
             term: 1,
         }))
     ));
@@ -1114,7 +1114,7 @@ fn follower_handle_propose_conf_change() {
     assert!(matches!(
         result,
         Err(CurpError::Redirect(Redirect {
-            leader_id: None,
+            leader_id: 0,
             term: 2,
         }))
     ));

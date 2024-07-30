@@ -106,13 +106,15 @@ pub trait ClientApi {
     async fn fetch_leader_id(&self, linearizable: bool) -> Result<ServerId, Self::Error> {
         if linearizable {
             let resp = self.fetch_cluster(true).await?;
-            return Ok(resp.leader_id.unwrap_or_else(|| {
-                unreachable!("linearizable fetch cluster should return a leader id")
-            }));
+            assert_ne!(
+                resp.leader_id, 0,
+                "linearizable fetch cluster should return a leader id"
+            );
+            return Ok(resp.leader_id);
         }
         let resp = self.fetch_cluster(false).await?;
-        if let Some(id) = resp.leader_id {
-            return Ok(id);
+        if resp.leader_id != 0 {
+            return Ok(resp.leader_id);
         }
         debug!("no leader id in FetchClusterResponse, try to send linearizable request");
         // fallback to linearizable fetch
@@ -160,7 +162,7 @@ trait RepeatableClientApi: ClientApi {
 #[async_trait]
 trait LeaderStateUpdate {
     /// update
-    async fn update_leader(&self, leader_id: Option<ServerId>, term: u64) -> bool;
+    async fn update_leader(&self, leader_id: ServerId, term: u64) -> bool;
 }
 
 /// Client builder to build a client
@@ -285,8 +287,8 @@ impl ClientBuilder {
             match r {
                 Ok(r) => {
                     self.cluster_version = Some(r.cluster_version);
-                    if let Some(id) = r.leader_id {
-                        self.leader_state = Some((id, r.term));
+                    if r.leader_id != 0 {
+                        self.leader_state = Some((r.leader_id, r.term));
                     }
                     self.all_members = if self.is_raw_curp {
                         Some(r.into_peer_urls())

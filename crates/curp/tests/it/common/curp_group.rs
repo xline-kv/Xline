@@ -406,8 +406,8 @@ impl CurpGroup {
         }
     }
 
-    pub async fn try_get_leader(&self) -> Option<(ServerId, u64)> {
-        let mut leader = None;
+    pub async fn try_get_leader(&self) -> (ServerId, u64) {
+        let mut leader = 0;
         let mut max_term = 0;
         for addr in self.all_addrs() {
             let channel_fut = async move {
@@ -430,17 +430,18 @@ impl CurpGroup {
             if term > max_term {
                 max_term = term;
                 leader = leader_id;
-            } else if term == max_term && leader.is_none() {
+            } else if term == max_term && leader == 0 {
                 leader = leader_id;
             }
         }
-        leader.map(|l| (l, max_term))
+        (leader, max_term)
     }
 
     pub async fn get_leader(&self) -> (ServerId, u64) {
         for _ in 0..5 {
-            if let Some(leader) = self.try_get_leader().await {
-                return leader;
+            let (leader, term) = self.try_get_leader().await;
+            if leader != 0 {
+                return (leader, term);
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }

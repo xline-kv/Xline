@@ -220,9 +220,9 @@ impl CurpGroup {
         handle.restart(id.to_string());
     }
 
-    pub async fn try_get_leader(&self) -> Option<(ServerId, u64)> {
+    pub async fn try_get_leader(&self) -> (ServerId, u64) {
         debug!("trying to get leader");
-        let mut leader = None;
+        let mut leader = 0;
         let mut max_term = 0;
 
         let all = self.all_members.clone();
@@ -249,11 +249,11 @@ impl CurpGroup {
                     if term > max_term {
                         max_term = term;
                         leader = leader_id;
-                    } else if term == max_term && leader.is_none() {
+                    } else if term == max_term && leader == 0 {
                         leader = leader_id;
                     }
                 }
-                leader.map(|l| (l, max_term))
+                (leader, max_term)
             })
             .await
             .unwrap()
@@ -262,8 +262,9 @@ impl CurpGroup {
     pub async fn get_leader(&self) -> (ServerId, u64) {
         const RETRY_INTERVAL: u64 = 100;
         loop {
-            if let Some(leader) = self.try_get_leader().await {
-                return leader;
+            let (leader, term) = self.try_get_leader().await;
+            if leader != 0 {
+                return (leader, term);
             }
             debug!("failed to get leader");
             madsim::time::sleep(Duration::from_millis(RETRY_INTERVAL)).await;
