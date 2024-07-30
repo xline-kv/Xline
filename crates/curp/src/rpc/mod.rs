@@ -34,6 +34,7 @@ pub use self::proto::{
         Member,
         MoveLeaderRequest,
         MoveLeaderResponse,
+        OptionalU64,
         ProposeConfChangeRequest,
         ProposeConfChangeResponse,
         ProposeId as PbProposeId,
@@ -100,6 +101,27 @@ impl From<ProposeId> for PbProposeId {
     }
 }
 
+impl From<u64> for OptionalU64 {
+    #[inline]
+    fn from(value: u64) -> Self {
+        Self { value }
+    }
+}
+
+impl From<OptionalU64> for u64 {
+    #[inline]
+    fn from(value: OptionalU64) -> Self {
+        value.value
+    }
+}
+
+impl From<&OptionalU64> for u64 {
+    #[inline]
+    fn from(value: &OptionalU64) -> Self {
+        value.value
+    }
+}
+
 impl FetchClusterResponse {
     /// Create a new `FetchClusterResponse`
     pub(crate) fn new(
@@ -110,7 +132,7 @@ impl FetchClusterResponse {
         cluster_version: u64,
     ) -> Self {
         Self {
-            leader_id,
+            leader_id: leader_id.map(Into::into),
             term,
             cluster_id,
             members,
@@ -674,7 +696,10 @@ impl CurpError {
 
     /// `Redirect` error
     pub(crate) fn redirect(leader_id: Option<ServerId>, term: u64) -> Self {
-        Self::Redirect(Redirect { leader_id, term })
+        Self::Redirect(Redirect {
+            leader_id: leader_id.map(Into::into),
+            term,
+        })
     }
 
     /// `Internal` error

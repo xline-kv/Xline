@@ -242,7 +242,11 @@ impl State {
         res: &FetchClusterResponse,
     ) -> Result<(), tonic::transport::Error> {
         let mut state = self.mutable.write().await;
-        if !self.check_and_update_leader_inner(&mut state, res.leader_id, res.term) {
+        if !self.check_and_update_leader_inner(
+            &mut state,
+            res.leader_id.as_ref().map(Into::into),
+            res.term,
+        ) {
             return Ok(());
         }
         if state.cluster_version == res.cluster_version {

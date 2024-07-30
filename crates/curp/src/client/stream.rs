@@ -76,7 +76,10 @@ impl Streaming {
                     #[allow(clippy::wildcard_enum_match_arm)]
                     match err {
                         CurpError::Redirect(Redirect { leader_id, term }) => {
-                            let _ig = self.state.check_and_update_leader(leader_id, term).await;
+                            let _ig = self
+                                .state
+                                .check_and_update_leader(leader_id.map(Into::into), term)
+                                .await;
                         }
                         CurpError::WrongClusterVersion(()) => {
                             warn!(
