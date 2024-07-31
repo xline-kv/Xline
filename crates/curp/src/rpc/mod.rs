@@ -173,7 +173,6 @@ impl ProposeRequest {
     #[must_use]
     pub fn propose_id(&self) -> ProposeId {
         self.propose_id
-            .clone()
             .unwrap_or_else(|| unreachable!("propose id must be set in ProposeRequest"))
             .into()
     }
@@ -236,7 +235,6 @@ impl WaitSyncedRequest {
     /// Get the `propose_id` reference
     pub(crate) fn propose_id(&self) -> ProposeId {
         self.propose_id
-            .clone()
             .unwrap_or_else(|| {
                 unreachable!("propose id should be set in propose wait synced request")
             })
@@ -577,7 +575,6 @@ impl ProposeConfChangeRequest {
     /// Get id of the request
     pub(crate) fn propose_id(&self) -> ProposeId {
         self.propose_id
-            .clone()
             .unwrap_or_else(|| {
                 unreachable!("propose id should be set in propose conf change request")
             })
@@ -597,7 +594,6 @@ impl ShutdownRequest {
     /// Get id of the request
     pub(crate) fn propose_id(&self) -> ProposeId {
         self.propose_id
-            .clone()
             .unwrap_or_else(|| {
                 unreachable!("propose id should be set in propose conf change request")
             })
@@ -634,7 +630,6 @@ impl PublishRequest {
     /// Get id of the request
     pub(crate) fn propose_id(&self) -> ProposeId {
         self.propose_id
-            .clone()
             .unwrap_or_else(|| {
                 unreachable!("propose id should be set in propose conf change request")
             })

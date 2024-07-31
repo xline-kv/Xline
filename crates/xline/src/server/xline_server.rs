@@ -692,7 +692,7 @@ impl XlineServer {
 #[cfg(not(madsim))]
 fn bind_addrs(
     addrs: &[String],
-) -> Result<impl Stream<Item = Result<hyper::server::conn::AddrStream, std::io::Error>>> {
+) -> Result<impl Stream<Item = Result<tokio::net::TcpStream, std::io::Error>>> {
     use std::net::ToSocketAddrs;
     if addrs.is_empty() {
         return Err(anyhow!("No address to bind"));
