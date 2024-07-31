@@ -1,10 +1,13 @@
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::btree_map::Entry;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::hash::Hash;
 
 use curp_external_api::LogIndex;
 use serde::Deserialize;
 use serde::Serialize;
+
+use crate::quorum::Joint;
 
 /// Membership state stored in current node
 #[derive(Debug, Default)]
@@ -62,13 +65,12 @@ impl MembershipState {
 }
 
 /// Membership config
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[cfg_attr(test, derive(PartialEq))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub(crate) struct Membership {
     /// Member of the cluster
-    members: Vec<HashSet<u64>>,
+    pub(crate) members: Vec<BTreeSet<u64>>,
     /// All Nodes, including members and learners
-    nodes: HashMap<u64, String>,
+    pub(crate) nodes: BTreeMap<u64, String>,
 }
 
 impl Membership {
@@ -101,6 +103,12 @@ impl Membership {
                 Some(Self { members, nodes })
             }
         }
+    }
+
+    #[allow(unused)]
+    /// Converts to `Joint`
+    pub(crate) fn as_joint(&self) -> Joint<BTreeSet<u64>, &[BTreeSet<u64>]> {
+        Joint::new(self.members.as_slice())
     }
 }
 
