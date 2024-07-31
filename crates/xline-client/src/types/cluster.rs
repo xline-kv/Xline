@@ -31,7 +31,7 @@ impl From<MemberAddRequest> for xlineapi::MemberAddRequest {
 }
 
 /// Request for `MemberList`
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct MemberListRequest {
     /// The inner request
     inner: xlineapi::MemberListRequest,
@@ -56,7 +56,7 @@ impl From<MemberListRequest> for xlineapi::MemberListRequest {
 }
 
 /// Request for `MemberPromote`
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct MemberPromoteRequest {
     /// The inner request
     inner: xlineapi::MemberPromoteRequest,
@@ -81,7 +81,7 @@ impl From<MemberPromoteRequest> for xlineapi::MemberPromoteRequest {
 }
 
 /// Request for `MemberRemove`
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct MemberRemoveRequest {
     /// The inner request
     inner: xlineapi::MemberRemoveRequest,
