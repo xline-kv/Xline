@@ -209,6 +209,9 @@ mod response;
 /// Membership state
 mod member;
 
+/// Quorum definitions
+mod quorum;
+
 /// Calculate the super quorum
 #[inline]
 #[must_use]

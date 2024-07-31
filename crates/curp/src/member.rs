@@ -5,6 +5,8 @@ use std::collections::HashSet;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::quorum::Joint;
+
 /// Membership state stored in current node
 #[derive(Debug, Default)]
 pub(crate) struct MembershipState {
@@ -77,6 +79,11 @@ impl Membership {
                 Some(Self { members, nodes })
             }
         }
+    }
+
+    /// Converts to `Joint`
+    pub(crate) fn as_joint(&self) -> Joint<HashSet<u64>, &[HashSet<u64>]> {
+        Joint::new(self.members.as_slice())
     }
 }
 
