@@ -1,10 +1,10 @@
 //! The following tests are originally from `etcd-client`
+
 use test_macros::abort_on_panic;
 use xline_client::{
     error::Result,
     types::kv::{
-        CompactionRequest, Compare, CompareResult, DeleteRangeRequest, PutOptions, RangeRequest,
-        TxnOp, TxnRequest,
+        Compare, CompareResult, DeleteRangeOptions, PutOptions, RangeOptions, TxnOp, TxnRequest,
     },
 };
 
@@ -58,7 +58,7 @@ async fn range_should_fetches_previously_put_keys() -> Result<()> {
 
     // get key
     {
-        let resp = client.range(RangeRequest::new("get11")).await?;
+        let resp = client.range("get11", None).await?;
         assert_eq!(resp.count, 1);
         assert!(!resp.more);
         assert_eq!(resp.kvs.len(), 1);
@@ -69,7 +69,10 @@ async fn range_should_fetches_previously_put_keys() -> Result<()> {
     // get from key
     {
         let resp = client
-            .range(RangeRequest::new("get11").with_from_key().with_limit(2))
+            .range(
+                "get11",
+                Some(RangeOptions::default().with_from_key().with_limit(2)),
+            )
             .await?;
         assert!(resp.more);
         assert_eq!(resp.kvs.len(), 2);
@@ -82,7 +85,7 @@ async fn range_should_fetches_previously_put_keys() -> Result<()> {
     // get prefix keys
     {
         let resp = client
-            .range(RangeRequest::new("get1").with_prefix())
+            .range("get1", Some(RangeOptions::default().with_prefix()))
             .await?;
         assert_eq!(resp.count, 2);
         assert!(!resp.more);
@@ -112,13 +115,16 @@ async fn delete_should_remove_previously_put_kvs() -> Result<()> {
     // delete key
     {
         let resp = client
-            .delete(DeleteRangeRequest::new("del11").with_prev_kv(true))
+            .delete(
+                "del11",
+                Some(DeleteRangeOptions::default().with_prev_kv(true)),
+            )
             .await?;
         assert_eq!(resp.deleted, 1);
         assert_eq!(&resp.prev_kvs[0].key, "del11".as_bytes());
         assert_eq!(&resp.prev_kvs[0].value, "11".as_bytes());
         let resp = client
-            .range(RangeRequest::new("del11").with_count_only(true))
+            .range("del11", Some(RangeOptions::default().with_count_only(true)))
             .await?;
         assert_eq!(resp.count, 0);
     }
@@ -127,9 +133,12 @@ async fn delete_should_remove_previously_put_kvs() -> Result<()> {
     {
         let resp = client
             .delete(
-                DeleteRangeRequest::new("del11")
-                    .with_range_end("del22")
-                    .with_prev_kv(true),
+                "del11",
+                Some(
+                    DeleteRangeOptions::default()
+                        .with_range_end("del22")
+                        .with_prev_kv(true),
+                ),
             )
             .await?;
         assert_eq!(resp.deleted, 2);
@@ -139,9 +148,12 @@ async fn delete_should_remove_previously_put_kvs() -> Result<()> {
         assert_eq!(&resp.prev_kvs[1].value, "21".as_bytes());
         let resp = client
             .range(
-                RangeRequest::new("del11")
-                    .with_range_end("del22")
-                    .with_count_only(true),
+                "del11",
+                Some(
+                    RangeOptions::default()
+                        .with_range_end("del22")
+                        .with_count_only(true),
+                ),
             )
             .await?;
         assert_eq!(resp.count, 0);
@@ -151,9 +163,12 @@ async fn delete_should_remove_previously_put_kvs() -> Result<()> {
     {
         let resp = client
             .delete(
-                DeleteRangeRequest::new("del3")
-                    .with_prefix()
-                    .with_prev_kv(true),
+                "del3",
+                Some(
+                    DeleteRangeOptions::default()
+                        .with_prefix()
+                        .with_prev_kv(true),
+                ),
             )
             .await?;
         assert_eq!(resp.deleted, 2);
@@ -162,7 +177,7 @@ async fn delete_should_remove_previously_put_kvs() -> Result<()> {
         assert_eq!(&resp.prev_kvs[1].key, "del32".as_bytes());
         assert_eq!(&resp.prev_kvs[1].value, "32".as_bytes());
         let resp = client
-            .range(RangeRequest::new("del32").with_count_only(true))
+            .range("del32", Some(RangeOptions::default().with_count_only(true)))
             .await?;
         assert_eq!(resp.count, 0);
     }
@@ -191,7 +206,7 @@ async fn txn_should_execute_as_expected() -> Result<()> {
                             Some(PutOptions::default().with_prev_kv(true)),
                         )][..],
                     )
-                    .or_else(&[TxnOp::range(RangeRequest::new("txn01"))][..]),
+                    .or_else(&[TxnOp::range("txn01", None)][..]),
             )
             .await?;
 
@@ -206,7 +221,7 @@ async fn txn_should_execute_as_expected() -> Result<()> {
             _ => panic!("expect put response)"),
         }
 
-        let resp = client.range(RangeRequest::new("txn01")).await?;
+        let resp = client.range("txn01", None).await?;
         assert_eq!(resp.kvs[0].key, b"txn01");
         assert_eq!(resp.kvs[0].value, b"02");
     }
@@ -218,7 +233,7 @@ async fn txn_should_execute_as_expected() -> Result<()> {
                 TxnRequest::new()
                     .when(&[Compare::value("txn01", CompareResult::Equal, "01")][..])
                     .and_then(&[TxnOp::put("txn01", "02", None)][..])
-                    .or_else(&[TxnOp::range(RangeRequest::new("txn01"))][..]),
+                    .or_else(&[TxnOp::range("txn01", None)][..]),
             )
             .await?;
 
@@ -248,26 +263,26 @@ async fn compact_should_remove_previous_revision() -> Result<()> {
 
     // before compacting
     let rev0_resp = client
-        .range(RangeRequest::new("compact").with_revision(2))
+        .range("compact", Some(RangeOptions::default().with_revision(2)))
         .await?;
     assert_eq!(rev0_resp.kvs[0].value, b"0");
     let rev1_resp = client
-        .range(RangeRequest::new("compact").with_revision(3))
+        .range("compact", Some(RangeOptions::default().with_revision(3)))
         .await?;
     assert_eq!(rev1_resp.kvs[0].value, b"1");
 
-    client.compact(CompactionRequest::new(3)).await?;
+    client.compact(3, false).await?;
 
     // after compacting
     let rev0_resp = client
-        .range(RangeRequest::new("compact").with_revision(2))
+        .range("compact", Some(RangeOptions::default().with_revision(2)))
         .await;
     assert!(
         rev0_resp.is_err(),
         "client.range should receive an err after compaction, but it receives: {rev0_resp:?}"
     );
     let rev1_resp = client
-        .range(RangeRequest::new("compact").with_revision(3))
+        .range("compact", Some(RangeOptions::default().with_revision(3)))
         .await?;
     assert_eq!(rev1_resp.kvs[0].value, b"1");
 

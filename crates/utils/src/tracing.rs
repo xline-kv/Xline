@@ -81,6 +81,7 @@ impl Inject for tonic::metadata::MetadataMap {
 #[cfg(test)]
 mod test {
 
+    use opentelemetry::trace::TracerProvider as _;
     use opentelemetry::trace::{TraceContextExt, TraceId};
     use opentelemetry_sdk::propagation::TraceContextPropagator;
     use tracing::info_span;
@@ -89,7 +90,7 @@ mod test {
     };
 
     use super::*;
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_inject_and_extract() -> Result<(), Box<dyn std::error::Error>> {
         init()?;
         global::set_text_map_propagator(TraceContextPropagator::new());
@@ -113,11 +114,13 @@ mod test {
     /// init tracing subscriber
     fn init() -> Result<(), Box<dyn std::error::Error>> {
         let otlp_exporter = opentelemetry_otlp::new_exporter().tonic();
-        let jaeger_online_layer = opentelemetry_otlp::new_pipeline()
+        let provider = opentelemetry_otlp::new_pipeline()
             .tracing()
             .with_exporter(otlp_exporter)
-            .install_simple()
-            .map(|tracer| tracing_opentelemetry::layer().with_tracer(tracer))?;
+            .install_simple()?;
+        global::set_tracer_provider(provider.clone());
+        let tracer = provider.tracer("xline");
+        let jaeger_online_layer = tracing_opentelemetry::layer().with_tracer(tracer);
         tracing_subscriber::registry()
             .with(jaeger_online_layer)
             .init();

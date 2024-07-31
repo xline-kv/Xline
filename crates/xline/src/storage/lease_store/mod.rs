@@ -199,11 +199,11 @@ impl LeaseStore {
                 debug!("Receive LeaseGrantRequest {:?}", req);
                 self.handle_lease_grant_request(req).map(Into::into)
             }
-            RequestWrapper::LeaseRevokeRequest(ref req) => {
+            RequestWrapper::LeaseRevokeRequest(req) => {
                 debug!("Receive LeaseRevokeRequest {:?}", req);
                 self.handle_lease_revoke_request(req).map(Into::into)
             }
-            RequestWrapper::LeaseLeasesRequest(ref req) => {
+            RequestWrapper::LeaseLeasesRequest(req) => {
                 debug!("Receive LeaseLeasesRequest {:?}", req);
                 Ok(self.handle_lease_leases_request(req).into())
             }
@@ -240,7 +240,7 @@ impl LeaseStore {
     /// Handle `LeaseRevokeRequest`
     fn handle_lease_revoke_request(
         &self,
-        req: &LeaseRevokeRequest,
+        req: LeaseRevokeRequest,
     ) -> Result<LeaseRevokeResponse, ExecuteError> {
         if self.lease_collection.contains_lease(req.id) {
             _ = self.unsynced_cache.write().insert(req.id);
@@ -254,7 +254,7 @@ impl LeaseStore {
     }
 
     /// Handle `LeaseRevokeRequest`
-    fn handle_lease_leases_request(&self, _req: &LeaseLeasesRequest) -> LeaseLeasesResponse {
+    fn handle_lease_leases_request(&self, _req: LeaseLeasesRequest) -> LeaseLeasesResponse {
         let leases = self
             .leases()
             .into_iter()

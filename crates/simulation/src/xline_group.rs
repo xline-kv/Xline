@@ -13,10 +13,7 @@ use xline_client::{
     error::XlineClientError,
     types::{
         cluster::{MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse},
-        kv::{
-            CompactionRequest, CompactionResponse, PutOptions, PutResponse, RangeRequest,
-            RangeResponse,
-        },
+        kv::{CompactionResponse, PutOptions, PutResponse, RangeOptions, RangeResponse},
         watch::{WatchOptions, WatchStreaming, Watcher},
     },
     Client, ClientOptions,
@@ -159,21 +156,6 @@ pub struct SimClient {
     handle: NodeHandle,
 }
 
-macro_rules! impl_client_method {
-    ($method:ident, $client:ident, $request:ty, $response:ty) => {
-        pub async fn $method(
-            &self,
-            request: $request,
-        ) -> Result<$response, XlineClientError<Command>> {
-            let client = self.inner.clone();
-            self.handle
-                .spawn(async move { client.$client().$method(request).await })
-                .await
-                .unwrap()
-        }
-    };
-}
-
 impl SimClient {
     pub async fn put(
         &self,
@@ -189,8 +171,32 @@ impl SimClient {
             .await
             .unwrap()
     }
-    impl_client_method!(range, kv_client, RangeRequest, RangeResponse);
-    impl_client_method!(compact, kv_client, CompactionRequest, CompactionResponse);
+
+    pub async fn range(
+        &self,
+        key: impl Into<Vec<u8>>,
+        options: Option<RangeOptions>,
+    ) -> Result<RangeResponse, XlineClientError<Command>> {
+        let client = self.inner.clone();
+        let key = key.into();
+        self.handle
+            .spawn(async move { client.kv_client().range(key, options).await })
+            .await
+            .unwrap()
+    }
+
+    pub async fn compact(
+        &self,
+        revision: i64,
+        physical: bool,
+    ) -> Result<CompactionResponse, XlineClientError<Command>> {
+        let client = self.inner.clone();
+        self.handle
+            .spawn(async move { client.kv_client().compact(revision, physical).await })
+            .await
+            .unwrap()
+    }
+
     pub async fn watch(
         &self,
         key: impl Into<Vec<u8>>,
@@ -273,13 +279,14 @@ impl SimEtcdClient {
 
     pub async fn compact(
         &self,
-        request: CompactionRequest,
+        revision: i64,
+        physical: bool,
     ) -> Result<CompactionResponse, XlineClientError<Command>> {
         let mut client = self.kv.clone();
         self.handle
             .spawn(async move {
                 client
-                    .compact(xlineapi::CompactionRequest::from(request))
+                    .compact(xlineapi::CompactionRequest { revision, physical })
                     .await
                     .map(|r| r.into_inner())
                     .map_err(Into::into)

@@ -18,10 +18,11 @@ clippy-utilities = "0.2.0"
 curp = { path = "../curp" }
 futures = "0.3.25"
 getrandom = "0.2"
-http = "0.2.9"
+http = "1.0"
+prost = "0.13"
 thiserror = "1.0.61"
 tokio = { version = "0.2.25", package = "madsim-tokio", features = ["sync"] }
-tonic = { version = "0.4.2", package = "madsim-tonic" }
+tonic = { version = "0.5.0", package = "madsim-tonic" }
 tower = { version = "0.4", features = ["discover"] }
 utils = { path = "../utils", features = ["parking_lot"] }
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
@@ -31,3 +32,6 @@ xlineapi = { path = "../xlineapi" }
 rand = "0.8.5"
 test-macros = { path = "../test-macros" }
 xline-test-utils = { path = "../xline-test-utils" }
+
+[build-dependencies]
+tonic-build = { version = "0.5.0", package = "madsim-tonic-build" }
