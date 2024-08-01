@@ -93,6 +93,12 @@ where
     }
 }
 
+impl<C> AsRef<LogEntry<C>> for LogEntry<C> {
+    fn as_ref(&self) -> &LogEntry<C> {
+        self
+    }
+}
+
 /// Propose id to inflight id
 pub(super) fn propose_id_to_inflight_id(id: ProposeId) -> InflightId {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
