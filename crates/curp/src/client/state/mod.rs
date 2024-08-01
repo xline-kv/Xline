@@ -15,7 +15,11 @@ use tracing::{debug, info};
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
 
+/// The membership state implementation
+mod member;
+
 use crate::{
+    member::Membership,
     members::ServerId,
     rpc::{
         self,
@@ -58,6 +62,32 @@ struct StateMut {
     cluster_version: u64,
     /// Members' connect, calibrated by the server.
     connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
+
+    /// Maintains membership and connections
+    membership: Connects,
+}
+
+/// Maintains the membership and connect
+#[derive(Default)]
+struct Connects {
+    /// The membership state
+    membership: Membership,
+    /// Connects of nodes
+    connects: HashMap<u64, Arc<dyn ConnectApi>>,
+}
+
+impl Connects {
+    /// Gets membership
+    fn membership(&self) -> &Membership {
+        &self.membership
+    }
+
+    /// Gets member connects
+    fn member_connects(&self) -> impl Iterator<Item = (u64, &Arc<dyn ConnectApi>)> {
+        self.membership
+            .members()
+            .filter_map(|(id, _)| self.connects.get(&id).map(|c| (id, c)))
+    }
 }
 
 impl std::fmt::Debug for StateMut {
@@ -71,6 +101,7 @@ impl std::fmt::Debug for StateMut {
     }
 }
 
+#[allow(clippy::multiple_inherent_impl)]
 impl State {
     /// For test
     #[cfg(test)]
@@ -88,6 +119,8 @@ impl State {
                 term,
                 cluster_version,
                 connects,
+                // FIXME: pass initial membership config
+                membership: Membership::default(),
             }),
             immutable: StateStatic {
                 local_server,
@@ -419,6 +452,8 @@ impl StateBuilder {
                 term: self.leader_state.map_or(0, |state| state.1),
                 cluster_version: self.cluster_version.unwrap_or_default(),
                 connects,
+                // FIXME: pass initial membership config
+                membership: Connects::default(),
             }),
             immutable: StateStatic {
                 local_server: Some(local_server_id),
@@ -442,6 +477,8 @@ impl StateBuilder {
                 term: self.leader_state.map_or(0, |state| state.1),
                 cluster_version: self.cluster_version.unwrap_or_default(),
                 connects,
+                // FIXME: pass initial membership config
+                membership: Connects::default(),
             }),
             immutable: StateStatic {
                 local_server: None,

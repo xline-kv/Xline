@@ -34,6 +34,9 @@ use crate::{
 /// Member API implementation
 mod member_impl;
 
+/// Curp client propose implementation
+mod propose;
+
 /// The unary client config
 #[derive(Debug)]
 pub(super) struct UnaryConfig {
@@ -92,7 +95,7 @@ impl<C: Command> Unary<C> {
     ///
     /// `map_leader` might call `fetch_leader_id`, `fetch_cluster`, finally
     /// result in stack overflow.
-    async fn map_leader<R, F: Future<Output = Result<R, CurpError>>>(
+    pub(super) async fn map_leader<R, F: Future<Output = Result<R, CurpError>>>(
         &self,
         f: impl FnOnce(Arc<dyn ConnectApi>) -> F,
     ) -> Result<R, CurpError> {
