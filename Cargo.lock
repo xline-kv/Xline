@@ -664,6 +664,8 @@ dependencies = [
  "itertools 0.13.0",
  "madsim",
  "madsim-tokio",
+ "madsim-tonic",
+ "madsim-tonic-build",
  "mockall",
  "once_cell",
  "opentelemetry",
@@ -679,8 +681,6 @@ dependencies = [
  "thiserror",
  "tokio-stream 0.1.12",
  "tokio-util",
- "tonic",
- "tonic-build",
  "tower",
  "tracing",
  "tracing-subscriber",
@@ -1565,8 +1565,8 @@ dependencies = [
 
 [[package]]
 name = "madsim"
-version = "0.2.27"
-source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
+version = "0.2.30"
+source = "git+https://github.com/LucienY01/madsim.git?branch=bz/tonic-0-12#a7d205e8f044876105cb8980c1c5b5231dd9a170"
 dependencies = [
  "ahash",
  "async-channel",
@@ -1596,7 +1596,7 @@ dependencies = [
 [[package]]
 name = "madsim-macros"
 version = "0.2.12"
-source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
+source = "git+https://github.com/LucienY01/madsim.git?branch=bz/tonic-0-12#a7d205e8f044876105cb8980c1c5b5231dd9a170"
 dependencies = [
  "darling 0.14.4",
  "proc-macro2",
@@ -1606,12 +1606,40 @@ dependencies = [
 
 [[package]]
 name = "madsim-tokio"
-version = "0.2.25"
-source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
+version = "0.2.28"
+source = "git+https://github.com/LucienY01/madsim.git?branch=bz/tonic-0-12#a7d205e8f044876105cb8980c1c5b5231dd9a170"
 dependencies = [
  "madsim",
  "spin",
  "tokio",
+]
+
+[[package]]
+name = "madsim-tonic"
+version = "0.5.0+0.12.0"
+source = "git+https://github.com/LucienY01/madsim.git?branch=bz/tonic-0-12#a7d205e8f044876105cb8980c1c5b5231dd9a170"
+dependencies = [
+ "async-stream",
+ "chrono",
+ "futures-util",
+ "madsim",
+ "tokio",
+ "tonic",
+ "tower",
+ "tracing",
+]
+
+[[package]]
+name = "madsim-tonic-build"
+version = "0.5.0+0.12.0"
+source = "git+https://github.com/LucienY01/madsim.git?branch=bz/tonic-0-12#a7d205e8f044876105cb8980c1c5b5231dd9a170"
+dependencies = [
+ "prettyplease",
+ "proc-macro2",
+ "prost-build",
+ "quote",
+ "syn 2.0.63",
+ "tonic-build",
 ]
 
 [[package]]
@@ -2646,11 +2674,11 @@ dependencies = [
  "itertools 0.13.0",
  "madsim",
  "madsim-tokio",
+ "madsim-tonic",
+ "madsim-tonic-build",
  "parking_lot",
  "prost",
  "tempfile",
- "tonic",
- "tonic-build",
  "tracing",
  "utils",
  "workspace-hack",
@@ -3267,6 +3295,7 @@ dependencies = [
  "futures",
  "getset",
  "madsim-tokio",
+ "madsim-tonic",
  "opentelemetry",
  "opentelemetry-jaeger-propagator",
  "opentelemetry-otlp",
@@ -3280,7 +3309,6 @@ dependencies = [
  "test-macros",
  "thiserror",
  "toml",
- "tonic",
  "tracing",
  "tracing-appender",
  "tracing-opentelemetry",
@@ -3634,6 +3662,7 @@ dependencies = [
  "libc",
  "log",
  "madsim-tokio",
+ "madsim-tonic",
  "memchr",
  "opentelemetry_sdk",
  "petgraph",
@@ -3641,11 +3670,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "smallvec",
  "syn 1.0.109",
  "syn 2.0.63",
  "time",
  "tokio",
  "tokio-stream 0.1.15",
+ "tokio-util",
  "tonic",
  "tower",
  "tracing",
@@ -3698,6 +3729,8 @@ dependencies = [
  "jsonwebtoken",
  "log",
  "madsim-tokio",
+ "madsim-tonic",
+ "madsim-tonic-build",
  "merged_range",
  "mockall",
  "nix",
@@ -3720,8 +3753,6 @@ dependencies = [
  "tokio-stream 0.1.12",
  "tokio-util",
  "toml",
- "tonic",
- "tonic-build",
  "tonic-health",
  "tracing",
  "tracing-appender",
@@ -3749,12 +3780,12 @@ dependencies = [
  "getrandom",
  "http",
  "madsim-tokio",
+ "madsim-tonic",
+ "madsim-tonic-build",
  "prost",
  "rand",
  "test-macros",
  "thiserror",
- "tonic",
- "tonic-build",
  "tower",
  "utils",
  "workspace-hack",
@@ -3768,8 +3799,8 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "madsim-tokio",
+ "madsim-tonic",
  "rand",
- "tonic",
  "utils",
  "workspace-hack",
  "xline",
@@ -3784,13 +3815,13 @@ dependencies = [
  "curp",
  "curp-external-api",
  "itertools 0.13.0",
+ "madsim-tonic",
+ "madsim-tonic-build",
  "prost",
  "serde",
  "strum",
  "strum_macros",
  "thiserror",
- "tonic",
- "tonic-build",
  "utils",
  "workspace-hack",
 ]
@@ -3801,12 +3832,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "madsim-tonic",
  "regex",
  "serde",
  "serde_json",
  "shlex",
  "tokio",
- "tonic",
  "utils",
  "workspace-hack",
  "xline-client",
@@ -3879,13 +3910,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "madsim-tonic"
-version = "0.4.2+0.11.0"
-source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
-
-[[patch.unused]]
-name = "madsim-tonic-build"
-version = "0.4.3+0.11.0"
-source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"

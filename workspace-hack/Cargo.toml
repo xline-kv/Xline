@@ -46,6 +46,20 @@ madsim-tokio = { git = "https://github.com/Phoenix500526/madsim.git", branch = "
     "sync",
     "time",
 ] }
+madsim-tokio = { git = "https://github.com/LucienY01/madsim.git", branch = "bz/tonic-0-12", default-features = false, features = [
+    "fs",
+    "io-util",
+    "macros",
+    "net",
+    "rt",
+    "rt-multi-thread",
+    "signal",
+    "sync",
+    "time",
+] }
+madsim-tonic = { git = "https://github.com/LucienY01/madsim.git", branch = "bz/tonic-0-12", default-features = false, features = [
+    "tls",
+] }
 memchr = { version = "2" }
 opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"] }
 petgraph = { version = "0.6" }
@@ -53,6 +67,7 @@ predicates = { version = "3", default-features = false, features = ["diff"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["raw_value"] }
 sha2 = { version = "0.10" }
+smallvec = { version = "1", default-features = false, features = ["const_new"] }
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "1", features = [
     "fs",
@@ -66,6 +81,7 @@ tokio = { version = "1", features = [
     "time",
 ] }
 tokio-stream = { version = "0.1", features = ["net"] }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
 tonic = { version = "0.12", features = ["tls"] }
 tower = { version = "0.4", features = [
     "balance",
