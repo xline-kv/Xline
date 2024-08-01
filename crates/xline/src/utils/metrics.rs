@@ -59,7 +59,7 @@ pub fn init_metrics(config: &MetricsConfig) -> anyhow::Result<()> {
     info!("metrics server start on {addr:?}");
     let app = axum::Router::new().route(config.path(), axum::routing::any(metrics));
     let _ig = tokio::spawn(async move {
-        let listener = tokio::net::TcpListener::bind(addr).await?;
+        let listener = real_tokio::net::TcpListener::bind(addr).await?;
         axum::serve(listener, app).await
     });
 

@@ -53,6 +53,7 @@ prometheus = "0.13.4"
 prost = "0.13.0"
 serde = { version = "1.0.204", features = ["derive"] }
 sha2 = "0.10.6"
+real_tokio = { version = "1", package = "tokio" }
 tokio = { version = "0.2.25", package = "madsim-tokio", features = [
   "rt-multi-thread",
   "time",
