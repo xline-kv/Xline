@@ -172,6 +172,7 @@
     )
 )]
 
+pub mod classifier;
 pub mod command;
 pub mod execute_error;
 pub mod interval;
@@ -212,6 +213,7 @@ use utils::write_vec;
 
 pub use self::{
     authpb::{permission::Type, Permission, Role, User, UserAddOptions},
+    classifier::{RequestBackend, RequestRw},
     commandpb::{
         command::{AuthInfo, RequestWrapper},
         command_response::ResponseWrapper,
@@ -273,6 +275,8 @@ pub use self::{
     },
 };
 
+use crate::command::match_all;
+
 impl User {
     /// Check if user has the given role
     pub fn has_role(&self, role: &str) -> bool {
@@ -315,19 +319,6 @@ impl ResponseWrapper {
             header.revision = revision;
         }
     }
-}
-
-/// Backend store of request
-#[derive(Debug, PartialEq, Eq)]
-pub enum RequestBackend {
-    /// Kv backend
-    Kv,
-    /// Auth backend
-    Auth,
-    /// Lease backend
-    Lease,
-    /// Alarm backend
-    Alarm,
 }
 
 /// Command attributes
@@ -456,87 +447,12 @@ impl RequestWrapper {
 
     /// Get the backend of the request
     pub fn backend(&self) -> RequestBackend {
-        match *self {
-            RequestWrapper::PutRequest(_)
-            | RequestWrapper::RangeRequest(_)
-            | RequestWrapper::DeleteRangeRequest(_)
-            | RequestWrapper::TxnRequest(_)
-            | RequestWrapper::CompactionRequest(_) => RequestBackend::Kv,
-            RequestWrapper::AuthEnableRequest(_)
-            | RequestWrapper::AuthDisableRequest(_)
-            | RequestWrapper::AuthStatusRequest(_)
-            | RequestWrapper::AuthRoleAddRequest(_)
-            | RequestWrapper::AuthRoleDeleteRequest(_)
-            | RequestWrapper::AuthRoleGetRequest(_)
-            | RequestWrapper::AuthRoleGrantPermissionRequest(_)
-            | RequestWrapper::AuthRoleListRequest(_)
-            | RequestWrapper::AuthRoleRevokePermissionRequest(_)
-            | RequestWrapper::AuthUserAddRequest(_)
-            | RequestWrapper::AuthUserChangePasswordRequest(_)
-            | RequestWrapper::AuthUserDeleteRequest(_)
-            | RequestWrapper::AuthUserGetRequest(_)
-            | RequestWrapper::AuthUserGrantRoleRequest(_)
-            | RequestWrapper::AuthUserListRequest(_)
-            | RequestWrapper::AuthUserRevokeRoleRequest(_)
-            | RequestWrapper::AuthenticateRequest(_) => RequestBackend::Auth,
-            RequestWrapper::LeaseGrantRequest(_)
-            | RequestWrapper::LeaseRevokeRequest(_)
-            | RequestWrapper::LeaseLeasesRequest(_) => RequestBackend::Lease,
-            RequestWrapper::AlarmRequest(_) => RequestBackend::Alarm,
-        }
-    }
-
-    /// Checks if this request is read only
-    ///
-    /// NOTE: A `TxnRequest` or a `DeleteRangeRequest` might be read-only, but we
-    /// assume they will mutate the state machine to simplify the implementation.
-    pub fn is_read_only(&self) -> bool {
-        match *self {
-            RequestWrapper::RangeRequest(_)
-            | RequestWrapper::AuthStatusRequest(_)
-            | RequestWrapper::AuthRoleGetRequest(_)
-            | RequestWrapper::AuthRoleListRequest(_)
-            | RequestWrapper::AuthUserGetRequest(_)
-            | RequestWrapper::AuthUserListRequest(_)
-            | RequestWrapper::LeaseLeasesRequest(_) => true,
-
-            RequestWrapper::PutRequest(_)
-            | RequestWrapper::DeleteRangeRequest(_)
-            | RequestWrapper::TxnRequest(_)
-            | RequestWrapper::CompactionRequest(_)
-            | RequestWrapper::AuthEnableRequest(_)
-            | RequestWrapper::AuthDisableRequest(_)
-            | RequestWrapper::AuthRoleAddRequest(_)
-            | RequestWrapper::AuthRoleDeleteRequest(_)
-            | RequestWrapper::AuthRoleGrantPermissionRequest(_)
-            | RequestWrapper::AuthRoleRevokePermissionRequest(_)
-            | RequestWrapper::AuthUserAddRequest(_)
-            | RequestWrapper::AuthUserChangePasswordRequest(_)
-            | RequestWrapper::AuthUserDeleteRequest(_)
-            | RequestWrapper::AuthUserGrantRoleRequest(_)
-            | RequestWrapper::AuthUserRevokeRoleRequest(_)
-            | RequestWrapper::AuthenticateRequest(_)
-            | RequestWrapper::LeaseGrantRequest(_)
-            | RequestWrapper::LeaseRevokeRequest(_)
-            | RequestWrapper::AlarmRequest(_) => false,
-        }
-    }
-
-    /// Check if this request is a auth read request
-    pub fn is_auth_read_request(&self) -> bool {
-        matches!(
-            *self,
-            RequestWrapper::AuthStatusRequest(_)
-                | RequestWrapper::AuthRoleGetRequest(_)
-                | RequestWrapper::AuthRoleListRequest(_)
-                | RequestWrapper::AuthUserGetRequest(_)
-                | RequestWrapper::AuthUserListRequest(_)
-        )
+        RequestBackend::from(self)
     }
 
     /// Check whether this auth request should skip the revision or not
     pub fn skip_auth_revision(&self) -> bool {
-        self.is_auth_read_request()
+        match_all!(RequestRw::Read)(self)
             || matches!(
                 *self,
                 RequestWrapper::AuthEnableRequest(_) | RequestWrapper::AuthenticateRequest(_)
@@ -557,39 +473,6 @@ impl RequestWrapper {
             RequestWrapper::TxnRequest(req) => req.is_read_only(),
             _ => false,
         }
-    }
-
-    /// Check if this request is a auth request
-    pub fn is_auth_request(&self) -> bool {
-        self.backend() == RequestBackend::Auth
-    }
-
-    /// Check if this request is a kv request
-    pub fn is_kv_request(&self) -> bool {
-        self.backend() == RequestBackend::Kv
-    }
-
-    pub fn is_compaction_request(&self) -> bool {
-        matches!(*self, RequestWrapper::CompactionRequest(_))
-    }
-
-    pub fn is_txn_request(&self) -> bool {
-        matches!(*self, RequestWrapper::TxnRequest(_))
-    }
-
-    pub fn is_lease_read_request(&self) -> bool {
-        matches!(*self, RequestWrapper::LeaseLeasesRequest(_))
-    }
-
-    pub fn is_lease_write_request(&self) -> bool {
-        matches!(
-            *self,
-            RequestWrapper::LeaseGrantRequest(_) | RequestWrapper::LeaseRevokeRequest(_)
-        )
-    }
-
-    pub fn is_alarm_request(&self) -> bool {
-        matches!(*self, RequestWrapper::AlarmRequest(_))
     }
 }
 
