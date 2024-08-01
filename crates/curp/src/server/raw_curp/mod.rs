@@ -1336,13 +1336,13 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Get a reference to spec pool
-    pub(super) fn spec_pool(&self) -> Arc<Mutex<SpeculativePool<C>>> {
-        Arc::clone(&self.ctx.spec_pool)
+    pub(super) fn spec_pool(&self) -> &Mutex<SpeculativePool<C>> {
+        &self.ctx.spec_pool
     }
 
     /// Get a reference to uncommitted pool
-    pub(super) fn uncommitted_pool(&self) -> Arc<Mutex<UncommittedPool<C>>> {
-        Arc::clone(&self.ctx.uncommitted_pool)
+    pub(super) fn uncommitted_pool(&self) -> &Mutex<UncommittedPool<C>> {
+        &self.ctx.uncommitted_pool
     }
 
     /// Get sync event

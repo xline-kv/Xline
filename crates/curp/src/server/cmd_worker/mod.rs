@@ -4,16 +4,10 @@
 use std::sync::Arc;
 
 use curp_external_api::cmd::AfterSyncCmd;
-use parking_lot::{Mutex, RwLock};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
-use super::{
-    cmd_board::CommandBoard,
-    conflict::{spec_pool_new::SpeculativePool, uncommitted_pool::UncommittedPool},
-    curp_node::AfterSyncEntry,
-    raw_curp::RawCurp,
-};
+use super::{curp_node::AfterSyncEntry, raw_curp::RawCurp};
 use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
@@ -23,20 +17,26 @@ use crate::{
 };
 
 /// Removes an entry from sp and ucp
-fn remove_from_sp_ucp<C: Command>(
-    sp: &mut SpeculativePool<C>,
-    ucp: &mut UncommittedPool<C>,
-    entry: &LogEntry<C>,
-) {
-    let pool_entry = match entry.entry_data {
-        EntryData::Command(ref c) => PoolEntry::new(entry.propose_id, Arc::clone(c)),
-        EntryData::ConfChange(ref c) => PoolEntry::new(entry.propose_id, c.clone()),
-        EntryData::Empty | EntryData::Shutdown | EntryData::SetNodeState(_, _, _) => {
-            unreachable!("should never exist in sp and ucp {:?}", entry.entry_data)
-        }
-    };
-    sp.remove(pool_entry.clone());
-    ucp.remove(pool_entry);
+fn remove_from_sp_ucp<C, RC, E, I>(curp: &RawCurp<C, RC>, entries: I)
+where
+    C: Command,
+    RC: RoleChange,
+    E: AsRef<LogEntry<C>>,
+    I: IntoIterator<Item = E>,
+{
+    let (mut sp, mut ucp) = (curp.spec_pool().lock(), curp.uncommitted_pool().lock());
+    for entry in entries {
+        let entry = entry.as_ref();
+        let pool_entry = match entry.entry_data {
+            EntryData::Command(ref c) => PoolEntry::new(entry.propose_id, Arc::clone(c)),
+            EntryData::ConfChange(ref c) => PoolEntry::new(entry.propose_id, c.clone()),
+            EntryData::Empty | EntryData::Shutdown | EntryData::SetNodeState(_, _, _) => {
+                unreachable!("should never exist in sp and ucp {:?}", entry.entry_data)
+            }
+        };
+        sp.remove(pool_entry.clone());
+        ucp.remove(pool_entry);
+    }
 }
 
 /// Cmd worker execute handler
@@ -45,13 +45,12 @@ pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     ce: &CE,
     curp: &RawCurp<C, RC>,
 ) -> Result<<C as Command>::ER, <C as Command>::Error> {
-    let (sp, ucp) = (curp.spec_pool(), curp.uncommitted_pool());
     let id = curp.id();
     match entry.entry_data {
         EntryData::Command(ref cmd) => {
             let er = ce.execute(cmd);
             if er.is_err() {
-                remove_from_sp_ucp(&mut sp.lock(), &mut ucp.lock(), entry);
+                remove_from_sp_ucp(curp, Some(entry));
                 ce.trigger(entry.inflight_id());
             }
             debug!(
@@ -76,8 +75,6 @@ async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     cmd_entries: Vec<AfterSyncEntry<C>>,
     ce: &CE,
     curp: &RawCurp<C, RC>,
-    sp: &Mutex<SpeculativePool<C>>,
-    ucp: &Mutex<UncommittedPool<C>>,
 ) {
     if cmd_entries.is_empty() {
         return;
@@ -128,11 +125,7 @@ async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         curp.trigger(&entry.propose_id);
         ce.trigger(entry.inflight_id());
     }
-    let mut sp_l = sp.lock();
-    let mut ucp_l = ucp.lock();
-    for (entry, _) in cmd_entries {
-        remove_from_sp_ucp(&mut sp_l, &mut ucp_l, &entry);
-    }
+    remove_from_sp_ucp(curp, cmd_entries.iter().map(|(e, _)| e));
 }
 
 /// After sync entries other than cmd
@@ -140,11 +133,9 @@ async fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     others: Vec<AfterSyncEntry<C>>,
     ce: &CE,
     curp: &RawCurp<C, RC>,
-    cb: &RwLock<CommandBoard<C>>,
-    sp: &Mutex<SpeculativePool<C>>,
-    ucp: &Mutex<UncommittedPool<C>>,
 ) {
     let id = curp.id();
+    let cb = curp.cmd_board();
     #[allow(clippy::pattern_type_mismatch)] // Can't be fixed
     for (entry, resp_tx) in others {
         match (&entry.entry_data, resp_tx) {
@@ -169,7 +160,7 @@ async fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
                 let shutdown_self =
                     change.change_type() == ConfChangeType::Remove && change.node_id == id;
                 cb.write().insert_conf(entry.propose_id);
-                remove_from_sp_ucp(&mut sp.lock(), &mut ucp.lock(), &entry);
+                remove_from_sp_ucp(curp, Some(&entry));
                 if shutdown_self {
                     if let Some(maybe_new_leader) = curp.pick_new_leader() {
                         info!(
@@ -228,13 +219,12 @@ pub(super) async fn after_sync<C: Command, CE: CommandExecutor<C>, RC: RoleChang
     ce: &CE,
     curp: &RawCurp<C, RC>,
 ) {
-    let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
     #[allow(clippy::pattern_type_mismatch)] // Can't be fixed
     let (cmd_entries, others): (Vec<_>, Vec<_>) = entries
         .into_iter()
         .partition(|(entry, _)| matches!(entry.entry_data, EntryData::Command(_)));
-    after_sync_cmds(cmd_entries, ce, curp, &sp, &ucp).await;
-    after_sync_others(others, ce, curp, &cb, &sp, &ucp).await;
+    after_sync_cmds(cmd_entries, ce, curp).await;
+    after_sync_others(others, ce, curp).await;
 }
 
 /// Cmd worker reset handler
