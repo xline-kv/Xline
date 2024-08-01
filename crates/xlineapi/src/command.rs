@@ -10,8 +10,10 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    execute_error::ExecuteError, AuthInfo, PbCommand, PbCommandResponse, PbKeyRange,
-    PbSyncResponse, RequestWrapper, ResponseWrapper,
+    classifier::{RequestBackend, RequestRw, RequestType},
+    execute_error::ExecuteError,
+    AuthInfo, PbCommand, PbCommandResponse, PbKeyRange, PbSyncResponse, RequestWrapper,
+    ResponseWrapper,
 };
 
 /// The curp client trait object on the command of xline
@@ -222,67 +224,119 @@ pub struct Command {
     auth_info: Option<AuthInfo>,
 }
 
+/// Match all Classifiers seperated by `&`
+///
+/// # Returns
+///
+/// `Fn(x) -> bool` indicates the match result.
+///
+/// # Example
+///
+/// ```ignore
+/// match_all!(Class1::Tag1 & Class2::Tag2)(x)
+/// ```
+macro_rules! match_all {
+    ($($cls:ident :: $tag:ident)&*) => {
+        |_x| $(matches!($cls::from(_x), $cls::$tag))&&*
+    };
+}
+pub(crate) use match_all; // used by lib.rs
+
+/// swapable match, returns a `Fn(x, y) -> bool` indicates the match result.
+///
+/// # Returns
+///
+/// Returns `Fn(x, y) -> true` if *x match Class1 and y match Class2*, or *x match Class2 and y match Class1*.
+macro_rules! swap_match {
+
+    ($($cls1:ident::$tag1:ident)&*, _) => {{
+        |_x, _| match_all!($($cls1::$tag1)&*)(_x)
+    }};
+    ($($cls1:ident :: $tag1:ident)&*, $($cls2:ident :: $tag2:ident)&*) => {
+        |_x, _y| {
+            (match_all!($($cls1::$tag1)&*)(_x) && match_all!($($cls2::$tag2)&*)(_y)) || (
+                match_all!($($cls2::$tag2)&*)(_x) && match_all!($($cls1::$tag1)&*)(_y)
+            )
+        }
+    };
+}
+
+/// swapable map, to swappable match two `RequestWrapper`, extract the inner request
+/// and calculate the inners into an `Option<T>`.
+/// This can be only used in the same enum and different variant.
+///
+/// # Returns
+///
+/// `Fn(x, y) -> Option<bool>` indicates the swap_map result.
+macro_rules! swap_map {
+    ($cls1:ident :: $tag1:ident, $cls2:ident :: $tag2:ident, |$x:ident, $y:ident| $body:expr) => {
+        (|_self, _other| match (_self, _other) {
+            (&$cls1::$tag1(ref $x), &$cls2::$tag2(ref $y))
+            | (&$cls2::$tag2(ref $y), &$cls1::$tag1(ref $x)) => Some($body),
+            _ => None,
+        })
+    };
+}
+
+/// Conflict check, contains the whole `match` statement
+///
+/// # Returns
+///
+/// `Fn(x, y) -> Option<bool>` indicates the conflict result.
+macro_rules! is_conflict {
+    ($(($body:expr, $($cls1:ident :: $tag1:ident)&*, $($pat:tt)*)),*) => {
+        |_self, _other| match (_self, _other) {
+            $((x, y) if swap_match!($($cls1::$tag1)&*, $($pat)*)(x, y) => Some($body),)*
+            _ => None,
+        }
+    };
+}
+
 impl ConflictCheck for Command {
     #[inline]
     fn is_conflict(&self, other: &Self) -> bool {
-        let this_req = &self.request;
-        let other_req = &other.request;
-        // auth read request will not conflict with any request except the auth write request
-        if (this_req.is_auth_read_request() && other_req.is_auth_read_request())
-            || (this_req.is_kv_request() && other_req.is_auth_read_request())
-            || (this_req.is_auth_read_request() && other_req.is_kv_request())
-        {
-            return false;
-        }
-        // any two requests that don't meet the above conditions will conflict with each other
-        // because the auth write request will make all previous token invalid
-        if this_req.is_auth_request()
-            || other_req.is_auth_request()
-            || this_req.is_alarm_request()
-            || other_req.is_alarm_request()
-        {
-            return true;
-        }
-
-        // Lease leases request is conflict with Lease grant and revoke requests
-        if (this_req.is_lease_read_request() && other_req.is_lease_write_request())
-            || (this_req.is_lease_write_request() && other_req.is_lease_read_request())
-        {
-            return true;
-        }
-
-        if this_req.is_compaction_request() && other_req.is_compaction_request() {
-            return true;
-        }
-
-        if (this_req.is_txn_request() && other_req.is_compaction_request())
-            || (this_req.is_compaction_request() && other_req.is_txn_request())
-        {
-            match (this_req, other_req) {
-                (
-                    &RequestWrapper::CompactionRequest(ref com_req),
-                    &RequestWrapper::TxnRequest(ref txn_req),
-                )
-                | (
-                    &RequestWrapper::TxnRequest(ref txn_req),
-                    &RequestWrapper::CompactionRequest(ref com_req),
-                ) => {
-                    let target_revision = com_req.revision;
-                    return txn_req.is_conflict_with_rev(target_revision)
-                }
-                _ => unreachable!("The request must be either a transaction or a compaction request! \nthis_req = {this_req:?} \nother_req = {other_req:?}")
-            }
-        }
-
-        let this_lease_ids = this_req.leases().into_iter().collect::<HashSet<_>>();
-        let other_lease_ids = other_req.leases().into_iter().collect::<HashSet<_>>();
-        let lease_conflict = !this_lease_ids.is_disjoint(&other_lease_ids);
-        let key_conflict = self
-            .keys()
-            .iter()
-            .cartesian_product(other.keys().iter())
-            .any(|(k1, k2)| k1.is_conflicted(k2));
-        lease_conflict || key_conflict
+        let t_req = &self.request;
+        let o_req = &other.request;
+        is_conflict!(
+            // auth read request will not conflict with any request except the auth write request
+            (
+                true,
+                RequestBackend::Auth & RequestRw::Read,
+                RequestBackend::Auth & RequestRw::Write
+            ),
+            (false, RequestBackend::Auth & RequestRw::Read, _),
+            // any two requests that don't meet the above conditions will conflict with each other
+            // because the auth write request will make all previous token invalid
+            (true, RequestBackend::Auth & RequestRw::Write, _),
+            (true, RequestBackend::Alarm, _),
+            // Lease leases request is conflict with Lease grant and revoke requests
+            (
+                true,
+                RequestBackend::Lease & RequestRw::Read,
+                RequestBackend::Lease & RequestRw::Write
+            ),
+            (true, RequestType::Compaction, RequestType::Compaction)
+        )(t_req, o_req)
+        .or_else(|| {
+            swap_map!(
+                RequestWrapper::TxnRequest,
+                RequestWrapper::CompactionRequest,
+                |x, y| x.is_conflict_with_rev(y.revision)
+            )(t_req, o_req)
+        })
+        // the fallback map
+        .or_else(|| {
+            let this_lease_ids = t_req.leases().into_iter().collect::<HashSet<_>>();
+            let other_lease_ids = o_req.leases().into_iter().collect::<HashSet<_>>();
+            let lease_conflict = !this_lease_ids.is_disjoint(&other_lease_ids);
+            let key_conflict = self
+                .keys()
+                .iter()
+                .cartesian_product(other.keys().iter())
+                .any(|(k1, k2)| k1.is_conflict(k2));
+            Some(lease_conflict || key_conflict)
+        })
+        .unwrap_or_default()
     }
 }
 
@@ -477,7 +531,7 @@ impl CurpCommand for Command {
 
     #[inline]
     fn is_read_only(&self) -> bool {
-        self.request().is_read_only()
+        match_all!(RequestRw::Read)(self.request())
     }
 }
 
