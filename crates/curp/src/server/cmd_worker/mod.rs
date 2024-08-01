@@ -32,7 +32,7 @@ fn remove_from_sp_ucp<C: Command>(
         EntryData::Command(ref c) => PoolEntry::new(entry.propose_id, Arc::clone(c)),
         EntryData::ConfChange(ref c) => PoolEntry::new(entry.propose_id, c.clone()),
         EntryData::Empty | EntryData::Shutdown | EntryData::SetNodeState(_, _, _) => {
-            unreachable!()
+            unreachable!("should never exist in sp and ucp {:?}", entry.entry_data)
         }
     };
     sp.remove(pool_entry.clone());

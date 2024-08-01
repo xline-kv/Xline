@@ -109,6 +109,10 @@ pub struct RawCurp<C: Command, RC: RoleChange> {
 }
 
 /// Tmp struct for building `RawCurp`
+///
+/// WARN: To avoid deadlock, the lock order should be:
+/// 1. `spec_pool`
+/// 2. `uncommitted_pool`
 #[derive(Builder)]
 #[builder(name = "RawCurpBuilder")]
 pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
