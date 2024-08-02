@@ -3810,6 +3810,7 @@ dependencies = [
  "itertools 0.13.0",
  "madsim-tonic",
  "madsim-tonic-build",
+ "once_cell",
  "prost",
  "serde",
  "strum",
