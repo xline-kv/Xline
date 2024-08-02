@@ -1,0 +1,8 @@
+steps:
+  - label: "build & benchmark"
+    if: build.pull_request.labels includes "run-benchmark"
+    command: "ci/scripts/run-benchmark.sh"
+    env:
+      BUILDKITE_PLUGIN_PR_COMMENT_COMMENT_FILE: "scripts/bench_outputs"
+    plugins:
+      - ./ci/plugins/pr-comment
