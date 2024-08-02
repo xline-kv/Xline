@@ -49,10 +49,6 @@ pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     match entry.entry_data {
         EntryData::Command(ref cmd) => {
             let er = ce.execute(cmd);
-            if er.is_err() {
-                remove_from_sp_ucp(curp, Some(entry));
-                ce.trigger(entry.inflight_id());
-            }
             debug!(
                 "{id} cmd({}) is speculatively executed, exe status: {}",
                 entry.propose_id,
