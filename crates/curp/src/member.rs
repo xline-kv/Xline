@@ -44,9 +44,9 @@ impl MembershipState {
 #[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct Membership {
     /// Member of the cluster
-    members: Vec<HashSet<u64>>,
+    pub(crate) members: Vec<HashSet<u64>>,
     /// All Nodes, including members and learners
-    nodes: HashMap<u64, String>,
+    pub(crate) nodes: HashMap<u64, String>,
 }
 
 impl Membership {

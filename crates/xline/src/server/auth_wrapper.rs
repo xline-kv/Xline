@@ -5,10 +5,11 @@ use curp::{
     cmd::PbCodec,
     rpc::{
         AddLearnerRequest, AddLearnerResponse, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, FetchReadStateResponse, LeaseKeepAliveMsg, MemberProtocol,
-        MoveLeaderRequest, MoveLeaderResponse, OpResponse, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, Protocol, PublishRequest, PublishResponse,
-        ReadIndexRequest, ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
+        FetchMembershipRequest, FetchMembershipResponse, FetchReadStateRequest,
+        FetchReadStateResponse, LeaseKeepAliveMsg, MemberProtocol, MoveLeaderRequest,
+        MoveLeaderResponse, OpResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
+        ProposeRequest, Protocol, PublishRequest, PublishResponse, ReadIndexRequest,
+        ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
         RemoveLearnerResponse, ShutdownRequest, ShutdownResponse,
     },
 };
@@ -122,6 +123,13 @@ impl Protocol for AuthWrapper {
         request: tonic::Request<tonic::Streaming<LeaseKeepAliveMsg>>,
     ) -> Result<tonic::Response<LeaseKeepAliveMsg>, tonic::Status> {
         self.curp_server.lease_keep_alive(request).await
+    }
+
+    async fn fetch_membership(
+        &self,
+        request: tonic::Request<FetchMembershipRequest>,
+    ) -> Result<tonic::Response<FetchMembershipResponse>, tonic::Status> {
+        self.curp_server.fetch_membership(request).await
     }
 }
 
