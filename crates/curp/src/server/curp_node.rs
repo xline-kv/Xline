@@ -152,7 +152,6 @@ pub(super) struct CurpNode<C: Command, CE: CommandExecutor<C>, RC: RoleChange> {
 
 /// Handlers for clients
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
-    // TODO: Add term to req
     /// Handle `ProposeStream` requests
     pub(super) fn propose_stream(
         &self,
@@ -824,7 +823,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         let last_applied = cmd_executor
             .last_applied()
             .map_err(|e| CurpError::internal(format!("get applied index error, {e}")))?;
-        // TODO: after sync task
         let (as_tx, as_rx) = flume::unbounded();
         let (propose_tx, propose_rx) = flume::bounded(4096);
 
