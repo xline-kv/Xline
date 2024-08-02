@@ -1,5 +1,39 @@
 use super::RequestWrapper;
 
+/// because RequestWrapper do not repr u8, we need to convert it manually.
+impl From<&RequestWrapper> for u8 {
+    fn from(value: &RequestWrapper) -> Self {
+        match *value {
+            RequestWrapper::PutRequest(_) => 0,
+            RequestWrapper::RangeRequest(_) => 1,
+            RequestWrapper::DeleteRangeRequest(_) => 2,
+            RequestWrapper::TxnRequest(_) => 3,
+            RequestWrapper::CompactionRequest(_) => 4,
+            RequestWrapper::AuthEnableRequest(_) => 5,
+            RequestWrapper::AuthDisableRequest(_) => 6,
+            RequestWrapper::AuthStatusRequest(_) => 7,
+            RequestWrapper::AuthRoleAddRequest(_) => 8,
+            RequestWrapper::AuthRoleDeleteRequest(_) => 9,
+            RequestWrapper::AuthRoleGetRequest(_) => 10,
+            RequestWrapper::AuthRoleGrantPermissionRequest(_) => 11,
+            RequestWrapper::AuthRoleListRequest(_) => 12,
+            RequestWrapper::AuthRoleRevokePermissionRequest(_) => 13,
+            RequestWrapper::AuthUserAddRequest(_) => 14,
+            RequestWrapper::AuthUserChangePasswordRequest(_) => 15,
+            RequestWrapper::AuthUserDeleteRequest(_) => 16,
+            RequestWrapper::AuthUserGetRequest(_) => 17,
+            RequestWrapper::AuthUserGrantRoleRequest(_) => 18,
+            RequestWrapper::AuthUserListRequest(_) => 19,
+            RequestWrapper::AuthUserRevokeRoleRequest(_) => 20,
+            RequestWrapper::AuthenticateRequest(_) => 21,
+            RequestWrapper::LeaseGrantRequest(_) => 22,
+            RequestWrapper::LeaseRevokeRequest(_) => 23,
+            RequestWrapper::LeaseLeasesRequest(_) => 24,
+            RequestWrapper::AlarmRequest(_) => 25,
+        }
+    }
+}
+
 /// Backend store of request
 #[allow(missing_docs)]
 #[derive(Debug, PartialEq, Eq)]
