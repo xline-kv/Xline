@@ -1,6 +1,8 @@
+use once_cell::sync::Lazy;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     ops::{Bound, RangeBounds},
+    sync::RwLock,
 };
 
 use curp::{client::ClientApi, cmd::Command as CurpCommand};
@@ -25,6 +27,10 @@ pub type CurpClient = dyn ClientApi<Error = tonic::Status, Cmd = Command> + Sync
 const UNBOUNDED: &[u8] = &[0_u8];
 /// Range end to get one key
 const ONE_KEY: &[u8] = &[];
+
+/// A global cache to store conflict rules. The rules will not change, so it's safe to use a global cache.
+static CONFLICT_RULES_CACHE: Lazy<RwLock<HashMap<(u8, u8), bool>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Key Range for Command
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -224,7 +230,7 @@ pub struct Command {
     auth_info: Option<AuthInfo>,
 }
 
-/// Match all Classifiers seperated by `&`
+/// Match all Classifiers separated by `&`
 ///
 /// # Returns
 ///
@@ -297,7 +303,18 @@ impl ConflictCheck for Command {
     fn is_conflict(&self, other: &Self) -> bool {
         let t_req = &self.request;
         let o_req = &other.request;
-        is_conflict!(
+        let mut cache_key: (u8, u8) = (t_req.into(), o_req.into());
+        if cache_key.0 > cache_key.1 {
+            cache_key = (cache_key.1, cache_key.0);
+        }
+        if let Some(res) = CONFLICT_RULES_CACHE
+            .read()
+            .ok()
+            .and_then(|c| c.get(&cache_key).cloned())
+        {
+            return res;
+        }
+        let first_step = is_conflict!(
             // auth read request will not conflict with any request except the auth write request
             (
                 true,
@@ -316,27 +333,33 @@ impl ConflictCheck for Command {
                 RequestBackend::Lease & RequestRw::Write
             ),
             (true, RequestType::Compaction, RequestType::Compaction)
-        )(t_req, o_req)
-        .or_else(|| {
-            swap_map!(
-                RequestWrapper::TxnRequest,
-                RequestWrapper::CompactionRequest,
-                |x, y| x.is_conflict_with_rev(y.revision)
-            )(t_req, o_req)
-        })
-        // the fallback map
-        .or_else(|| {
-            let this_lease_ids = t_req.leases().into_iter().collect::<HashSet<_>>();
-            let other_lease_ids = o_req.leases().into_iter().collect::<HashSet<_>>();
-            let lease_conflict = !this_lease_ids.is_disjoint(&other_lease_ids);
-            let key_conflict = self
-                .keys()
-                .iter()
-                .cartesian_product(other.keys().iter())
-                .any(|(k1, k2)| k1.is_conflict(k2));
-            Some(lease_conflict || key_conflict)
-        })
-        .unwrap_or_default()
+        )(t_req, o_req);
+        if let Some(first_step_res) = first_step {
+            if let Ok(mut cache) = CONFLICT_RULES_CACHE.write() {
+                cache.insert((t_req.into(), o_req.into()), first_step_res);
+            }
+        }
+        first_step
+            .or_else(|| {
+                swap_map!(
+                    RequestWrapper::TxnRequest,
+                    RequestWrapper::CompactionRequest,
+                    |x, y| x.is_conflict_with_rev(y.revision)
+                )(t_req, o_req)
+            })
+            // the fallback map
+            .or_else(|| {
+                let this_lease_ids = t_req.leases().into_iter().collect::<HashSet<_>>();
+                let other_lease_ids = o_req.leases().into_iter().collect::<HashSet<_>>();
+                let lease_conflict = !this_lease_ids.is_disjoint(&other_lease_ids);
+                let key_conflict = self
+                    .keys()
+                    .iter()
+                    .cartesian_product(other.keys().iter())
+                    .any(|(k1, k2)| k1.is_conflict(k2));
+                Some(lease_conflict || key_conflict)
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -570,9 +593,9 @@ impl PbCodec for Command {
 mod test {
     use super::*;
     use crate::{
-        AuthEnableRequest, AuthStatusRequest, CommandAttr, CompactionRequest, Compare,
-        DeleteRangeRequest, LeaseGrantRequest, LeaseLeasesRequest, LeaseRevokeRequest, PutRequest,
-        PutResponse, RangeRequest, Request, RequestOp, TxnRequest,
+        AlarmRequest, AuthEnableRequest, AuthStatusRequest, CommandAttr, CompactionRequest,
+        Compare, DeleteRangeRequest, LeaseGrantRequest, LeaseLeasesRequest, LeaseRevokeRequest,
+        PutRequest, PutResponse, RangeRequest, Request, RequestOp, TxnRequest,
     };
 
     #[test]
@@ -605,6 +628,31 @@ mod test {
         let kr4 = KeyRange::new([0], "e");
         assert!(kr4.contains_key(b"d"));
         assert!(!kr4.contains_key(b"e"));
+    }
+
+    #[test]
+    fn test_cache_should_work() {
+        let cmd1 = Command::new(RequestWrapper::AuthStatusRequest(AuthStatusRequest {
+            ..Default::default()
+        }));
+        let cmd2 = Command::new(RequestWrapper::AlarmRequest(AlarmRequest {
+            ..Default::default()
+        }));
+        let cache_key = ((&cmd1.request).into(), (&cmd2.request).into());
+        if CONFLICT_RULES_CACHE
+            .read()
+            .unwrap()
+            .get(&cache_key)
+            .is_some()
+        {
+            return;
+        }
+        let _ig = ConflictCheck::is_conflict(&cmd1, &cmd2);
+        assert!(CONFLICT_RULES_CACHE
+            .read()
+            .unwrap()
+            .get(&cache_key)
+            .is_some());
     }
 
     #[test]
