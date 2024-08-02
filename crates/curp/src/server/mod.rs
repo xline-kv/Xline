@@ -31,6 +31,8 @@ use crate::rpc::AppendEntriesRequest;
 use crate::rpc::AppendEntriesResponse;
 use crate::rpc::FetchClusterRequest;
 use crate::rpc::FetchClusterResponse;
+use crate::rpc::FetchMembershipRequest;
+use crate::rpc::FetchMembershipResponse;
 use crate::rpc::FetchReadStateRequest;
 use crate::rpc::FetchReadStateResponse;
 use crate::rpc::InstallSnapshotRequest;
@@ -223,6 +225,16 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
         let req_stream = request.into_inner();
         Ok(tonic::Response::new(
             self.inner.lease_keep_alive(req_stream).await?,
+        ))
+    }
+
+    #[instrument(skip_all, name = "curp_fetch_membership")]
+    async fn fetch_membership(
+        &self,
+        request: tonic::Request<FetchMembershipRequest>,
+    ) -> Result<tonic::Response<FetchMembershipResponse>, tonic::Status> {
+        Ok(tonic::Response::new(
+            self.inner.fetch_membership(request.into_inner())?,
         ))
     }
 

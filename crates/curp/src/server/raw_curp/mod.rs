@@ -64,6 +64,7 @@ use super::DB;
 use crate::cmd::Command;
 use crate::log_entry::EntryData;
 use crate::log_entry::LogEntry;
+use crate::member::Membership;
 use crate::member::MembershipState;
 use crate::members::ClusterInfo;
 use crate::members::ServerId;
@@ -1292,6 +1293,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Get a rx for leader changes
     pub(super) fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
         self.ctx.leader_tx.subscribe()
+    }
+
+    /// Get the effective membership
+    pub(super) fn effective_membership(&self) -> Membership {
+        self.ms.read().effective().clone()
     }
 
     /// Get `append_entries` request for `follower_id` that contains the latest

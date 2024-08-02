@@ -40,6 +40,7 @@ use super::{
 use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
+    member::Membership,
     members::{ClusterInfo, ServerId},
     response::ResponseSender,
     role_change::RoleChange,
@@ -47,12 +48,13 @@ use crate::{
         self,
         connect::{InnerConnectApi, InnerConnectApiWrapper},
         AppendEntriesRequest, AppendEntriesResponse, ConfChange, ConfChangeType, CurpError,
-        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
-        MoveLeaderResponse, PoolEntry, ProposeConfChangeRequest, ProposeConfChangeResponse,
-        ProposeId, ProposeRequest, ProposeResponse, PublishRequest, PublishResponse,
-        ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
-        SyncedResponse, TriggerShutdownRequest, TriggerShutdownResponse, TryBecomeLeaderNowRequest,
+        FetchClusterRequest, FetchClusterResponse, FetchMembershipRequest, FetchMembershipResponse,
+        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
+        InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse, Node,
+        PoolEntry, ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeId, ProposeRequest,
+        ProposeResponse, PublishRequest, PublishResponse, QuorumSet, ReadIndexResponse,
+        RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse, SyncedResponse,
+        TriggerShutdownRequest, TriggerShutdownResponse, TryBecomeLeaderNowRequest,
         TryBecomeLeaderNowResponse, VoteRequest, VoteResponse,
     },
     server::{
@@ -405,6 +407,35 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             }
         }
         Err(CurpError::RpcTransport(()))
+    }
+
+    /// Handles fetch membership requests
+    pub(super) fn fetch_membership(
+        &self,
+        _req: FetchMembershipRequest,
+    ) -> Result<FetchMembershipResponse, CurpError> {
+        let (leader_id, term, _) = self.curp.leader();
+        let Membership { members, nodes } = self.curp.effective_membership();
+        let members = members
+            .into_iter()
+            .map(|s| QuorumSet {
+                set: s.into_iter().collect(),
+            })
+            .collect();
+        let nodes = nodes
+            .into_iter()
+            .map(|(node_id, addr)| Node { node_id, addr })
+            .collect();
+
+        let leader_id =
+            leader_id.ok_or(CurpError::LeaderTransfer("no current leader".to_owned()))?;
+
+        Ok(FetchMembershipResponse {
+            members,
+            nodes,
+            term,
+            leader_id,
+        })
     }
 }
 
