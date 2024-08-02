@@ -133,18 +133,18 @@ impl TaskManager {
     }
 
     /// Get shutdown listener
+    ///
+    /// If the task could not be found in task manager, returns `None`.
     #[must_use]
     #[inline]
-    pub fn get_shutdown_listener(&self, name: TaskName) -> Listener {
-        let task = self
-            .tasks
-            .get(&name)
-            .unwrap_or_else(|| unreachable!("task {:?} should exist", name));
-        Listener::new(
-            Arc::clone(&self.state),
-            Arc::clone(&task.notifier),
-            Arc::clone(&self.cluster_shutdown_tracker),
-        )
+    pub fn get_shutdown_listener(&self, name: TaskName) -> Option<Listener> {
+        self.tasks.get(&name).map(|task| {
+            Listener::new(
+                Arc::clone(&self.state),
+                Arc::clone(&task.notifier),
+                Arc::clone(&self.cluster_shutdown_tracker),
+            )
+        })
     }
 
     /// Spawn a task
@@ -173,10 +173,14 @@ impl TaskManager {
 
     /// Get root tasks queue
     fn root_tasks_queue(tasks: &DashMap<TaskName, Task>) -> VecDeque<TaskName> {
-        tasks
+        let root_tasks: VecDeque<_> = tasks
             .iter()
             .filter_map(|task| (task.depend_cnt == 0).then_some(task.name))
-            .collect()
+            .collect();
+        if !tasks.is_empty() {
+            assert!(!root_tasks.is_empty(), "root tasks should not be empty");
+        }
+        root_tasks
     }
 
     /// Inner shutdown task
@@ -187,12 +191,14 @@ impl TaskManager {
             let Some((_name, mut task)) = tasks.remove(&v) else {
                 continue;
             };
+            let handles = task.handle.drain(..);
             task.notifier.notify_waiters();
-            for handle in task.handle.drain(..) {
-                handle
-                    .await
-                    .unwrap_or_else(|e| unreachable!("background task should not panic: {e}"));
-            }
+            futures::future::join_all(handles)
+                .await
+                .into_iter()
+                .for_each(|res| {
+                    res.unwrap_or_else(|e| unreachable!("background task should not panic: {e}"));
+                });
             for child in task.depend_by.drain(..) {
                 let Some(mut child_task) = tasks.get_mut(&child) else {
                     continue;
@@ -259,6 +265,13 @@ impl TaskManager {
             }
         }
         true
+    }
+
+    /// is the task empty
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
     }
 }
 

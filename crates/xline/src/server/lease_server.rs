@@ -2,7 +2,7 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::NumericCast;
-use curp::members::ClusterInfo;
+use curp::{members::ClusterInfo, rpc::CurpError};
 use futures::stream::Stream;
 use tokio::time;
 #[cfg(not(madsim))]
@@ -139,7 +139,8 @@ impl LeaseServer {
     ) -> Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>> {
         let shutdown_listener = self
             .task_manager
-            .get_shutdown_listener(TaskName::LeaseKeepAlive);
+            .get_shutdown_listener(TaskName::LeaseKeepAlive)
+            .unwrap_or_else(|| unreachable!("task LeaseKeepAlive should exist"));
         let lease_storage = Arc::clone(&self.lease_storage);
         let stream = try_stream! {
            loop {
@@ -192,7 +193,8 @@ impl LeaseServer {
     > {
         let shutdown_listener = self
             .task_manager
-            .get_shutdown_listener(TaskName::LeaseKeepAlive);
+            .get_shutdown_listener(TaskName::LeaseKeepAlive)
+            .ok_or(Into::<tonic::Status>::into(CurpError::ShuttingDown(())))?;
         let endpoints = build_endpoints(leader_addrs, self.client_tls_config.as_ref())?;
         let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
         let mut lease_client = LeaseClient::new(channel);
