@@ -1,6 +1,9 @@
 /// Member RPCs
 pub(crate) mod member;
 
+/// Fetch RPC
+pub(crate) mod fetch;
+
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
@@ -15,6 +18,7 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use clippy_utilities::NumericCast;
 use engine::SnapshotApi;
+use fetch::FetchApi;
 use futures::stream::FuturesUnordered;
 use futures::Stream;
 use member::MemberApi;
@@ -70,6 +74,7 @@ use super::proto::commandpb::ReadIndexResponse;
 use super::proto::memberpb::member_protocol_client::MemberProtocolClient;
 use super::AddLearnerRequest;
 use super::AddLearnerResponse;
+use super::FetchMembershipRequest;
 use super::MemberProtocol;
 use super::OpResponse;
 use super::RecordRequest;
@@ -215,7 +220,7 @@ pub(crate) async fn inner_connects(
 #[allow(clippy::module_name_repetitions)] // better for recognizing than just "Api"
 #[cfg_attr(test, automock)]
 #[async_trait]
-pub(crate) trait ConnectApi: MemberApi + Send + Sync + 'static {
+pub(crate) trait ConnectApi: MemberApi + FetchApi + Send + Sync + 'static {
     /// Get server id
     fn id(&self) -> ServerId;
 
@@ -471,6 +476,18 @@ impl MemberApi for Connect<(ProtocolClient<Channel>, MemberProtocolClient<Channe
     ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
         let (_, client) = self.rpc_connect.clone();
         client.remove_learner(request, timeout).await
+    }
+}
+
+#[async_trait]
+impl FetchApi for Connect<(ProtocolClient<Channel>, MemberProtocolClient<Channel>)> {
+    async fn fetch_membership(
+        &self,
+        request: FetchMembershipRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<crate::rpc::FetchMembershipResponse>, CurpError> {
+        let (client, _) = self.rpc_connect.clone();
+        client.fetch_membership(request, timeout).await
     }
 }
 
@@ -791,6 +808,20 @@ where
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.remove_learner(req).await.map_err(Into::into)
+    }
+}
+
+#[async_trait]
+impl<T: Protocol> FetchApi for BypassedConnect<T> {
+    async fn fetch_membership(
+        &self,
+        request: FetchMembershipRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<crate::rpc::FetchMembershipResponse>, CurpError> {
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
+        req.metadata_mut().inject_current();
+        self.server.fetch_membership(req).await.map_err(Into::into)
     }
 }
 

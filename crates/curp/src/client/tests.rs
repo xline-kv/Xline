@@ -25,13 +25,14 @@ use crate::{
     },
     members::ServerId,
     rpc::{
-        connect::{member::MemberApi, ConnectApi, MockConnectApi},
+        connect::{fetch::FetchApi, member::MemberApi, ConnectApi, MockConnectApi},
         AddLearnerRequest, AddLearnerResponse, CurpError, FetchClusterRequest,
-        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse, Member,
-        MoveLeaderRequest, MoveLeaderResponse, OpResponse, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, PublishRequest,
-        PublishResponse, ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
-        RemoveLearnerResponse, ResponseOp, ShutdownRequest, ShutdownResponse, SyncedResponse,
+        FetchClusterResponse, FetchMembershipRequest, FetchMembershipResponse,
+        FetchReadStateRequest, FetchReadStateResponse, Member, MoveLeaderRequest,
+        MoveLeaderResponse, OpResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
+        ProposeRequest, ProposeResponse, PublishRequest, PublishResponse, ReadIndexResponse,
+        RecordRequest, RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse, ResponseOp,
+        ShutdownRequest, ShutdownResponse, SyncedResponse,
     },
 };
 
@@ -615,6 +616,17 @@ impl MemberApi for MockedStreamConnectApi {
         request: RemoveLearnerRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
+        unreachable!("please use MockedConnectApi")
+    }
+}
+
+#[async_trait::async_trait]
+impl FetchApi for MockedStreamConnectApi {
+    async fn fetch_membership(
+        &self,
+        request: FetchMembershipRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
         unreachable!("please use MockedConnectApi")
     }
 }

@@ -37,6 +37,9 @@ mod member_impl;
 /// Curp client propose implementation
 mod propose;
 
+/// Fetch the latest membership
+mod fetch;
+
 /// The unary client config
 #[derive(Debug)]
 pub(super) struct UnaryConfig {
