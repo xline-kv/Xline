@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::marker::PhantomData;
 
 /// A joint quorum set
@@ -38,7 +38,7 @@ pub(crate) trait QuorumSet<I> {
 }
 
 #[allow(clippy::arithmetic_side_effects)]
-impl<I> QuorumSet<I> for HashSet<u64>
+impl<I> QuorumSet<I> for BTreeSet<u64>
 where
     I: IntoIterator<Item = u64> + Clone,
 {
