@@ -22,7 +22,6 @@ http = "1.0"
 prost = "0.13"
 thiserror = "1.0.61"
 tokio = { version = "0.2.25", package = "madsim-tokio", features = ["sync"] }
-# tonic = "0.12.0"
 tonic = { version = "0.5.0", package = "madsim-tonic" }
 tower = { version = "0.4", features = ["discover"] }
 utils = { path = "../utils", features = ["parking_lot"] }
@@ -35,5 +34,4 @@ test-macros = { path = "../test-macros" }
 xline-test-utils = { path = "../xline-test-utils" }
 
 [build-dependencies]
-# tonic-build = "0.12.0"
 tonic-build = { version = "0.5.0", package = "madsim-tonic-build" }

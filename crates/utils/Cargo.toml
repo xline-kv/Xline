@@ -41,7 +41,6 @@ tokio = { version = "0.2.25", package = "madsim-tokio", features = [
 ] }
 toml = "0.8.14"
 tonic = { version = "0.5.0", package = "madsim-tonic" }
-# tonic = "0.12.0"
 tracing = "0.1.37"
 tracing-appender = "0.2"
 tracing-opentelemetry = "0.25.0"

@@ -3656,7 +3656,6 @@ dependencies = [
  "bytes",
  "cc",
  "clap",
- "crossbeam-utils",
  "crypto-common",
  "digest",
  "either",
