@@ -56,4 +56,17 @@ impl State {
 
         false
     }
+
+    /// Take an async function and map to all server, returning `FuturesUnordered<F>`
+    pub(crate) async fn for_each_server1<R, Fut: Future<Output = R>>(
+        &self,
+        mut f: impl FnMut(Arc<dyn ConnectApi>) -> Fut,
+    ) -> FuturesUnordered<impl Future<Output = (u64, R)>> {
+        let mutable_r = self.mutable.read().await;
+        mutable_r
+            .membership
+            .member_connects()
+            .map(|(id, conn)| f(Arc::clone(conn)).map(move |r| (id, r)))
+            .collect()
+    }
 }

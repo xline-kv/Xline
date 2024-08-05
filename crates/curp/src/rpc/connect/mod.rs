@@ -816,7 +816,7 @@ impl<T: Protocol> FetchApi for BypassedConnect<T> {
     async fn fetch_membership(
         &self,
         request: FetchMembershipRequest,
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Result<tonic::Response<crate::rpc::FetchMembershipResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_bypassed();

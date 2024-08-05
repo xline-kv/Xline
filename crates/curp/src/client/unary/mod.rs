@@ -397,6 +397,10 @@ impl<C: Command> ClientApi for Unary<C> {
         // It seems that the max term has not reached the majority here. Mock a transport error and return it to the external to retry.
         return Err(CurpError::RpcTransport(()));
     }
+
+    async fn fetch_and_update_membership(&self) -> Result<(), Self::Error> {
+        self.fetch_and_update_state().await
+    }
 }
 
 #[async_trait]

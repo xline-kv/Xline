@@ -381,6 +381,19 @@ impl State {
 
         Ok(())
     }
+
+    /// Updates the membership
+    pub(crate) async fn update_membership(
+        &self,
+        leader_id: u64,
+        membership: Membership,
+        connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
+    ) {
+        let mut mutable_w = self.mutable.write().await;
+        mutable_w.leader = Some(leader_id);
+        mutable_w.membership.membership = membership;
+        mutable_w.membership.connects = connects;
+    }
 }
 
 /// Builder for state

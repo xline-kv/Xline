@@ -168,6 +168,11 @@ where
 
                 // update leader state if we got a rpc transport error
                 CurpError::RpcTransport(()) => {
+                    #[cfg(feature = "membership-new")]
+                    if let Err(e) = self.inner.fetch_and_update_membership().await {
+                        warn!("fetch membership failed, error {e:?}");
+                    }
+
                     if let Err(e) = self.inner.fetch_leader_id(true).await {
                         warn!("fetch leader failed, error {e:?}");
                     }
@@ -175,6 +180,11 @@ where
 
                 // update the cluster state if got WrongClusterVersion
                 CurpError::WrongClusterVersion(()) => {
+                    #[cfg(feature = "membership-new")]
+                    if let Err(e) = self.inner.fetch_and_update_membership().await {
+                        warn!("fetch membership failed, error {e:?}");
+                    }
+
                     // the inner client should automatically update cluster state when fetch_cluster
                     if let Err(e) = self.inner.fetch_cluster(true).await {
                         warn!("fetch cluster failed, error {e:?}");
@@ -188,6 +198,11 @@ where
 
                 // update the cluster state if got Zombie
                 CurpError::Zombie(()) => {
+                    #[cfg(feature = "membership-new")]
+                    if let Err(e) = self.inner.fetch_and_update_membership().await {
+                        warn!("fetch membership failed, error {e:?}");
+                    }
+
                     if let Err(e) = self.inner.fetch_cluster(true).await {
                         warn!("fetch cluster failed, error {e:?}");
                     }
@@ -303,6 +318,11 @@ where
         linearizable: bool,
     ) -> Result<FetchClusterResponse, tonic::Status> {
         self.retry::<_, _>(|client| client.fetch_cluster(linearizable))
+            .await
+    }
+
+    async fn fetch_and_update_membership(&self) -> Result<(), Self::Error> {
+        self.retry::<_, _>(ClientApi::fetch_and_update_membership)
             .await
     }
 }

@@ -67,6 +67,9 @@ pub trait ClientApi: ClientError + MemberClientApi {
     /// Note: The fetched cluster may still be outdated if `linearizable` is false
     async fn fetch_cluster(&self, linearizable: bool) -> Result<FetchClusterResponse, Self::Error>;
 
+    /// Fetch the cluster membership and update the state
+    async fn fetch_and_update_membership(&self) -> Result<(), Self::Error>;
+
     /// Fetch leader id
     #[inline]
     async fn fetch_leader_id(&self, linearizable: bool) -> Result<ServerId, Self::Error> {
