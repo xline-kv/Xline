@@ -39,12 +39,9 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Configure sccache
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+      - name: Setup sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.5
+
       - name: Prepare release binaries
         id: prepare_binaries
         run: |

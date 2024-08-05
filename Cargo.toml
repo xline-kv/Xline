@@ -27,3 +27,4 @@ madsim = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update
 madsim-tonic = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic" }
 madsim-tonic-build = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic" }
 madsim-tokio = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic" }
+
