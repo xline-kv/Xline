@@ -215,9 +215,9 @@ impl TaskManager {
         let _ig = tokio::spawn(async move {
             info!("cluster shutdown start");
             state.store(2, Ordering::Release);
-            for name in [TaskName::SyncFollower] {
-                _ = tasks.get(&name).map(|n| n.notifier.notify_waiters());
-            }
+            _ = tasks
+                .get(&TaskName::SyncFollower)
+                .map(|n| n.notifier.notify_waiters());
             loop {
                 if tracker.check() {
                     break;
