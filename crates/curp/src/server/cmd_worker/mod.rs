@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use curp_external_api::cmd::AfterSyncCmd;
+use curp_external_api::cmd::{AfterSyncCmd, AfterSyncOk};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
@@ -11,6 +11,7 @@ use super::{curp_node::AfterSyncEntry, raw_curp::RawCurp};
 use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
+    response::ResponseSender,
     role_change::RoleChange,
     rpc::{ConfChangeType, PoolEntry, ProposeResponse, SyncedResponse},
     snapshot::{Snapshot, SnapshotMeta},
@@ -68,7 +69,7 @@ pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
 /// After sync cmd entries
 #[allow(clippy::pattern_type_mismatch)] // Can't be fixed
 fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
-    cmd_entries: Vec<AfterSyncEntry<C>>,
+    cmd_entries: &[AfterSyncEntry<C>],
     ce: &CE,
     curp: &RawCurp<C, RC>,
 ) {
@@ -76,7 +77,9 @@ fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         return;
     }
     info!("after sync: {cmd_entries:?}");
-    let resp_txs = cmd_entries.iter().map(|(_, tx)| tx);
+    let resp_txs = cmd_entries
+        .iter()
+        .map(|(_, tx)| tx.as_ref().map(AsRef::as_ref));
     let highest_index = cmd_entries
         .last()
         .map_or_else(|| unreachable!(), |(entry, _)| entry.index);
@@ -84,7 +87,7 @@ fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         .iter()
         .map(|(entry, tx)| {
             let EntryData::Command(ref cmd) = entry.entry_data else {
-                unreachable!()
+                unreachable!("only allows command entry");
             };
             AfterSyncCmd::new(
                 cmd.as_ref(),
@@ -98,15 +101,32 @@ fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         .collect();
 
     let results = ce.after_sync(cmds, highest_index);
+    send_results(results.into_iter(), resp_txs);
 
-    for ((result, id), tx_opt) in results.into_iter().zip(propose_ids).zip(resp_txs) {
+    for (entry, _) in cmd_entries {
+        curp.trigger(&entry.propose_id);
+        ce.trigger(entry.inflight_id());
+    }
+    remove_from_sp_ucp(curp, cmd_entries.iter().map(|(e, _)| e));
+}
+
+/// Send cmd results to clients
+fn send_results<'a, C, R, S>(results: R, txs: S)
+where
+    C: Command,
+    R: Iterator<Item = Result<AfterSyncOk<C>, C::Error>>,
+    S: Iterator<Item = Option<&'a ResponseSender>>,
+{
+    for (result, tx_opt) in results.zip(txs) {
         match result {
             Ok(r) => {
                 let (asr, er_opt) = r.into_parts();
-                if let Some(er) = er_opt {
-                    tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er), true));
-                }
-                tx.send_synced(SyncedResponse::new_result::<C>(&Ok(asr)));
+                let _ignore_er = tx_opt.as_ref().zip(er_opt.as_ref()).map(|(tx, er)| {
+                    tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er.clone()), true));
+                });
+                let _ignore_asr = tx_opt
+                    .as_ref()
+                    .map(|tx| tx.send_synced(SyncedResponse::new_result::<C>(&Ok(asr.clone()))));
             }
             Err(e) => {
                 let _ignore = tx_opt
@@ -115,12 +135,6 @@ fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             }
         }
     }
-
-    for (entry, _) in &cmd_entries {
-        curp.trigger(&entry.propose_id);
-        ce.trigger(entry.inflight_id());
-    }
-    remove_from_sp_ucp(curp, cmd_entries.iter().map(|(e, _)| e));
 }
 
 /// After sync entries other than cmd
@@ -218,7 +232,7 @@ pub(super) async fn after_sync<C: Command, CE: CommandExecutor<C>, RC: RoleChang
     let (cmd_entries, others): (Vec<_>, Vec<_>) = entries
         .into_iter()
         .partition(|(entry, _)| matches!(entry.entry_data, EntryData::Command(_)));
-    after_sync_cmds(cmd_entries, ce, curp);
+    after_sync_cmds(&cmd_entries, ce, curp);
     after_sync_others(others, ce, curp).await;
 }
 
