@@ -25,7 +25,7 @@ use crate::{
     },
     members::ServerId,
     rpc::{
-        connect::{fetch::FetchApi, member::MemberApi, ConnectApi, MockConnectApi},
+        connect::{fetch::FetchApi, member::MemberApi, mock::MockConnectApi, ConnectApi},
         AddLearnerRequest, AddLearnerResponse, CurpError, FetchClusterRequest,
         FetchClusterResponse, FetchMembershipRequest, FetchMembershipResponse,
         FetchReadStateRequest, FetchReadStateResponse, Member, MoveLeaderRequest,

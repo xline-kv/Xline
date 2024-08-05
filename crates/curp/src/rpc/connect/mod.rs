@@ -218,7 +218,6 @@ pub(crate) async fn inner_connects(
 
 /// Connect interface between server and clients
 #[allow(clippy::module_name_repetitions)] // better for recognizing than just "Api"
-#[cfg_attr(test, automock)]
 #[async_trait]
 pub(crate) trait ConnectApi: MemberApi + FetchApi + Send + Sync + 'static {
     /// Get server id
@@ -295,6 +294,98 @@ pub(crate) trait ConnectApi: MemberApi + FetchApi + Send + Sync + 'static {
 
     /// Keep send lease keep alive to server and mutate the client id
     async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>, interval: Duration) -> CurpError;
+}
+
+/// Mock implementation
+#[allow(
+    clippy::indexing_slicing,
+    clippy::wildcard_imports,
+    clippy::type_complexity
+)]
+pub(crate) mod mock {
+    use super::*;
+
+    mockall::mock! {
+        pub ConnectApi {}
+
+        #[async_trait]
+        impl MemberApi for ConnectApi {
+            async fn add_learner(
+                &self,
+                request: AddLearnerRequest,
+                timeout: Duration,
+            ) -> Result<tonic::Response<AddLearnerResponse>, CurpError>;
+            async fn remove_learner(
+                &self,
+                request: RemoveLearnerRequest,
+                timeout: Duration,
+            ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError>;
+        }
+
+        #[async_trait]
+        impl FetchApi for ConnectApi {
+            async fn fetch_membership(
+                &self,
+                request: FetchMembershipRequest,
+                timeout: Duration,
+            ) -> Result<tonic::Response<crate::rpc::FetchMembershipResponse>, CurpError>;
+        }
+
+        #[async_trait]
+        impl ConnectApi for ConnectApi {
+            fn id(&self) -> ServerId;
+            async fn update_addrs(&self, addrs: Vec<String>) -> Result<(), tonic::transport::Error>;
+            async fn propose_stream(
+                &self,
+                request: ProposeRequest,
+                token: Option<String>,
+                timeout: Duration,
+            ) -> Result<
+                tonic::Response<Box<dyn Stream<Item = Result<OpResponse, tonic::Status>> + Send>>,
+                CurpError,
+            >;
+            async fn record(
+                &self,
+                request: RecordRequest,
+                timeout: Duration,
+            ) -> Result<tonic::Response<RecordResponse>, CurpError>;
+            async fn read_index(
+                &self,
+                timeout: Duration,
+            ) -> Result<tonic::Response<ReadIndexResponse>, CurpError>;
+            async fn propose_conf_change(
+                &self,
+                request: ProposeConfChangeRequest,
+                timeout: Duration,
+            ) -> Result<tonic::Response<ProposeConfChangeResponse>, CurpError>;
+            async fn publish(
+                &self,
+                request: PublishRequest,
+                timeout: Duration,
+            ) -> Result<tonic::Response<PublishResponse>, CurpError>;
+            async fn shutdown(
+                &self,
+                request: ShutdownRequest,
+                timeout: Duration,
+            ) -> Result<tonic::Response<ShutdownResponse>, CurpError>;
+            async fn fetch_cluster(
+                &self,
+                request: FetchClusterRequest,
+                timeout: Duration,
+            ) -> Result<tonic::Response<FetchClusterResponse>, CurpError>;
+            async fn fetch_read_state(
+                &self,
+                request: FetchReadStateRequest,
+                timeout: Duration,
+            ) -> Result<tonic::Response<FetchReadStateResponse>, CurpError>;
+            async fn move_leader(
+                &self,
+                request: MoveLeaderRequest,
+                timeout: Duration,
+            ) -> Result<tonic::Response<MoveLeaderResponse>, CurpError>;
+            async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>, interval: Duration) -> CurpError;
+        }
+    }
 }
 
 /// Inner Connect interface among different servers
