@@ -316,6 +316,11 @@ enum Role {
     Candidate,
     /// Leader
     Leader,
+    /// Learner
+    ///
+    /// A learner is a follower that only receives append entries or install
+    /// snapshots from the leader, it cannot vote or become a candidate.
+    Learner,
 }
 
 /// Relevant context for Curp
@@ -476,6 +481,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let timeout = match st_r.role {
             Role::Follower | Role::Leader => st_r.follower_timeout_ticks,
             Role::PreCandidate | Role::Candidate => st_r.candidate_timeout_ticks,
+            Role::Learner => return None,
         };
         let tick = self.ctx.election_tick.fetch_add(1, Ordering::AcqRel);
         if tick < timeout {
@@ -493,6 +499,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 self.lst.reset_transferee();
                 None
             }
+            Role::Learner => None,
         }
     }
 }
@@ -771,6 +778,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Handle `append_entries`
     /// Return `Ok(term, entries)` if succeeds
     /// Return `Err(term, hint_index)` if fails
+    #[allow(clippy::needless_pass_by_value)] // TODO: avoid cloning of `entries`
     pub(super) fn handle_append_entries(
         &self,
         term: u64,
@@ -816,9 +824,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
         // append log entries
         let mut log_w = self.log.write();
-        let (to_persist, cc_entries, fallback_indexes) = log_w
-            .try_append_entries(entries, prev_log_index, prev_log_term)
+        let (to_persist, cc_entries, fallback_indexes, truncate_at) = log_w
+            .try_append_entries(entries.clone(), prev_log_index, prev_log_term)
             .map_err(|_ig| (term, log_w.commit_index + 1))?;
+        self.append_membership(&entries, truncate_at, leader_commit);
         // fallback overwritten conf change entries
         for idx in fallback_indexes.iter().sorted().rev() {
             let info = log_w.fallback_contexts.remove(idx).unwrap_or_else(|| {
@@ -849,6 +858,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         if prev_commit_index < log_w.commit_index {
             self.apply(&mut *log_w);
         }
+
         Ok((term, to_persist))
     }
 

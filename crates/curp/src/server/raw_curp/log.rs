@@ -315,8 +315,13 @@ type ConfChangeEntries<C> = Vec<Arc<LogEntry<C>>>;
 /// Fallback indexes type
 type FallbackIndexes = HashSet<LogIndex>;
 
-/// Type returned when append success
-type AppendSuccess<C> = (Vec<Arc<LogEntry<C>>>, ConfChangeEntries<C>, FallbackIndexes);
+/// Type retruned when append success
+type AppendSuccess<C> = (
+    Vec<Arc<LogEntry<C>>>,
+    ConfChangeEntries<C>,
+    FallbackIndexes,
+    LogIndex,
+);
 
 impl<C: Command> Log<C> {
     /// Create a new log
@@ -408,6 +413,10 @@ impl<C: Command> Log<C> {
         }
         // Truncate entries
         self.truncate(pi);
+        let truncate_at = self
+            .entries
+            .back()
+            .map_or_else(LogIndex::default, |e| e.inner.index);
         // Push the remaining entries and record the conf change entries
         for entry in entries
             .into_iter()
@@ -426,7 +435,7 @@ impl<C: Command> Log<C> {
             to_persist.push(entry);
         }
 
-        Ok((to_persist, conf_changes, need_fallback_indexes))
+        Ok((to_persist, conf_changes, need_fallback_indexes, truncate_at))
     }
 
     /// Check if the candidate's log is up-to-date

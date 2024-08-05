@@ -120,6 +120,11 @@ impl Membership {
                 .then_some((*id, addr))
         })
     }
+
+    /// Returns `true` if the membership contains the given node id
+    pub(crate) fn contains(&self, node_id: u64) -> bool {
+        self.nodes.contains_key(&node_id)
+    }
 }
 
 /// The change of membership
