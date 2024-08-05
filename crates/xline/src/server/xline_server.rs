@@ -17,7 +17,9 @@ use tokio::fs;
 #[cfg(not(madsim))]
 use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(not(madsim))]
-use tonic::transport::{server::Connected, Certificate, ClientTlsConfig, Identity, ServerTlsConfig};
+use tonic::transport::{
+    server::Connected, Certificate, ClientTlsConfig, Identity, ServerTlsConfig,
+};
 use tonic::transport::{server::Router, Server};
 use tracing::{info, warn};
 use utils::{
