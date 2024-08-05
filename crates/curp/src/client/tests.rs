@@ -605,16 +605,16 @@ struct MockedStreamConnectApi {
 impl MemberApi for MockedStreamConnectApi {
     async fn add_learner(
         &self,
-        request: AddLearnerRequest,
-        timeout: Duration,
+        _request: AddLearnerRequest,
+        _timeout: Duration,
     ) -> Result<tonic::Response<AddLearnerResponse>, CurpError> {
         unreachable!("please use MockedConnectApi")
     }
 
     async fn remove_learner(
         &self,
-        request: RemoveLearnerRequest,
-        timeout: Duration,
+        _request: RemoveLearnerRequest,
+        _timeout: Duration,
     ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
         unreachable!("please use MockedConnectApi")
     }
@@ -624,8 +624,8 @@ impl MemberApi for MockedStreamConnectApi {
 impl FetchApi for MockedStreamConnectApi {
     async fn fetch_membership(
         &self,
-        request: FetchMembershipRequest,
-        timeout: Duration,
+        _request: FetchMembershipRequest,
+        _timeout: Duration,
     ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
         unreachable!("please use MockedConnectApi")
     }

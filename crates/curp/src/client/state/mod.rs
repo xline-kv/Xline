@@ -120,7 +120,7 @@ impl State {
                 cluster_version,
                 connects,
                 // FIXME: pass initial membership config
-                membership: Membership::default(),
+                membership: Connects::default(),
             }),
             immutable: StateStatic {
                 local_server,
