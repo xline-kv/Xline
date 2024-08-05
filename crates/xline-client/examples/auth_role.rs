@@ -1,9 +1,7 @@
 use anyhow::Result;
 use xline_client::{
     types::auth::{
-        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, Permission,
-        PermissionType,
+        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, Permission, PermissionType,
     },
     Client, ClientOptions,
 };
@@ -18,8 +16,8 @@ async fn main() -> Result<()> {
         .auth_client();
 
     // add roles
-    client.role_add(AuthRoleAddRequest::new("role1")).await?;
-    client.role_add(AuthRoleAddRequest::new("role2")).await?;
+    client.role_add("role1").await?;
+    client.role_add("role2").await?;
 
     // grant permissions to roles
     client
@@ -40,7 +38,7 @@ async fn main() -> Result<()> {
     println!("roles:");
     for role in resp.roles {
         println!("{}", role);
-        let get_resp = client.role_get(AuthRoleGetRequest::new(role)).await?;
+        let get_resp = client.role_get(role).await?;
         println!("permmisions:");
         for perm in get_resp.perm {
             println!("{} {}", perm.perm_type, String::from_utf8_lossy(&perm.key));
@@ -56,12 +54,8 @@ async fn main() -> Result<()> {
         .await?;
 
     // delete roles
-    client
-        .role_delete(AuthRoleDeleteRequest::new("role1"))
-        .await?;
-    client
-        .role_delete(AuthRoleDeleteRequest::new("role2"))
-        .await?;
+    client.role_delete("role1").await?;
+    client.role_delete("role2").await?;
 
     Ok(())
 }

@@ -20,7 +20,7 @@ parking_lot = ["dep:parking_lot"]
 [dependencies]
 async-trait = { version = "0.1.80", optional = true }
 clippy-utilities = "0.2.0"
-dashmap = "5.5.3"
+dashmap = "6.0.1"
 derive_builder = "0.20.0"
 event-listener = "5.3.1"
 futures = "0.3.30"

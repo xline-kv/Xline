@@ -2,10 +2,7 @@
 use xline_client::{
     error::Result,
     types::auth::{
-        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest,
-        AuthUserChangePasswordRequest, AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
-        Permission, PermissionType,
+        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, Permission, PermissionType,
     },
 };
 
@@ -18,11 +15,11 @@ async fn role_operations_should_success_in_normal_path() -> Result<()> {
     let role1 = "role1";
     let role2 = "role2";
 
-    client.role_add(AuthRoleAddRequest::new(role1)).await?;
-    client.role_add(AuthRoleAddRequest::new(role2)).await?;
+    client.role_add(role1).await?;
+    client.role_add(role2).await?;
 
-    client.role_get(AuthRoleGetRequest::new(role1)).await?;
-    client.role_get(AuthRoleGetRequest::new(role2)).await?;
+    client.role_get(role1).await?;
+    client.role_get(role2).await?;
 
     let role_list_resp = client.role_list().await?;
     assert_eq!(
@@ -30,21 +27,11 @@ async fn role_operations_should_success_in_normal_path() -> Result<()> {
         vec![role1.to_owned(), role2.to_owned()]
     );
 
-    client
-        .role_delete(AuthRoleDeleteRequest::new(role1))
-        .await?;
-    client
-        .role_delete(AuthRoleDeleteRequest::new(role2))
-        .await?;
+    client.role_delete(role1).await?;
+    client.role_delete(role2).await?;
 
-    client
-        .role_get(AuthRoleGetRequest::new(role1))
-        .await
-        .unwrap_err();
-    client
-        .role_get(AuthRoleGetRequest::new(role2))
-        .await
-        .unwrap_err();
+    client.role_get(role1).await.unwrap_err();
+    client.role_get(role2).await.unwrap_err();
 
     Ok(())
 }
@@ -61,7 +48,7 @@ async fn permission_operations_should_success_in_normal_path() -> Result<()> {
     let perm4 = Permission::new(PermissionType::Write, "pp").with_prefix();
     let perm5 = Permission::new(PermissionType::Read, vec![0]).with_from_key();
 
-    client.role_add(AuthRoleAddRequest::new(role1)).await?;
+    client.role_add(role1).await?;
 
     client
         .role_grant_permission(AuthRoleGrantPermissionRequest::new(role1, perm1.clone()))
@@ -80,7 +67,7 @@ async fn permission_operations_should_success_in_normal_path() -> Result<()> {
         .await?;
 
     {
-        let resp = client.role_get(AuthRoleGetRequest::new(role1)).await?;
+        let resp = client.role_get(role1).await?;
         let permissions = resp.perm;
         assert!(permissions.contains(&perm1.into()));
         assert!(permissions.contains(&perm2.into()));
@@ -110,12 +97,10 @@ async fn permission_operations_should_success_in_normal_path() -> Result<()> {
         )
         .await?;
 
-    let role_get_resp = client.role_get(AuthRoleGetRequest::new(role1)).await?;
+    let role_get_resp = client.role_get(role1).await?;
     assert!(role_get_resp.perm.is_empty());
 
-    client
-        .role_delete(AuthRoleDeleteRequest::new(role1))
-        .await?;
+    client.role_delete(role1).await?;
     Ok(())
 }
 
@@ -134,9 +119,7 @@ async fn user_operations_should_success_in_normal_path() -> Result<()> {
     let user_list_resp = client.user_list().await?;
     assert!(user_list_resp.users.contains(&name1.to_string()));
 
-    client
-        .user_change_password(AuthUserChangePasswordRequest::new(name1, password2))
-        .await?;
+    client.user_change_password(name1, password2).await?;
 
     client.user_delete(name1).await?;
     client.user_get(name1).await.unwrap_err();
@@ -154,15 +137,11 @@ async fn user_role_operations_should_success_in_normal_path() -> Result<()> {
     let role2 = "role2";
 
     client.user_add(name1, "", true).await?;
-    client.role_add(AuthRoleAddRequest::new(role1)).await?;
-    client.role_add(AuthRoleAddRequest::new(role2)).await?;
+    client.role_add(role1).await?;
+    client.role_add(role2).await?;
 
-    client
-        .user_grant_role(AuthUserGrantRoleRequest::new(name1, role1))
-        .await?;
-    client
-        .user_grant_role(AuthUserGrantRoleRequest::new(name1, role2))
-        .await?;
+    client.user_grant_role(name1, role1).await?;
+    client.user_grant_role(name1, role2).await?;
 
     let user_get_resp = client.user_get(name1).await?;
     assert_eq!(
@@ -170,12 +149,8 @@ async fn user_role_operations_should_success_in_normal_path() -> Result<()> {
         vec![role1.to_owned(), role2.to_owned()]
     );
 
-    client
-        .user_revoke_role(AuthUserRevokeRoleRequest::new(name1, role1))
-        .await?;
-    client
-        .user_revoke_role(AuthUserRevokeRoleRequest::new(name1, role2))
-        .await?;
+    client.user_revoke_role(name1, role1).await?;
+    client.user_revoke_role(name1, role2).await?;
 
     Ok(())
 }

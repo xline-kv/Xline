@@ -1,5 +1,5 @@
 use clap::{arg, ArgMatches, Command};
-use xline_client::{error::Result, types::auth::AuthRoleGetRequest, Client};
+use xline_client::{error::Result, Client};
 
 use crate::utils::printer::Printer;
 
@@ -28,10 +28,7 @@ pub(super) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
     if detail {
         for role in resp.roles {
             println!("{role}");
-            let resp_role_get = client
-                .auth_client()
-                .role_get(AuthRoleGetRequest::new(&role))
-                .await?;
+            let resp_role_get = client.auth_client().role_get(role).await?;
             resp_role_get.print();
         }
     } else {

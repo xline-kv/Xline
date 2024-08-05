@@ -108,11 +108,12 @@ pub trait ClientApi {
             let resp = self.fetch_cluster(true).await?;
             return Ok(resp
                 .leader_id
-                .expect("linearizable fetch cluster should return a leader id"));
+                .expect("linearizable fetch cluster should return a leader id"))
+                .into();
         }
         let resp = self.fetch_cluster(false).await?;
         if let Some(id) = resp.leader_id {
-            return Ok(id);
+            return Ok(id.into());
         }
         debug!("no leader id in FetchClusterResponse, try to send linearizable request");
         // fallback to linearizable fetch
@@ -285,8 +286,8 @@ impl ClientBuilder {
             match r {
                 Ok(r) => {
                     self.cluster_version = Some(r.cluster_version);
-                    if let Some(id) = r.leader_id {
-                        self.leader_state = Some((id, r.term));
+                    if let Some(ref id) = r.leader_id {
+                        self.leader_state = Some((id.into(), r.term));
                     }
                     self.all_members = if self.is_raw_curp {
                         Some(r.into_peer_urls())

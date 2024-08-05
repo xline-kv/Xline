@@ -434,7 +434,7 @@ impl CurpGroup {
                 leader = leader_id;
             }
         }
-        leader.map(|l| (l, max_term))
+        leader.map(|l| (l.value, max_term))
     }
 
     pub async fn get_leader(&self) -> (ServerId, u64) {
@@ -506,7 +506,7 @@ impl CurpGroup {
             .map(|m| Member::new(m.id, m.name, m.peer_urls, m.client_urls, m.is_learner))
             .collect();
         let cluster_res = curp::rpc::FetchClusterResponse {
-            leader_id: cluster_res_base.leader_id,
+            leader_id: cluster_res_base.leader_id.map(|l| l.value.into()),
             term: cluster_res_base.term,
             cluster_id: cluster_res_base.cluster_id,
             members,

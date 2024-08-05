@@ -174,8 +174,14 @@ where
                 }
 
                 // update the leader state if got Redirect
-                CurpError::Redirect(Redirect { leader_id, term }) => {
-                    let _ig = self.inner.update_leader(leader_id, term).await;
+                CurpError::Redirect(Redirect {
+                    ref leader_id,
+                    term,
+                }) => {
+                    let _ig = self
+                        .inner
+                        .update_leader(leader_id.as_ref().map(Into::into), term)
+                        .await;
                 }
             }
 

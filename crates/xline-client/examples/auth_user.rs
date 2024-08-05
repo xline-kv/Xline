@@ -1,10 +1,5 @@
 use anyhow::Result;
-use xline_client::{
-    types::auth::{
-        AuthUserChangePasswordRequest, AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,
-    },
-    Client, ClientOptions,
-};
+use xline_client::{Client, ClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,17 +15,11 @@ async fn main() -> Result<()> {
     client.user_add("user2", "", true).await?;
 
     // change user1's password to "123"
-    client
-        .user_change_password(AuthUserChangePasswordRequest::new("user1", "123"))
-        .await?;
+    client.user_change_password("user1", "123").await?;
 
     // grant roles
-    client
-        .user_grant_role(AuthUserGrantRoleRequest::new("user1", "role1"))
-        .await?;
-    client
-        .user_grant_role(AuthUserGrantRoleRequest::new("user2", "role2"))
-        .await?;
+    client.user_grant_role("user1", "role1").await?;
+    client.user_grant_role("user2", "role2").await?;
 
     // list all users and their roles
     let resp = client.user_list().await?;
@@ -45,12 +34,8 @@ async fn main() -> Result<()> {
     }
 
     // revoke role from user
-    client
-        .user_revoke_role(AuthUserRevokeRoleRequest::new("user1", "role1"))
-        .await?;
-    client
-        .user_revoke_role(AuthUserRevokeRoleRequest::new("user2", "role2"))
-        .await?;
+    client.user_revoke_role("user1", "role1").await?;
+    client.user_revoke_role("user2", "role2").await?;
 
     // delete users
     client.user_delete("user1").await?;

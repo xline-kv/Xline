@@ -16,7 +16,7 @@ use crate::{
     clients::{lease::LeaseClient, watch::WatchClient, DEFAULT_SESSION_TTL},
     error::{Result, XlineClientError},
     lease_gen::LeaseIdGenerator,
-    types::{kv::TxnRequest as KvTxnRequest, watch::WatchRequest},
+    types::kv::TxnRequest as KvTxnRequest,
     CurpClient,
 };
 
@@ -192,7 +192,7 @@ impl Xutex {
                 ..Default::default()
             })),
         };
-        let range_end = KeyRange::get_prefix(prefix.as_bytes());
+        let range_end = KeyRange::get_prefix(prefix);
         #[allow(clippy::as_conversions)] // this cast is always safe
         let get_owner = RequestOp {
             request: Some(Request::RequestRange(RangeRequest {
@@ -406,7 +406,7 @@ impl LockClient {
         let rev = my_rev.overflow_sub(1);
         let mut watch_client = self.watch_client.clone();
         loop {
-            let range_end = KeyRange::get_prefix(pfx.as_bytes());
+            let range_end = KeyRange::get_prefix(&pfx);
             #[allow(clippy::as_conversions)] // this cast is always safe
             let get_req = RangeRequest {
                 key: pfx.as_bytes().to_vec(),
@@ -424,7 +424,7 @@ impl LockClient {
                 Some(kv) => kv.key.clone(),
                 None => return Ok(()),
             };
-            let (_, mut response_stream) = watch_client.watch(WatchRequest::new(last_key)).await?;
+            let (_, mut response_stream) = watch_client.watch(last_key, None).await?;
             while let Some(watch_res) = response_stream.message().await? {
                 #[allow(clippy::as_conversions)] // this cast is always safe
                 if watch_res

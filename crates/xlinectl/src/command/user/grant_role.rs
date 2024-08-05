@@ -1,7 +1,10 @@
 use clap::{arg, ArgMatches, Command};
-use xline_client::{error::Result, types::auth::AuthUserGrantRoleRequest, Client};
+use xline_client::{error::Result, Client};
 
 use crate::utils::printer::Printer;
+
+/// Temporary struct for testing, indicates `(user_name, role)`
+type AuthUserGrantRoleRequest = (String, String);
 
 /// Definition of `grant_role` command
 pub(super) fn command() -> Command {
@@ -15,13 +18,13 @@ pub(super) fn command() -> Command {
 pub(super) fn build_request(matches: &ArgMatches) -> AuthUserGrantRoleRequest {
     let name = matches.get_one::<String>("name").expect("required");
     let role = matches.get_one::<String>("role").expect("required");
-    AuthUserGrantRoleRequest::new(name, role)
+    (name.into(), role.into())
 }
 
 /// Execute the command
 pub(super) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let req = build_request(matches);
-    let resp = client.auth_client().user_grant_role(req).await?;
+    let resp = client.auth_client().user_grant_role(req.0, req.1).await?;
     resp.print();
 
     Ok(())
@@ -38,7 +41,7 @@ mod tests {
     fn command_parse_should_be_valid() {
         let test_cases = vec![TestCase::new(
             vec!["grant_role", "JohnDoe", "Admin"],
-            Some(AuthUserGrantRoleRequest::new("JohnDoe", "Admin")),
+            Some(("JohnDoe".into(), "Admin".into())),
         )];
 
         for case in test_cases {
