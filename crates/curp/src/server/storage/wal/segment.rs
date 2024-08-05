@@ -109,7 +109,7 @@ impl WALSegment {
         if let Some(frames) = frame_batches_filtered.last() {
             let frame = frames
                 .last()
-                .unwrap_or_else(|| unreachable!("a batch should contains at least one frame"));
+                .expect("a batch should contains at least one frame");
             if let DataFrameOwned::SealIndex(index) = *frame {
                 highest_index = index;
             }

@@ -93,7 +93,7 @@ impl KvServer {
         let cmd = Command::new_with_auth_info(request, auth_info);
         let (cmd_res, sync_res) = self.client.propose(&cmd, None, false).await??;
         let revision = sync_res
-            .unwrap_or_else(|| unreachable!("sync response should always exist in slow path"))
+            .expect("sync response should always exist in slow path")
             .revision();
         let mut res = Self::parse_response_op(cmd_res.into_inner().into());
         debug!("Get revision {:?}", revision);

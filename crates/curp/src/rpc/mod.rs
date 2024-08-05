@@ -215,9 +215,7 @@ impl WaitSyncedRequest {
     pub(crate) fn propose_id(&self) -> ProposeId {
         self.propose_id
             .clone()
-            .unwrap_or_else(|| {
-                unreachable!("propose id should be set in propose wait synced request")
-            })
+            .expect("propose id should be set in propose wait synced request")
             .into()
     }
 }
@@ -556,9 +554,7 @@ impl ProposeConfChangeRequest {
     pub(crate) fn propose_id(&self) -> ProposeId {
         self.propose_id
             .clone()
-            .unwrap_or_else(|| {
-                unreachable!("propose id should be set in propose conf change request")
-            })
+            .expect("propose id should be set in propose conf change request")
             .into()
     }
 }
@@ -576,9 +572,7 @@ impl ShutdownRequest {
     pub(crate) fn propose_id(&self) -> ProposeId {
         self.propose_id
             .clone()
-            .unwrap_or_else(|| {
-                unreachable!("propose id should be set in propose conf change request")
-            })
+            .expect("propose id should be set in propose conf change request")
             .into()
     }
 }
@@ -613,9 +607,7 @@ impl PublishRequest {
     pub(crate) fn propose_id(&self) -> ProposeId {
         self.propose_id
             .clone()
-            .unwrap_or_else(|| {
-                unreachable!("propose id should be set in propose conf change request")
-            })
+            .expect("propose id should be set in propose conf change request")
             .into()
     }
 }
@@ -760,9 +752,7 @@ impl<E: std::error::Error + 'static> From<E> for CurpError {
             }
             if !status.details().is_empty() {
                 return match CurpErrorWrapper::decode(status.details()) {
-                    Ok(e) => e
-                        .err
-                        .unwrap_or_else(|| unreachable!("err must be set in CurpErrorWrapper")),
+                    Ok(e) => e.err.expect("err must be set in CurpErrorWrapper"),
                     Err(dec_err) => Self::internal(dec_err.to_string()),
                 };
             }

@@ -697,9 +697,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .map_err(|_ig| (term, log_w.commit_index + 1))?;
         // fallback overwritten conf change entries
         for idx in fallback_indexes.iter().sorted().rev() {
-            let info = log_w.fallback_contexts.remove(idx).unwrap_or_else(|| {
-                unreachable!("fall_back_infos should contain the entry need to fallback")
-            });
+            let info = log_w
+                .fallback_contexts
+                .remove(idx)
+                .expect("fall_back_infos should contain the entry need to fallback");
             let EntryData::ConfChange(ref conf_change) = info.origin_entry.entry_data else {
                 unreachable!("the entry in the fallback_info should be conf change entry");
             };
@@ -1105,7 +1106,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let match_index = self
             .lst
             .get_match_index(target_id)
-            .unwrap_or_else(|| unreachable!("node should exist,checked before"));
+            .expect("node should exist,checked before");
         if match_index == self.log.read().last_log_index() {
             Ok(true)
         } else {
@@ -1820,8 +1821,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 _ = self.ctx.connects.remove(&node_id);
                 let _ig = self.ctx.curp_storage.remove_member(node_id);
                 let m = self.ctx.cluster_info.remove(&node_id);
-                let removed_member =
-                    m.unwrap_or_else(|| unreachable!("the member should exist before remove"));
+                let removed_member = m.expect("the member should exist before remove");
                 (
                     true,
                     (
@@ -1836,9 +1836,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                     .ctx
                     .cluster_info
                     .update(&node_id, conf_change.address.clone());
-                let m = self.ctx.cluster_info.get(&node_id).unwrap_or_else(|| {
-                    unreachable!("the member should exist after update");
-                });
+                let m = self
+                    .ctx
+                    .cluster_info
+                    .get(&node_id)
+                    .expect("the member should exist after update");
                 let _ig = self.ctx.curp_storage.put_member(&m);
                 (
                     old_addrs != conf_change.address,
@@ -1850,9 +1852,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 _ = cst_l.config.insert(node_id, false);
                 self.lst.promote(node_id);
                 let modified = self.ctx.cluster_info.promote(node_id);
-                let m = self.ctx.cluster_info.get(&node_id).unwrap_or_else(|| {
-                    unreachable!("the member should exist after promote");
-                });
+                let m = self
+                    .ctx
+                    .cluster_info
+                    .get(&node_id)
+                    .expect("the member should exist after promote");
                 let _ig = self.ctx.curp_storage.put_member(&m);
                 (modified, (vec![], String::new(), false))
             }

@@ -303,15 +303,15 @@ impl From<ServerArgs> for XlineServerConfig {
         let auto_compactor_cfg = if let Some(mode) = args.auto_compact_mode {
             match mode.as_str() {
                 "periodic" => {
-                    let period = args.auto_periodic_retention.unwrap_or_else(|| {
-                        panic!("missing auto_periodic_retention argument");
-                    });
+                    let period = args
+                        .auto_periodic_retention
+                        .expect("missing auto_periodic_retention argument");
                     Some(AutoCompactConfig::Periodic(period))
                 }
                 "revision" => {
-                    let retention = args.auto_revision_retention.unwrap_or_else(|| {
-                        panic!("missing auto_revision_retention argument");
-                    });
+                    let retention = args
+                        .auto_revision_retention
+                        .expect("missing auto_revision_retention argument");
                     Some(AutoCompactConfig::Revision(retention))
                 }
                 &_ => unreachable!(

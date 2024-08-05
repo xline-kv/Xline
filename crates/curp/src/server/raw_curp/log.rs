@@ -245,10 +245,10 @@ impl<C: Command> Log<C> {
             } else {
                 self.first_idx_in_cur_batch -= 1;
             }
-            let _ = self
+            let _: u64 = self
                 .batch_end
                 .pop_front()
-                .unwrap_or_else(|| unreachable!("The batch_end cannot be empty"));
+                .expect("The batch_end cannot be empty");
             Some(entry.inner)
         } else {
             None

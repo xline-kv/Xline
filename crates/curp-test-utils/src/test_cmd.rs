@@ -92,15 +92,12 @@ impl TestCommandResult {
 // The `TestCommandResult` is only for internal use, so we do not have to serialize it to protobuf format
 impl PbCodec for TestCommandResult {
     fn encode(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap_or_else(|_| {
-            unreachable!("test cmd result should always be successfully serialized")
-        })
+        bincode::serialize(self).expect("test cmd result should always be successfully serialized")
     }
 
     fn decode(buf: &[u8]) -> Result<Self, curp_external_api::cmd::PbSerializeError> {
-        Ok(bincode::deserialize(buf).unwrap_or_else(|_| {
-            unreachable!("test cmd result should always be successfully serialized")
-        }))
+        Ok(bincode::deserialize(buf)
+            .expect("test cmd result should always be successfully serialized"))
     }
 }
 
@@ -167,15 +164,12 @@ impl From<LogIndexResult> for LogIndex {
 // The `TestCommandResult` is only for internal use, so we do not have to serialize it to protobuf format
 impl PbCodec for LogIndexResult {
     fn encode(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap_or_else(|_| {
-            unreachable!("test cmd result should always be successfully serialized")
-        })
+        bincode::serialize(self).expect("test cmd result should always be successfully serialized")
     }
 
     fn decode(buf: &[u8]) -> Result<Self, curp_external_api::cmd::PbSerializeError> {
-        Ok(bincode::deserialize(buf).unwrap_or_else(|_| {
-            unreachable!("test cmd result should always be successfully serialized")
-        }))
+        Ok(bincode::deserialize(buf)
+            .expect("test cmd result should always be successfully serialized"))
     }
 }
 
@@ -218,13 +212,11 @@ impl ConflictCheck for TestCommand {
 // The `TestCommand` is only for internal use, so we do not have to serialize it to protobuf format
 impl PbCodec for TestCommand {
     fn encode(&self) -> Vec<u8> {
-        bincode::serialize(self)
-            .unwrap_or_else(|_| unreachable!("test cmd should always be successfully serialized"))
+        bincode::serialize(self).expect("test cmd should always be successfully serialized")
     }
 
     fn decode(buf: &[u8]) -> Result<Self, curp_external_api::cmd::PbSerializeError> {
-        Ok(bincode::deserialize(buf)
-            .unwrap_or_else(|_| unreachable!("test cmd should always be successfully serialized")))
+        Ok(bincode::deserialize(buf).expect("test cmd should always be successfully serialized"))
     }
 }
 

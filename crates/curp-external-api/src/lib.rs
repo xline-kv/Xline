@@ -57,7 +57,7 @@
     clippy::exhaustive_enums,
     clippy::exhaustive_structs,
     clippy::exit,
-    clippy::expect_used,
+    // clippy::expect_used,
     clippy::filetype_is_file,
     clippy::float_arithmetic,
     clippy::float_cmp_const,
@@ -100,7 +100,7 @@
     clippy::unnecessary_self_imports,
     clippy::unneeded_field_pattern,
     // clippy::unreachable, allow unreachable panic, which is out of expectation
-    clippy::unwrap_in_result,
+    // // clippy::unwrap_in_result,
     clippy::unwrap_used,
     // clippy::use_debug, debug is allow for debug log
     clippy::verbose_file_reads,

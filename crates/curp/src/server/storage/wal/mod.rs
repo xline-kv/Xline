@@ -160,7 +160,7 @@ where
         let last_segment = self
             .segments
             .last_mut()
-            .unwrap_or_else(|| unreachable!("there should be at least on segment"));
+            .expect("there should be at least on segment");
         if let Some(DataFrame::Entry(entry)) = item.last() {
             self.next_log_index = entry.index.overflow_add(1);
         }

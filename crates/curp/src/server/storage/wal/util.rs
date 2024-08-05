@@ -67,14 +67,14 @@ impl LockedFile {
         let mut this = std::mem::ManuallyDrop::new(self);
         this.file
             .take()
-            .unwrap_or_else(|| unreachable!("File should always exist after creation"))
+            .expect("File should always exist after creation")
     }
 
     /// Gets the file wrapped inside an `Option`
     fn file(&mut self) -> &mut StdFile {
         self.file
             .as_mut()
-            .unwrap_or_else(|| unreachable!("File should always exist after creation"))
+            .expect("File should always exist after creation")
     }
 }
 
@@ -142,7 +142,7 @@ pub(super) fn parse_u64(bytes_le: &[u8]) -> u64 {
     u64::from_le_bytes(
         bytes_le
             .try_into()
-            .unwrap_or_else(|_| unreachable!("This conversion should always exist")),
+            .expect("This conversion should always exist"),
     )
 }
 

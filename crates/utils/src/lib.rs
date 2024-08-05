@@ -57,7 +57,7 @@
     clippy::exhaustive_enums,
     clippy::exhaustive_structs,
     clippy::exit,
-    clippy::expect_used,
+    // clippy::expect_used,
     clippy::filetype_is_file,
     clippy::float_arithmetic,
     clippy::float_cmp_const,
@@ -100,7 +100,7 @@
     clippy::unnecessary_self_imports,
     clippy::unneeded_field_pattern,
     // clippy::unreachable, allow unreachable panic, which is out of expectation
-    clippy::unwrap_in_result,
+    // clippy::unwrap_in_result,
     clippy::unwrap_used,
     // clippy::use_debug, debug is allow for debug log
     clippy::verbose_file_reads,
@@ -155,7 +155,7 @@
         clippy::indexing_slicing,
         unused_results,
         clippy::unwrap_used,
-        clippy::expect_used,
+        // clippy::expect_used,
         clippy::as_conversions,
         clippy::shadow_unrelated,
         clippy::arithmetic_side_effects,
@@ -240,10 +240,11 @@ macro_rules! write_vec {
 /// Get current timestamp in seconds
 #[must_use]
 #[inline]
+#[allow(clippy::pedantic)]
 pub fn timestamp() -> u64 {
     let now = std::time::SystemTime::now();
     now.duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_else(|_| unreachable!("Time went backwards"))
+        .expect("Time went backwards")
         .as_secs()
 }
 

@@ -299,9 +299,7 @@ impl IndexOperate for Index {
                 (new_rev, None)
             },
             fmap_value_mut(|revisions| {
-                let last = *revisions
-                    .last()
-                    .unwrap_or_else(|| unreachable!("empty revision list"));
+                let last = *revisions.last().expect("empty revision list");
                 let new_rev = if last.is_deleted() {
                     KeyRevision::new(revision, 1, revision, sub_revision)
                 } else {
@@ -546,9 +544,7 @@ impl IndexOperate for IndexState<'_> {
         let mut state = self.state.lock();
 
         let next_rev = |revisions: &[KeyRevision]| {
-            let last = *revisions
-                .last()
-                .unwrap_or_else(|| unreachable!("empty revision list"));
+            let last = *revisions.last().expect("empty revision list");
             let new_rev = if last.is_deleted() {
                 KeyRevision::new(revision, 1, revision, sub_revision)
             } else {

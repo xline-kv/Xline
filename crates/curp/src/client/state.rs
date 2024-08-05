@@ -271,7 +271,7 @@ impl State {
             if let Entry::Vacant(e) = state.connects.entry(diff) {
                 let addrs = new_members
                     .remove(&diff)
-                    .unwrap_or_else(|| unreachable!("{diff} must in new member addrs"));
+                    .expect("{diff} must in new member addrs");
                 debug!("client connects to a new server({diff}), address({addrs:?})");
                 let new_conn = rpc::connect(diff, addrs, self.immutable.tls_config.clone()).await?;
                 let _ig = e.insert(new_conn);

@@ -204,7 +204,7 @@ where
         }
         let header: [u8; FRAME_HEADER_SIZE] = src[..FRAME_HEADER_SIZE]
             .try_into()
-            .unwrap_or_else(|_| unreachable!("this conversion will always succeed"));
+            .expect("this conversion will always succeed");
         let frame_type = header[0];
         match frame_type {
             INVALID => Err(WALError::MaybeEnded),
@@ -299,8 +299,8 @@ where
     fn encode(&self) -> Vec<u8> {
         match *self {
             DataFrame::Entry(ref entry) => {
-                let entry_bytes = bincode::serialize(entry)
-                    .unwrap_or_else(|_| unreachable!("serialization should never fail"));
+                let entry_bytes =
+                    bincode::serialize(entry).expect("serialization should never fail");
                 let len = entry_bytes.len();
                 assert_eq!(len >> 56, 0, "log entry length: {len} too large");
                 let mut bytes = Vec::with_capacity(FRAME_HEADER_SIZE + entry_bytes.len());

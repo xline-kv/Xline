@@ -192,7 +192,7 @@ where
 
         Err(tonic::Status::deadline_exceeded(format!(
             "request timeout, last error: {:?}",
-            last_err.unwrap_or_else(|| unreachable!("last error must be set"))
+            last_err.expect("last error must be set")
         )))
     }
 }

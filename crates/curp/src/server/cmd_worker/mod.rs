@@ -186,9 +186,9 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
                 error!("failed to set last_applied, {e}");
                 return false;
             }
-            let change = conf_change.first().unwrap_or_else(|| {
-                unreachable!("conf change should always have at least one change")
-            });
+            let change = conf_change
+                .first()
+                .expect("conf change should always have at least one change");
             let shutdown_self =
                 change.change_type() == ConfChangeType::Remove && change.node_id == id;
             cb.write().insert_conf(entry.propose_id);

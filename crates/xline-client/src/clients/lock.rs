@@ -213,7 +213,7 @@ impl Xutex {
         let resp = Into::<TxnResponse>::into(cmd_res.into_inner());
         self.rev = if resp.succeeded {
             sync_res
-                .unwrap_or_else(|| unreachable!("sync_res always has value when use slow path"))
+                .expect("sync_res always has value when use slow path")
                 .revision()
         } else {
             #[allow(clippy::indexing_slicing)]

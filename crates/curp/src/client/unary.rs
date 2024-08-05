@@ -281,7 +281,7 @@ impl<C: Command> ClientApi for Unary<C> {
             .await?
             .into_inner()
             .read_state
-            .unwrap_or_else(|| unreachable!("read_state must be set in fetch read state response"));
+            .expect("read_state must be set in fetch read state response");
         Ok(state)
     }
 

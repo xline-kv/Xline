@@ -48,7 +48,7 @@ pub(crate) trait Printer: Serialize {
     fn print(&self) {
         match *PRINTER_TYPE
             .get()
-            .unwrap_or_else(|| unreachable!("the printer type should be initialized"))
+            .expect("the printer type should be initialized")
         {
             PrinterType::Simple => self.simple(),
             PrinterType::Field => self.field(),

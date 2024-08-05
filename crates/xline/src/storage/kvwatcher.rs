@@ -497,14 +497,8 @@ impl KvWatcher {
                     .index
                     .iter()
                     .filter_map(|(k, v)| {
-                        k.contains_key(
-                            &event
-                                .kv
-                                .as_ref()
-                                .unwrap_or_else(|| panic!("Receive Event with empty kv"))
-                                .key,
-                        )
-                        .then_some(v)
+                        k.contains_key(&event.kv.as_ref().expect("Receive Event with empty kv").key)
+                            .then_some(v)
                     })
                     .flatten()
                     .copied()
@@ -520,7 +514,7 @@ impl KvWatcher {
                 let watcher = watcher_map_w
                     .watchers
                     .get_mut(&watch_id)
-                    .unwrap_or_else(|| panic!("watcher index and watchers doesn't match"));
+                    .expect("watcher index and watchers doesn't match");
                 if let Err(TrySendError::Full(watch_event)) = watcher.notify((revision, events)) {
                     watcher_map_w
                         .move_to_victim(watch_id, (watch_event.revision, watch_event.events));
@@ -580,10 +574,10 @@ impl WatchEvent {
 fn get_last_revision(events: &[Event]) -> i64 {
     events
         .last()
-        .unwrap_or_else(|| unreachable!("events is not empty"))
+        .expect("events is not empty")
         .kv
         .as_ref()
-        .unwrap_or_else(|| panic!("event.kv can't be None"))
+        .expect("event.kv can't be None")
         .mod_revision
 }
 

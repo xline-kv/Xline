@@ -308,10 +308,7 @@ where
             if self.prev_kv.contains(&watch_id) {
                 for ev in &mut events {
                     if !ev.is_create() {
-                        let kv = ev
-                            .kv
-                            .as_ref()
-                            .unwrap_or_else(|| panic!("event.kv can't be None"));
+                        let kv = ev.kv.as_ref().expect("event.kv can't be None");
                         ev.prev_kv = self.kv_watcher.get_prev_kv(kv);
                     }
                 }

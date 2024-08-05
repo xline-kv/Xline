@@ -95,8 +95,7 @@ impl<C: Compactable> PeriodicCompactor<C> {
         if target_revision == last_revision {
             return None;
         }
-        let revision =
-            target_revision.unwrap_or_else(|| unreachable!("target revision shouldn't be None"));
+        let revision = target_revision.expect("target revision shouldn't be None");
         let now = Instant::now();
         info!(
             "starting auto periodic compaction, revision = {}, period = {:?}",
@@ -140,7 +139,7 @@ fn sample_config(period: Duration) -> (Duration, usize) {
     let divisor = 10;
     let check_interval = base_interval
         .checked_div(divisor)
-        .unwrap_or_else(|| unreachable!("duration divisor should not be 0"));
+        .expect("duration divisor should not be 0");
     let check_interval_secs = check_interval.as_secs();
     let periodic_secs = period.as_secs();
     let length = periodic_secs

@@ -244,7 +244,7 @@ impl Lock for LockServer {
                     None
                 }
             })
-            .unwrap_or_else(|| unreachable!("owner_resp should be a Get response"));
+            .expect("owner_resp should be a Get response");
 
         let owner_key = owner_res.kvs;
         let header = if owner_key

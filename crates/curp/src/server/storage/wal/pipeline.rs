@@ -149,7 +149,7 @@ impl Iterator for FilePipeline {
         }
         self.file_iter
             .as_mut()
-            .unwrap_or_else(|| unreachable!("Option is always `Some`"))
+            .expect("Option is always `Some`")
             .next()
             .map(Ok)
     }

@@ -106,9 +106,9 @@ pub trait ClientApi {
     async fn fetch_leader_id(&self, linearizable: bool) -> Result<ServerId, Self::Error> {
         if linearizable {
             let resp = self.fetch_cluster(true).await?;
-            return Ok(resp.leader_id.unwrap_or_else(|| {
-                unreachable!("linearizable fetch cluster should return a leader id")
-            }));
+            return Ok(resp
+                .leader_id
+                .expect("linearizable fetch cluster should return a leader id"));
         }
         let resp = self.fetch_cluster(false).await?;
         if let Some(id) = resp.leader_id {
@@ -304,9 +304,9 @@ impl ClientBuilder {
     /// Init state builder
     fn init_state_builder(&self) -> StateBuilder {
         let mut builder = StateBuilder::new(
-            self.all_members.clone().unwrap_or_else(|| {
-                unreachable!("must set the initial members or discover from some endpoints")
-            }),
+            self.all_members
+                .clone()
+                .expect("must set the initial members or discover from some endpoints"),
             self.tls_config.clone(),
         );
         if let Some(version) = self.cluster_version {

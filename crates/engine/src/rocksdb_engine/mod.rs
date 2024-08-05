@@ -578,7 +578,7 @@ impl RocksSnapshot {
                 self.current_file = Some(reader);
                 self.current_file
                     .as_mut()
-                    .unwrap_or_else(|| unreachable!("current_file must be `Some` here"))
+                    .expect("current_file must be `Some` here")
             };
             let n = read_buf(&mut f, buf).await?;
             if n == 0 {
@@ -647,7 +647,7 @@ impl RocksSnapshot {
                 self.current_file = Some(writer);
                 self.current_file
                     .as_mut()
-                    .unwrap_or_else(|| unreachable!("current_file must be `Some` here"))
+                    .expect("current_file must be `Some` here")
             };
             let buffer = buf.split_to(write_len);
             f.write_all(&buffer).await?;
