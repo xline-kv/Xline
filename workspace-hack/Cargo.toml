@@ -26,8 +26,8 @@ getrandom = { version = "0.2", default-features = false, features = ["js", "rdra
 itertools = { version = "0.13" }
 libc = { version = "0.2", features = ["extra_traits"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
-madsim-tokio = { version = "0.2", default-features = false, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
-madsim-tonic = { version = "0.5", default-features = false, features = ["tls"] }
+madsim-tokio = { git = "https://github.com/LucienY01/madsim.git", branch = "bz/tonic-0-12", default-features = false, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+madsim-tonic = { git = "https://github.com/LucienY01/madsim.git", branch = "bz/tonic-0-12", default-features = false, features = ["tls"] }
 memchr = { version = "2" }
 opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"] }
 petgraph = { version = "0.6" }
