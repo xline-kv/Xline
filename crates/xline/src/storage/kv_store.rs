@@ -15,8 +15,9 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use utils::table_names::{KV_TABLE, META_TABLE};
 use xlineapi::{
-    command::{CommandResponse, KeyRange, SyncResponse},
+    command::{CommandResponse, SyncResponse},
     execute_error::ExecuteError,
+    keyrange::{KeyRange, ONE_KEY},
 };
 
 use super::{
@@ -145,7 +146,7 @@ impl KvStoreInner {
 
     /// Get previous `KeyValue` of a `KeyValue`
     pub(crate) fn get_prev_kv(&self, kv: &KeyValue) -> Option<KeyValue> {
-        self.get_range(&kv.key, &[], kv.mod_revision.overflow_sub(1))
+        self.get_range(&kv.key, ONE_KEY, kv.mod_revision.overflow_sub(1))
             .ok()?
             .pop()
     }

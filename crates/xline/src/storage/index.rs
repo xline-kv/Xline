@@ -8,10 +8,9 @@ use crossbeam_skiplist::{map::Entry, SkipMap};
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
 use utils::parking_lot_lock::RwLockMap;
-use xlineapi::command::KeyRange;
+use xlineapi::keyrange::{EtcdKeyRange, KeyRange, RangeType, StdBoundRange};
 
 use super::revision::{KeyRevision, Revision};
-use crate::server::command::RangeType;
 
 /// Operations for `Index`
 pub(crate) trait IndexOperate {
@@ -163,7 +162,7 @@ impl Index {
                 .collect(),
             RangeType::Range => self
                 .inner
-                .range(KeyRange::new(key, range_end))
+                .range(KeyRange::new_etcd(key, range_end))
                 .flat_map(|entry| {
                     entry
                         .value()
@@ -280,7 +279,7 @@ impl IndexOperate for Index {
                 .collect(),
             RangeType::Range => self
                 .inner
-                .range(KeyRange::new(key, range_end))
+                .range(KeyRange::new_etcd(key, range_end))
                 .filter_map(fmap_value(|revs| Index::get_revision(revs, revision)))
                 .collect(),
         }
@@ -374,7 +373,7 @@ impl IndexOperate for Index {
                 .unzip(),
             RangeType::Range => self
                 .inner
-                .range(KeyRange::new(key, range_end))
+                .range(KeyRange::new_etcd(key, range_end))
                 .zip(0..)
                 .filter_map(|(entry, i)| {
                     entry.value().map_write(|mut revs| {
@@ -529,7 +528,7 @@ impl IndexOperate for IndexState<'_> {
                 .filter_map(|(_, revs)| Index::get_revision(revs.as_ref(), revision))
                 .collect(),
             RangeType::Range => self
-                .range_key_revisions(KeyRange::new(key, range_end))
+                .range_key_revisions(KeyRange::new_etcd(key, range_end))
                 .into_iter()
                 .filter_map(|(_, revs)| Index::get_revision(revs.as_ref(), revision))
                 .collect(),
@@ -617,7 +616,7 @@ impl IndexOperate for IndexState<'_> {
                 .unzip(),
             RangeType::AllKeys => self.delete_all(revision, sub_revision),
             RangeType::Range => {
-                self.delete_range(KeyRange::new(key, range_end), revision, sub_revision)
+                self.delete_range(KeyRange::new_etcd(key, range_end), revision, sub_revision)
             }
         };
 

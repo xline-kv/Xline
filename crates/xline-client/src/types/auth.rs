@@ -1,4 +1,4 @@
-use xlineapi::command::KeyRange;
+use xlineapi::keyrange::KeyRange;
 pub use xlineapi::{
     AuthDisableResponse, AuthEnableResponse, AuthRoleAddResponse, AuthRoleDeleteResponse,
     AuthRoleGetResponse, AuthRoleGrantPermissionResponse, AuthRoleListResponse,

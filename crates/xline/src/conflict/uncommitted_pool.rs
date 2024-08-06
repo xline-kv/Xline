@@ -11,7 +11,7 @@ use curp::server::conflict::CommandEntry;
 use curp_external_api::conflict::{ConflictPoolOp, EntryId, UncommittedPoolOp};
 use itertools::Itertools;
 use utils::interval_map::{Interval, IntervalMap};
-use xlineapi::{command::Command, interval::BytesAffine};
+use xlineapi::{command::Command, keyrange::BytesAffine};
 
 use crate::storage::lease_store::LeaseCollection;
 

@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use petgraph::graph::{DefaultIx, IndexType, NodeIndex};
+use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 mod tests;
@@ -979,13 +980,21 @@ where
 
 /// The Interval stored in `IntervalMap`
 /// Represents the interval [low, high)
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Interval<T> {
     /// Low value
     pub low: T,
     /// high value
     pub high: T,
+}
+
+impl<T> Interval<T> {
+    /// Transfer the interval into tuple
+    #[inline]
+    pub fn into_parts(self) -> (T, T) {
+        (self.low, self.high)
+    }
 }
 
 impl<T: Ord> Interval<T> {
