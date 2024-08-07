@@ -116,7 +116,7 @@ impl CurpGroup {
                         store_c.lock().replace(Arc::clone(&ce.store));
                         // we will restart the old leader.
                         // after the reboot, it may no longer be the leader.
-                        let is_leader = false;
+                        let is_leader = i == 0;
                         let curp_config = Arc::new(
                             CurpConfigBuilder::default()
                                 .engine_cfg(engine_cfg.clone())
