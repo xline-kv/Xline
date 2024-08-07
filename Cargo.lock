@@ -672,9 +672,9 @@ dependencies = [
  "futures",
  "indexmap 2.2.6",
  "itertools 0.13.0",
- "madsim",
- "madsim-tokio",
- "madsim-tonic",
+ "madsim 0.2.30",
+ "madsim-tokio 0.2.28",
+ "madsim-tonic 0.4.2+0.10.0",
  "madsim-tonic-build",
  "mockall",
  "once_cell",
@@ -721,7 +721,7 @@ dependencies = [
  "curp-external-api",
  "engine",
  "itertools 0.13.0",
- "madsim-tokio",
+ "madsim-tokio 0.2.28",
  "prost",
  "serde",
  "thiserror",
@@ -928,7 +928,7 @@ dependencies = [
  "bincode",
  "bytes",
  "clippy-utilities",
- "madsim-tokio",
+ "madsim-tokio 0.2.28",
  "opentelemetry 0.21.0",
  "parking_lot",
  "rocksdb",
@@ -1559,8 +1559,8 @@ dependencies = [
 
 [[package]]
 name = "madsim"
-version = "0.2.27"
-source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
+version = "0.2.30"
+source = "git+https://github.com/bsbds/madsim.git?branch=fix-client-stream#831b320ed47a1c202646fd25e879a0ad61cd374d"
 dependencies = [
  "ahash",
  "async-channel",
@@ -1572,7 +1572,37 @@ dependencies = [
  "futures-util",
  "lazy_static",
  "libc",
- "madsim-macros",
+ "madsim-macros 0.2.12 (git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic)",
+ "naive-timer",
+ "panic-message",
+ "rand",
+ "rand_xoshiro",
+ "rustversion",
+ "serde",
+ "spin",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "madsim"
+version = "0.2.30"
+source = "git+https://github.com/bsbds/madsim.git?branch=fix-client-stream#831b320ed47a1c202646fd25e879a0ad61cd374d"
+dependencies = [
+ "ahash",
+ "async-channel",
+ "async-stream",
+ "async-task",
+ "bincode",
+ "bytes",
+ "downcast-rs",
+ "futures-util",
+ "lazy_static",
+ "libc",
+ "madsim-macros 0.2.12 (git+https://github.com/bsbds/madsim.git?branch=fix-client-stream)",
  "naive-timer",
  "panic-message",
  "rand",
@@ -1590,7 +1620,18 @@ dependencies = [
 [[package]]
 name = "madsim-macros"
 version = "0.2.12"
-source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
+source = "git+https://github.com/bsbds/madsim.git?branch=fix-client-stream#831b320ed47a1c202646fd25e879a0ad61cd374d"
+dependencies = [
+ "darling 0.14.4",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "madsim-macros"
+version = "0.2.12"
+source = "git+https://github.com/bsbds/madsim.git?branch=fix-client-stream#831b320ed47a1c202646fd25e879a0ad61cd374d"
 dependencies = [
  "darling 0.14.4",
  "proc-macro2",
@@ -1600,23 +1641,48 @@ dependencies = [
 
 [[package]]
 name = "madsim-tokio"
-version = "0.2.25"
-source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
+version = "0.2.28"
+source = "git+https://github.com/bsbds/madsim.git?branch=fix-client-stream#831b320ed47a1c202646fd25e879a0ad61cd374d"
 dependencies = [
- "madsim",
+ "madsim 0.2.27",
+ "spin",
+ "tokio",
+]
+
+[[package]]
+name = "madsim-tokio"
+version = "0.2.28"
+source = "git+https://github.com/bsbds/madsim.git?branch=fix-client-stream#831b320ed47a1c202646fd25e879a0ad61cd374d"
+dependencies = [
+ "madsim 0.2.30",
  "spin",
  "tokio",
 ]
 
 [[package]]
 name = "madsim-tonic"
-version = "0.4.2+0.11.0"
-source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
+version = "0.4.2+0.10.0"
+source = "git+https://github.com/bsbds/madsim.git?branch=fix-client-stream#831b320ed47a1c202646fd25e879a0ad61cd374d"
 dependencies = [
  "async-stream",
  "chrono",
  "futures-util",
- "madsim",
+ "madsim 0.2.30",
+ "tokio",
+ "tonic",
+ "tower",
+ "tracing",
+]
+
+[[package]]
+name = "madsim-tonic"
+version = "0.4.2+0.10.0"
+source = "git+https://github.com/bsbds/madsim.git?branch=fix-client-stream#831b320ed47a1c202646fd25e879a0ad61cd374d"
+dependencies = [
+ "async-stream",
+ "chrono",
+ "futures-util",
+ "madsim 0.2.27",
  "tokio",
  "tonic",
  "tower",
@@ -1625,8 +1691,8 @@ dependencies = [
 
 [[package]]
 name = "madsim-tonic-build"
-version = "0.4.3+0.11.0"
-source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
+version = "0.4.3+0.10.0"
+source = "git+https://github.com/bsbds/madsim.git?branch=fix-client-stream#831b320ed47a1c202646fd25e879a0ad61cd374d"
 dependencies = [
  "prettyplease",
  "proc-macro2",
@@ -2747,9 +2813,9 @@ dependencies = [
  "engine",
  "futures",
  "itertools 0.13.0",
- "madsim",
- "madsim-tokio",
- "madsim-tonic",
+ "madsim 0.2.30",
+ "madsim-tokio 0.2.28",
+ "madsim-tonic 0.4.2+0.10.0",
  "madsim-tonic-build",
  "parking_lot",
  "prost",
@@ -3075,7 +3141,7 @@ version = "0.1.12"
 source = "git+https://github.com/madsim-rs/tokio.git?rev=ab251ad#ab251ad1fae8e16d9a1df74e301dbf3ed9d4d3af"
 dependencies = [
  "futures-core",
- "madsim-tokio",
+ "madsim-tokio 0.2.28",
  "pin-project-lite",
 ]
 
@@ -3420,8 +3486,8 @@ dependencies = [
  "event-listener",
  "futures",
  "getset",
- "madsim-tokio",
- "madsim-tonic",
+ "madsim-tokio 0.2.28",
+ "madsim-tonic 0.4.2+0.10.0",
  "opentelemetry 0.22.0",
  "opentelemetry-jaeger",
  "opentelemetry-otlp",
@@ -3785,8 +3851,8 @@ dependencies = [
  "itertools 0.12.1",
  "libc",
  "log",
- "madsim-tokio",
- "madsim-tonic",
+ "madsim-tokio 0.2.25",
+ "madsim-tonic 0.4.2+0.11.0",
  "memchr",
  "num-traits",
  "opentelemetry_sdk 0.22.1",
@@ -3852,8 +3918,8 @@ dependencies = [
  "itertools 0.13.0",
  "jsonwebtoken",
  "log",
- "madsim-tokio",
- "madsim-tonic",
+ "madsim-tokio 0.2.28",
+ "madsim-tonic 0.4.2+0.10.0",
  "madsim-tonic-build",
  "merged_range",
  "mockall",
@@ -3903,8 +3969,8 @@ dependencies = [
  "futures",
  "getrandom",
  "http",
- "madsim-tokio",
- "madsim-tonic",
+ "madsim-tokio 0.2.28",
+ "madsim-tonic 0.4.2+0.10.0",
  "rand",
  "test-macros",
  "thiserror",
@@ -3920,8 +3986,8 @@ name = "xline-test-utils"
 version = "0.1.0"
 dependencies = [
  "futures",
- "madsim-tokio",
- "madsim-tonic",
+ "madsim-tokio 0.2.28",
+ "madsim-tonic 0.4.2+0.10.0",
  "rand",
  "utils",
  "workspace-hack",
@@ -3937,7 +4003,7 @@ dependencies = [
  "curp",
  "curp-external-api",
  "itertools 0.13.0",
- "madsim-tonic",
+ "madsim-tonic 0.4.2+0.10.0",
  "madsim-tonic-build",
  "prost",
  "serde",
@@ -3954,7 +4020,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "madsim-tonic",
+ "madsim-tonic 0.4.2+0.10.0",
  "regex",
  "serde",
  "serde_json",

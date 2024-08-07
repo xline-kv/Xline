@@ -24,8 +24,8 @@ futures-util = { version = "0.3", features = ["channel", "io", "sink"] }
 getrandom = { version = "0.2", default-features = false, features = ["js", "rdrand", "std"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
-madsim-tokio = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic", default-features = false, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
-madsim-tonic = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic", default-features = false, features = ["tls"] }
+madsim-tokio = { git = "https://github.com/bsbds/madsim.git", branch = "fix-client-stream", default-features = false, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+madsim-tonic = { git = "https://github.com/bsbds/madsim.git", branch = "fix-client-stream", default-features = false, features = ["tls"] }
 memchr = { version = "2" }
 num-traits = { version = "0.2", default-features = false, features = ["i128", "std"] }
 opentelemetry_sdk = { version = "0.22", features = ["metrics", "rt-tokio"] }
