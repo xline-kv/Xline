@@ -47,7 +47,9 @@ impl Streaming {
         loop {
             let Some(leader_id) = self.state.leader_id().await else {
                 warn!("cannot find leader_id, refreshing state...");
-                let _ig = self.state.try_refresh_state().await;
+                if let Err(e) = self.state.try_refresh_state().await {
+                    warn!("refresh state error: {:?}", e);
+                }
                 tokio::time::sleep(RETRY_DELAY).await;
                 continue;
             };
