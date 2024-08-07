@@ -136,6 +136,15 @@ impl KeyRange {
         Self::OneKey(key_vec)
     }
 
+    /// New `KeyRange` of all keys
+    #[inline]
+    pub fn new_all_keys() -> Self {
+        Self::Range(Interval::new(
+            BytesAffine::Bytes(UNBOUNDED.into()),
+            BytesAffine::Unbounded,
+        ))
+    }
+
     /// Construct `KeyRange` directly from [`start`, `end`], both included
     ///
     /// # Panics
@@ -351,31 +360,6 @@ impl ConflictCheck for KeyRange {
     #[inline]
     fn is_conflict(&self, other: &Self) -> bool {
         self.overlap(&other)
-    }
-}
-
-/// Type of `KeyRange`
-#[derive(Debug)]
-pub enum RangeType {
-    /// `KeyRange` contains only one key
-    OneKey,
-    /// `KeyRange` contains all keys
-    AllKeys,
-    /// `KeyRange` contains the keys in the range
-    Range,
-}
-
-impl RangeType {
-    /// Get `RangeType` by given `key` and `range_end`
-    #[inline]
-    pub fn get_range_type(key: &[u8], range_end: &[u8]) -> Self {
-        if range_end == ONE_KEY {
-            RangeType::OneKey
-        } else if key == UNBOUNDED && range_end == UNBOUNDED {
-            RangeType::AllKeys
-        } else {
-            RangeType::Range
-        }
     }
 }
 
