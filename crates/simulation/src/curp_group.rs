@@ -182,14 +182,19 @@ impl CurpGroup {
             .iter()
             .map(|(id, node)| (*id, vec![node.addr.clone()]))
             .collect();
-        SimClient {
-            inner: Arc::new(
+        let client = self
+            .client_node
+            .spawn(async move {
                 ClientBuilder::new(config, true)
                     .all_members(all_members)
                     .build()
                     .await
-                    .unwrap(),
-            ),
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        SimClient {
+            inner: Arc::new(client),
             handle: self.client_node.clone(),
         }
     }
