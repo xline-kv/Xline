@@ -1,8 +1,15 @@
-use std::{collections::HashMap, error::Error, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    error::Error,
+    path::PathBuf,
+    sync::{atomic::AtomicU64, Arc},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 pub use curp::rpc::{
-    protocol_client::ProtocolClient, PbProposeId, ProposeRequest, ProposeResponse,
+    protocol_client::ProtocolClient, PbProposeId, ProposeRequest, ProposeResponse, RecordRequest,
+    RecordResponse,
 };
 use curp::{
     client::{ClientApi, ClientBuilder},
@@ -182,12 +189,12 @@ impl CurpGroup {
             .iter()
             .map(|(id, node)| (*id, vec![node.addr.clone()]))
             .collect();
-        let client = self
+        let (client, client_id) = self
             .client_node
             .spawn(async move {
                 ClientBuilder::new(config, true)
                     .all_members(all_members)
-                    .build()
+                    .build_with_client_id()
                     .await
             })
             .await
@@ -195,6 +202,7 @@ impl CurpGroup {
             .unwrap();
         SimClient {
             inner: Arc::new(client),
+            client_id,
             handle: self.client_node.clone(),
         }
     }
@@ -420,6 +428,21 @@ impl SimProtocolClient {
     }
 
     #[inline]
+    pub async fn record(
+        &mut self,
+        cmd: impl tonic::IntoRequest<RecordRequest> + 'static + Send,
+    ) -> Result<tonic::Response<RecordResponse>, tonic::Status> {
+        let addr = self.addr.clone();
+        self.handle
+            .spawn(async move {
+                let mut client = ProtocolClient::connect(addr).await.unwrap();
+                client.record(cmd).await
+            })
+            .await
+            .unwrap()
+    }
+
+    #[inline]
     pub async fn propose_conf_change(
         &self,
         conf_change: impl tonic::IntoRequest<ProposeConfChangeRequest>,
@@ -455,6 +478,7 @@ impl SimProtocolClient {
 
 pub struct SimClient<C: Command> {
     inner: Arc<CurpClient<C>>,
+    client_id: Arc<AtomicU64>,
     handle: NodeHandle,
 }
 
@@ -501,6 +525,11 @@ impl<C: Command> SimClient<C> {
             .spawn(async move { inner.fetch_leader_id(true).await })
             .await
             .unwrap()
+    }
+
+    #[inline]
+    pub fn client_id(&self) -> u64 {
+        self.client_id.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
