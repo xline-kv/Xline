@@ -23,7 +23,7 @@ ignored = ["prost", "workspace-hack"]
 
 [patch.crates-io]
 # This branch update the tonic version for madsim. We should switch to the original etcd-client crate when new version release.
-madsim = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic" }
-madsim-tonic = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic" }
-madsim-tonic-build = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic" }
-madsim-tokio = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic" }
+madsim = { git = "https://github.com/bsbds/madsim.git", branch = "fix-client-stream" }
+madsim-tonic = { git = "https://github.com/bsbds/madsim.git", branch = "fix-client-stream" }
+madsim-tonic-build = { git = "https://github.com/bsbds/madsim.git", branch = "fix-client-stream" }
+madsim-tokio = { git = "https://github.com/bsbds/madsim.git", branch = "fix-client-stream" }
