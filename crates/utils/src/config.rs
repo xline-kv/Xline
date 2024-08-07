@@ -521,10 +521,11 @@ impl Default for CurpConfig {
 }
 
 /// Curp client settings
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, Getters, Builder)]
 #[allow(clippy::module_name_repetitions)]
 pub struct ClientConfig {
     /// Curp client wait sync timeout
+    #[builder(default = "default_client_wait_synced_timeout()")]
     #[getset(get = "pub")]
     #[serde(
         with = "duration_format",
@@ -533,31 +534,37 @@ pub struct ClientConfig {
     wait_synced_timeout: Duration,
 
     /// Curp client propose request timeout
+    #[builder(default = "default_propose_timeout()")]
     #[getset(get = "pub")]
     #[serde(with = "duration_format", default = "default_propose_timeout")]
     propose_timeout: Duration,
 
     /// Curp client initial retry interval
+    #[builder(default = "default_initial_retry_timeout()")]
     #[getset(get = "pub")]
     #[serde(with = "duration_format", default = "default_initial_retry_timeout")]
     initial_retry_timeout: Duration,
 
     /// Curp client max retry interval
+    #[builder(default = "default_max_retry_timeout()")]
     #[getset(get = "pub")]
     #[serde(with = "duration_format", default = "default_max_retry_timeout")]
     max_retry_timeout: Duration,
 
     /// Curp client retry interval
+    #[builder(default = "default_retry_count()")]
     #[getset(get = "pub")]
     #[serde(default = "default_retry_count")]
     retry_count: usize,
 
     /// Whether to use exponential backoff in retries
+    #[builder(default = "default_fixed_backoff()")]
     #[getset(get = "pub")]
     #[serde(default = "default_fixed_backoff")]
     fixed_backoff: bool,
 
     /// Curp client keep client id alive interval
+    #[builder(default = "default_client_id_keep_alive_interval()")]
     #[getset(get = "pub")]
     #[serde(
         with = "duration_format",
