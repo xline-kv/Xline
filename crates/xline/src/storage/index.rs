@@ -144,19 +144,16 @@ impl Index {
                         .map_read(|revs| Self::filter_revision(revs.as_ref(), revision))
                 })
                 .unwrap_or_default(),
-            KeyRange::Range(r)
-                if r.low == BytesAffine::Unbounded && r.high == BytesAffine::Unbounded =>
-            {
-                self.inner
-                    .iter()
-                    .flat_map(|entry| {
-                        entry
-                            .value()
-                            .map_read(|revs| Self::filter_revision(revs.as_ref(), revision))
-                    })
-                    .sorted()
-                    .collect()
-            }
+            KeyRange::Range(_) if keyrange.is_all_keys() => self
+                .inner
+                .iter()
+                .flat_map(|entry| {
+                    entry
+                        .value()
+                        .map_read(|revs| Self::filter_revision(revs.as_ref(), revision))
+                })
+                .sorted()
+                .collect(),
             KeyRange::Range(_) => self
                 .inner
                 .range(keyrange)
@@ -269,14 +266,11 @@ impl IndexOperate for Index {
                 .and_then(fmap_value(|revs| Index::get_revision(revs, revision)))
                 .map(|rev| vec![rev])
                 .unwrap_or_default(),
-            KeyRange::Range(r)
-                if r.low == BytesAffine::Unbounded && r.high == BytesAffine::Unbounded =>
-            {
-                self.inner
-                    .iter()
-                    .filter_map(fmap_value(|revs| Index::get_revision(revs, revision)))
-                    .collect()
-            }
+            KeyRange::Range(_) if keyrange.is_all_keys() => self
+                .inner
+                .iter()
+                .filter_map(fmap_value(|revs| Index::get_revision(revs, revision)))
+                .collect(),
             KeyRange::Range(_) => self
                 .inner
                 .range(keyrange)
@@ -355,24 +349,17 @@ impl IndexOperate for Index {
                 let keys = if pairs.is_empty() { vec![] } else { vec![key] };
                 (pairs, keys)
             }
-            KeyRange::Range(r)
-                if r.low == BytesAffine::Unbounded && r.high == BytesAffine::Unbounded =>
-            {
-                self.inner
-                    .iter()
-                    .zip(0..)
-                    .filter_map(|(entry, i)| {
-                        entry.value().map_write(|mut revs| {
-                            Self::gen_del_revision(
-                                &mut revs,
-                                revision,
-                                sub_revision.overflow_add(i),
-                            )
+            KeyRange::Range(_) if keyrange.is_all_keys() => self
+                .inner
+                .iter()
+                .zip(0..)
+                .filter_map(|(entry, i)| {
+                    entry.value().map_write(|mut revs| {
+                        Self::gen_del_revision(&mut revs, revision, sub_revision.overflow_add(i))
                             .map(|pair| (pair, entry.key().clone()))
-                        })
                     })
-                    .unzip()
-            }
+                })
+                .unzip(),
             KeyRange::Range(_) => self
                 .inner
                 .range(keyrange)
@@ -524,14 +511,11 @@ impl IndexOperate for IndexState<'_> {
                     .map(|rev| vec![rev])
                     .unwrap_or_default()
             }
-            KeyRange::Range(r)
-                if r.low == BytesAffine::Unbounded && r.high == BytesAffine::Unbounded =>
-            {
-                self.all_key_revisions()
-                    .into_iter()
-                    .filter_map(|(_, revs)| Index::get_revision(revs.as_ref(), revision))
-                    .collect()
-            }
+            KeyRange::Range(_) if keyrange.is_all_keys() => self
+                .all_key_revisions()
+                .into_iter()
+                .filter_map(|(_, revs)| Index::get_revision(revs.as_ref(), revision))
+                .collect(),
             KeyRange::Range(_) => self
                 .range_key_revisions(keyrange)
                 .into_iter()
@@ -618,11 +602,7 @@ impl IndexOperate for IndexState<'_> {
                 .delete_one(&key, revision, sub_revision)
                 .into_iter()
                 .unzip(),
-            KeyRange::Range(r)
-                if r.low == BytesAffine::Unbounded && r.high == BytesAffine::Unbounded =>
-            {
-                self.delete_all(revision, sub_revision)
-            }
+            KeyRange::Range(_) if keyrange.is_all_keys() => self.delete_all(revision, sub_revision),
             KeyRange::Range(_) => self.delete_range(keyrange, revision, sub_revision),
         };
 

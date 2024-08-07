@@ -13,7 +13,7 @@ pub const UNBOUNDED: &[u8] = &[0_u8];
 /// Range end to get one key
 pub const ONE_KEY: &[u8] = &[];
 
-trait Add1 {
+pub trait Add1 {
     fn add1(self) -> Self;
 }
 
@@ -25,7 +25,7 @@ impl Add1 for Vec<u8> {
     /// ```rust
     /// use xlineapi::keyrange::Add1;
     /// assert_eq!(vec![5, 6, 7].add1(), vec![5, 6, 8]);
-    /// assert_eq!(vec![5, 6, 255].add1(), vec![5, 6]);
+    /// assert_eq!(vec![5, 6, 255].add1(), vec![5, 7]);
     /// assert_eq!(vec![255, 255].add1(), vec![0]);
     /// ```
     fn add1(mut self) -> Self {
@@ -198,6 +198,18 @@ impl KeyRange {
     #[inline]
     pub fn get_prefix(key: impl AsRef<[u8]>) -> Vec<u8> {
         key.as_ref().to_vec().add1()
+    }
+
+    /// if this range contains all keys
+    #[must_use]
+    #[inline]
+    pub fn is_all_keys(&self) -> bool {
+        match self {
+            Self::OneKey(_) => false,
+            Self::Range(r) => {
+                r.low == BytesAffine::Bytes(UNBOUNDED.into()) && r.high == BytesAffine::Unbounded
+            }
+        }
     }
 
     /// unpack `KeyRange` to `BytesAffine` tuple
