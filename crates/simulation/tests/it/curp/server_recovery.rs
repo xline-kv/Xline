@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Duration, vec};
 
-use curp::rpc::{ConfChange, ProposeConfChangeRequest};
+use curp::rpc::{ConfChange, ProposeConfChangeRequest, RecordRequest};
 use curp_test_utils::{init_logger, sleep_secs, test_cmd::TestCommand, TEST_TABLE};
 use engine::{StorageEngine, StorageOps};
 use itertools::Itertools;
@@ -51,17 +51,18 @@ async fn leader_crash_and_recovery() {
     let old_leader = group.nodes.get_mut(&leader).unwrap();
 
     // new leader will push an empty log to commit previous logs, the empty log does
-    // not call ce.execute and ce.after_sync, therefore, the index of the first item
-    // received by as_rx is 2
-    let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
-    assert_eq!(er.values, Vec::<u32>::new());
+    // not call ce.after_sync, therefore, the index of the first item received by
+    // as_rx is 2
     let asr = old_leader.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 3); // log index 1 and 2 is the empty log
 
-    let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
+    let new_leader = group.nodes.get_mut(&leader2).unwrap();
+    let (_cmd, er) = new_leader.exe_rx.recv().await.unwrap();
+    assert_eq!(er.values, Vec::<u32>::new());
+    let (_cmd, er) = new_leader.exe_rx.recv().await.unwrap();
     assert_eq!(er.values, vec![0]);
-    let asr = old_leader.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 4); // log index 1 and 2 is the empty log
+    let asr = new_leader.as_rx.recv().await.unwrap();
+    assert_eq!(asr.1, 3); // log index 1 and 2 is the empty log
 }
 
 #[madsim::test]
@@ -100,15 +101,8 @@ async fn follower_crash_and_recovery() {
     group.restart(follower).await;
     let follower = group.nodes.get_mut(&follower).unwrap();
 
-    let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
-    assert_eq!(er.values, Vec::<u32>::new(),);
     let asr = follower.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 2); // log index 1 is the empty log
-
-    let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
-    assert_eq!(er.values, vec![0]);
-    let asr = follower.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 3);
+    assert_eq!(asr.1, 2);
 }
 
 #[madsim::test]
@@ -150,29 +144,15 @@ async fn leader_and_follower_both_crash_and_recovery() {
 
     let old_leader = group.nodes.get_mut(&leader).unwrap();
 
-    let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
-    assert_eq!(er.values, Vec::<u32>::new(),);
     let asr = old_leader.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 2); // log index 1 is the empty log
-
-    let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
-    assert_eq!(er.values, vec![0]);
-    let asr = old_leader.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 3);
 
     // restart follower
     group.restart(follower).await;
     let follower = group.nodes.get_mut(&follower).unwrap();
 
-    let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
-    assert_eq!(er.values, Vec::<u32>::new(),);
     let asr = follower.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 2); // log index 1 is the empty log
-
-    let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
-    assert_eq!(er.values, vec![0]);
-    let asr = follower.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 3);
 }
 
 #[madsim::test]
@@ -186,15 +166,13 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
 
     // 1: send cmd1 to all others except the leader
     let cmd1 = Arc::new(TestCommand::new_put(vec![0], 0));
-    let req1 = ProposeRequest {
-        propose_id: Some(PbProposeId {
-            client_id: 0,
-            seq_num: 0,
-        }),
+    let propose_id = PbProposeId {
+        client_id: client.client_id(),
+        seq_num: 0,
+    };
+    let req1_rec = RecordRequest {
+        propose_id: Some(propose_id),
         command: bincode::serialize(&cmd1).unwrap(),
-        cluster_version: 0,
-        term: 1,
-        slow_path: false,
     };
     for id in group
         .all_members
@@ -203,7 +181,7 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
         .take(4)
     {
         let mut connect = group.get_connect(id).await;
-        connect.propose_stream(req1.clone()).await.unwrap();
+        connect.record(req1_rec.clone()).await.unwrap();
     }
 
     // 2: disable leader1 and wait election
@@ -225,13 +203,13 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
     // old leader should recover from the new leader
     group.enable_node(leader1);
 
-    // every cmd should be executed and after synced on every node
-    for rx in group.exe_rxs() {
-        rx.recv().await;
-        rx.recv().await;
-    }
+    // every cmd should be executed on leader
+    let leader2 = group.get_leader().await.0;
+    let new_leader = group.nodes.get_mut(&leader2).unwrap();
+    new_leader.exe_rx.recv().await;
+
+    // every cmd should be after synced on every node
     for rx in group.as_rxs() {
-        rx.recv().await;
         rx.recv().await;
     }
 }
@@ -301,8 +279,8 @@ async fn old_leader_will_keep_original_states() {
     let cmd1 = Arc::new(TestCommand::new_put(vec![0], 1));
     let req1 = ProposeRequest {
         propose_id: Some(PbProposeId {
-            client_id: 0,
-            seq_num: 0,
+            client_id: client.client_id(),
+            seq_num: 1,
         }),
         command: bincode::serialize(&cmd1).unwrap(),
         cluster_version: 0,
@@ -493,11 +471,12 @@ async fn overwritten_config_should_fallback() {
     let node_id = 123;
     let address = vec!["127.0.0.1:4567".to_owned()];
     let changes = vec![ConfChange::add(node_id, address)];
+    let client = group.new_client().await;
     let res = leader_conn
         .propose_conf_change(
             ProposeConfChangeRequest {
                 propose_id: Some(PbProposeId {
-                    client_id: 0,
+                    client_id: client.client_id(),
                     seq_num: 0,
                 }),
                 changes,
