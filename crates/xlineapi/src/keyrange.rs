@@ -2,6 +2,8 @@ pub use crate::commandpb::KeyRange as EtcdKeyRange;
 use curp_external_api::cmd::ConflictCheck;
 use serde::{Deserialize, Serialize};
 use std::{cmp, ops::Bound};
+use tap::Tap;
+use tracing::warn;
 use utils::interval_map::Interval;
 
 pub type StdBoundRange = std::ops::Range<Bound<Vec<u8>>>;
@@ -10,40 +12,6 @@ pub type StdBoundRange = std::ops::Range<Bound<Vec<u8>>>;
 pub const UNBOUNDED: &[u8] = &[0_u8];
 /// Range end to get one key
 pub const ONE_KEY: &[u8] = &[];
-
-/// Impl Sub1 for Vec<u8>, to make Excluded bound into Included bound.
-trait Sub1 {
-    fn sub1(self) -> Self;
-}
-
-impl Sub1 for Vec<u8> {
-    /// Sub 1 from the last byte of Vec<u8>
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use xlineapi::keyrange::Sub1;
-    /// let mut key = vec![5, 6, 7];
-    /// assert_eq!(key.sub1(), vec![5, 6, 6]);
-    /// let mut key = vec![5, 6, 0];
-    /// assert_eq!(key.sub1(), vec![5, 5, 255]);
-    /// ```
-    fn sub1(mut self) -> Self {
-        debug_assert!(
-            self != UNBOUNDED && self != ONE_KEY,
-            "we cannot calculate the result without knowing the key"
-        );
-        for i in self.iter_mut().rev() {
-            if *i != 0 {
-                *i -= 1;
-                return self;
-            } else {
-                *i = 0xff;
-            }
-        }
-        unreachable!("self cannot be a zero vector");
-    }
-}
 
 trait Add1 {
     fn add1(self) -> Self;
@@ -115,26 +83,42 @@ impl Ord for BytesAffine {
 
 // since we use `BytesAffine` for both Included and Excluded, we don't need to implement `Into<std::ops::Bound>`.
 
-/// A Range of Vec<u8>, represent a [start, end) range.
+impl EtcdKeyRange {
+    pub fn new(key: impl Into<Vec<u8>>, range_end: impl Into<Vec<u8>>) -> Self {
+        Self {
+            key: key.into(),
+            range_end: range_end.into(),
+        }
+    }
+}
+
+/// A Range of Vec<u8>
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
-pub struct KeyRange(Interval<BytesAffine>);
+pub enum KeyRange {
+    /// OneKey, to distinguish from `Prefix` because they all have [a, a+1) form
+    OneKey(Vec<u8>),
+    /// A [start, end) range.
+    ///
+    /// Note: The `low` of [`KeyRange::Range`] Interval must be Bytes, because a Interval `low`
+    /// must less than `high`, but [`BytesAffine::Unbounded`] is always greater than any Bytes.
+    Range(Interval<BytesAffine>),
+}
 
 impl KeyRange {
-    /// New `KeyRange` from `key` and `range_end` which are in etcd form.
-    #[inline]
     pub fn new_etcd(start: impl Into<Vec<u8>>, end: impl Into<Vec<u8>>) -> Self {
         let key_vec = start.into();
         let range_end_vec = end.into();
         let range_end = match range_end_vec.as_slice() {
+            ONE_KEY => return Self::OneKey(key_vec),
             UNBOUNDED => BytesAffine::Unbounded,
-            ONE_KEY => BytesAffine::Bytes(key_vec.clone().add1()), // turn into [key, key+1)
             _ => BytesAffine::Bytes(range_end_vec),
         };
-        let key = match key_vec.as_slice() {
-            UNBOUNDED => BytesAffine::Unbounded,
-            _ => BytesAffine::Bytes(key_vec),
-        };
-        Self(Interval::new(key, range_end))
+        let key = BytesAffine::Bytes(key_vec); // `low` must be Bytes
+        debug_assert!(
+            key < range_end,
+            "key `{key:?}` must be less than range_end `{range_end:?}`"
+        );
+        Self::Range(Interval::new(key, range_end))
     }
 
     /// New `KeyRange` only contains one key
@@ -149,10 +133,7 @@ impl KeyRange {
             key_vec.as_slice() != UNBOUNDED,
             "Unbounded key is not allowed: {key_vec:?}",
         );
-        Self(Interval::new(
-            BytesAffine::Bytes(key_vec.clone()),
-            BytesAffine::Bytes(key_vec.add1()),
-        ))
+        Self::OneKey(key_vec)
     }
 
     /// Construct `KeyRange` directly from [`start`, `end`], both included
@@ -172,23 +153,33 @@ impl KeyRange {
             range_end_vec.as_slice() != ONE_KEY,
             "One key range is not allowed: {key_vec:?}"
         );
-        let range_end = BytesAffine::Bytes(range_end_vec);
-        let key = BytesAffine::Bytes(key_vec.add1());
-        KeyRange(Interval::new(key, range_end))
+        let range_end = BytesAffine::Bytes(range_end_vec.add1());
+        let key = BytesAffine::Bytes(key_vec);
+        KeyRange::Range(Interval::new(key, range_end))
     }
 
     /// Check if `KeyRange` contains a key
     #[must_use]
     #[inline]
     pub fn contains_key(&self, key: &[u8]) -> bool {
-        let key_aff = BytesAffine::Bytes(key.to_vec());
-        self.0.low <= key_aff && key_aff < self.0.high
+        match self {
+            Self::OneKey(k) => k == key,
+            Self::Range(r) => {
+                let key_aff = BytesAffine::Bytes(key.to_vec());
+                r.low <= key_aff && key_aff < r.high
+            }
+        }
     }
 
     /// Check if `KeyRange` overlaps with another `KeyRange`
     #[inline]
     pub fn overlap(&self, other: &Self) -> bool {
-        self.0.overlap(&other.0)
+        match (self, other) {
+            (Self::OneKey(k1), Self::OneKey(k2)) => k1 == k2,
+            (Self::Range(r1), Self::Range(r2)) => r1.overlap(r2),
+            (Self::OneKey(k), Self::Range(_)) => other.contains_key(k),
+            (Self::Range(_), Self::OneKey(k)) => self.contains_key(&k),
+        }
     }
 
     /// Get end of range with prefix
@@ -204,32 +195,47 @@ impl KeyRange {
     #[must_use]
     #[inline]
     pub fn into_parts(self) -> (BytesAffine, BytesAffine) {
-        self.0.into_parts()
+        match self {
+            Self::OneKey(k) => {
+                warn!("calling into_parts on KeyRange::OneKey may not be what you want");
+                (BytesAffine::Bytes(k.clone()), BytesAffine::Bytes(k.add1()))
+            }
+            Self::Range(r) => r.into_parts(),
+        }
     }
 
     /// unpack `KeyRange` to `BytesAffine` tuple
     #[must_use]
     #[inline]
     pub fn into_bounds(self) -> (std::ops::Bound<Vec<u8>>, std::ops::Bound<Vec<u8>>) {
-        (
-            match self.0.low {
-                BytesAffine::Bytes(k) => std::collections::Bound::Included(k),
-                BytesAffine::Unbounded => std::collections::Bound::Unbounded,
-            },
-            match self.0.high {
-                BytesAffine::Bytes(k) => std::collections::Bound::Excluded(k),
-                BytesAffine::Unbounded => std::collections::Bound::Unbounded,
-            },
-        )
+        match self {
+            Self::OneKey(k) => (
+                std::ops::Bound::Included(k.clone()),
+                std::ops::Bound::Included(k),
+            ),
+            Self::Range(r) => (
+                match r.low {
+                    BytesAffine::Bytes(k) => std::collections::Bound::Included(k),
+                    BytesAffine::Unbounded => std::collections::Bound::Unbounded,
+                },
+                match r.high {
+                    BytesAffine::Bytes(k) => std::collections::Bound::Excluded(k),
+                    BytesAffine::Unbounded => std::collections::Bound::Unbounded,
+                },
+            ),
+        }
     }
 
     /// get the start slice in etcd form of `KeyRange`
     #[must_use]
     #[inline]
     pub fn range_start(&self) -> &[u8] {
-        match self.0.low {
-            BytesAffine::Bytes(ref k) => k.as_slice(),
-            BytesAffine::Unbounded => &[0],
+        match self {
+            KeyRange::OneKey(key_vec) => key_vec.as_slice(),
+            KeyRange::Range(Interval { low, .. }) => match low {
+                BytesAffine::Bytes(ref k) => k.as_slice(),
+                BytesAffine::Unbounded => &[0],
+            },
         }
     }
 
@@ -237,36 +243,38 @@ impl KeyRange {
     #[must_use]
     #[inline]
     pub fn range_end(&self) -> &[u8] {
-        match self.0.high {
-            BytesAffine::Bytes(ref k) => k.as_slice(),
-            BytesAffine::Unbounded => &[0],
+        match self {
+            KeyRange::OneKey(_) => ONE_KEY,
+            KeyRange::Range(Interval { high, .. }) => match high {
+                BytesAffine::Bytes(ref k) => k.as_slice(),
+                BytesAffine::Unbounded => &[0],
+            },
         }
     }
 }
 
-macro_rules! impl_trait_for_key_range {
-    ($($struct:ty),*) => {
-        $(
-            impl std::ops::RangeBounds<Vec<u8>> for $struct {
-                /// get the Bound of start in `KeyRange`
-                fn start_bound(&self) -> std::collections::Bound<&Vec<u8>> {
-                    match self.0.low {
-                        BytesAffine::Bytes(ref k) => std::collections::Bound::Included(k),
-                        BytesAffine::Unbounded => std::collections::Bound::Unbounded,
-                    }
-                }
-                /// get the Bound of end in `KeyRange`
-                fn end_bound(&self) -> std::collections::Bound<&Vec<u8>> {
-                    match self.0.high {
-                        BytesAffine::Bytes(ref k) => std::collections::Bound::Excluded(k),
-                        BytesAffine::Unbounded => std::collections::Bound::Unbounded,
-                    }
-                }
-            }
-        )*
-    };
+impl std::ops::RangeBounds<Vec<u8>> for KeyRange {
+    /// get the Bound of start in `KeyRange`
+    fn start_bound(&self) -> std::collections::Bound<&Vec<u8>> {
+        match self {
+            Self::OneKey(k) => std::collections::Bound::Included(k),
+            Self::Range(r) => match r.low {
+                BytesAffine::Bytes(ref k) => std::collections::Bound::Included(k),
+                BytesAffine::Unbounded => std::collections::Bound::Unbounded,
+            },
+        }
+    }
+    /// get the Bound of end in `KeyRange`
+    fn end_bound(&self) -> std::collections::Bound<&Vec<u8>> {
+        match self {
+            Self::OneKey(k) => std::collections::Bound::Included(k),
+            Self::Range(r) => match r.high {
+                BytesAffine::Bytes(ref k) => std::collections::Bound::Excluded(k),
+                BytesAffine::Unbounded => std::collections::Bound::Unbounded,
+            },
+        }
+    }
 }
-impl_trait_for_key_range!(KeyRange, &KeyRange);
 
 impl From<EtcdKeyRange> for KeyRange {
     #[inline]
@@ -278,9 +286,21 @@ impl From<EtcdKeyRange> for KeyRange {
 impl From<KeyRange> for EtcdKeyRange {
     #[inline]
     fn from(range: KeyRange) -> Self {
-        Self {
-            key: range.range_start().to_vec(),
-            range_end: range.range_end().to_vec(),
+        match range {
+            KeyRange::OneKey(key_vec) => Self {
+                key: key_vec,
+                range_end: ONE_KEY.into(),
+            },
+            KeyRange::Range(range) => Self {
+                key: match range.low {
+                    BytesAffine::Bytes(k) => k,
+                    BytesAffine::Unbounded => vec![0],
+                },
+                range_end: match range.high {
+                    BytesAffine::Bytes(k) => k,
+                    BytesAffine::Unbounded => vec![0],
+                },
+            },
         }
     }
 }
@@ -288,36 +308,41 @@ impl From<KeyRange> for EtcdKeyRange {
 impl From<KeyRange> for Interval<BytesAffine> {
     #[inline]
     fn from(range: KeyRange) -> Self {
-        range.0
+        match range {
+            KeyRange::OneKey(key_vec) => Interval::new(
+                BytesAffine::Bytes(key_vec.clone()),
+                BytesAffine::Bytes(key_vec.tap_mut(|k| k.push(0))),
+            ),
+            KeyRange::Range(range) => range,
+        }
     }
 }
 
 impl From<Interval<BytesAffine>> for KeyRange {
     #[inline]
     fn from(range: Interval<BytesAffine>) -> Self {
-        Self(range)
+        Self::Range(range)
     }
 }
 
 impl From<KeyRange> for StdBoundRange {
     fn from(value: KeyRange) -> Self {
-        let start = match value.0.low {
-            BytesAffine::Bytes(k) => std::ops::Bound::Included(k),
-            BytesAffine::Unbounded => std::ops::Bound::Unbounded,
-        };
-        let end = match value.0.high {
-            BytesAffine::Bytes(k) => std::ops::Bound::Excluded(k),
-            BytesAffine::Unbounded => std::ops::Bound::Unbounded,
-        };
-        start..end
-    }
-}
-
-impl std::ops::Deref for KeyRange {
-    type Target = Interval<BytesAffine>;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
+        match value {
+            KeyRange::OneKey(k) => {
+                std::ops::Bound::Included(k.clone())..std::ops::Bound::Included(k)
+            }
+            KeyRange::Range(r) => {
+                let start = match r.low {
+                    BytesAffine::Bytes(k) => std::ops::Bound::Included(k),
+                    BytesAffine::Unbounded => std::ops::Bound::Unbounded,
+                };
+                let end = match r.high {
+                    BytesAffine::Bytes(k) => std::ops::Bound::Excluded(k),
+                    BytesAffine::Unbounded => std::ops::Bound::Unbounded,
+                };
+                start..end
+            }
+        }
     }
 }
 
@@ -325,7 +350,7 @@ impl ConflictCheck for KeyRange {
     /// if `KeyRange` is overlapping (conflict) with another `KeyRange`, return true
     #[inline]
     fn is_conflict(&self, other: &Self) -> bool {
-        self.0.overlap(&other.0)
+        self.overlap(&other)
     }
 }
 
@@ -368,7 +393,29 @@ mod tests {
     }
 
     #[test]
-    fn convert_from_key_range_is_ok() {
+    fn construct_from_etcd_range_and_to_etcd_range_is_ok() {
+        let range = KeyRange::new_etcd("a", "e");
+        assert_eq!(EtcdKeyRange::new("a", "e"), range.into());
+        let range = KeyRange::new_etcd("foo", ONE_KEY);
+        assert_eq!(EtcdKeyRange::new("foo", ONE_KEY), range.into());
+        let range = KeyRange::new_etcd("foo", UNBOUNDED);
+        assert_eq!(EtcdKeyRange::new("foo", UNBOUNDED), range.into());
+    }
+
+    #[test]
+    fn construct_included_range_is_ok() {
+        let range = KeyRange::new_included("a", "e");
+        match range {
+            KeyRange::Range(range) => {
+                assert_eq!(range.low, BytesAffine::new_key("a"));
+                assert_eq!(range.high, BytesAffine::new_key("f"));
+            }
+            _ => unreachable!("new_included must be Range"),
+        }
+    }
+
+    #[test]
+    fn key_range_convert_to_interval_is_ok() {
         let range0 = KeyRange::new_etcd("a", "e");
         let range1 = KeyRange::new_one_key("f");
         let interval0: Interval<BytesAffine> = range0.into();
@@ -395,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn test_key_range_prefix() {
+    fn test_key_range_get_prefix() {
         assert_eq!(KeyRange::get_prefix(b"key"), b"kez");
         assert_eq!(KeyRange::get_prefix(b"z"), b"\x7b");
         assert_eq!(KeyRange::get_prefix(&[255]), b"\0");
