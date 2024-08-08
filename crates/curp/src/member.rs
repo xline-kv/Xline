@@ -62,6 +62,11 @@ impl MembershipState {
     pub(crate) fn effective(&self) -> &Membership {
         &self.effective
     }
+
+    /// Returns the Some(membership) if there is NO membership change in flight
+    pub(crate) fn in_flight(&self) -> Option<&Membership> {
+        (self.effective != self.committed).then_some(&self.committed)
+    }
 }
 
 /// Membership config
