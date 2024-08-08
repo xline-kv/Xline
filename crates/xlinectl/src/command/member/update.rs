@@ -1,8 +1,11 @@
 use clap::{arg, value_parser, ArgMatches, Command};
-use xline_client::{error::Result, types::cluster::MemberUpdateRequest, Client};
+use xline_client::{error::Result, Client};
 
 use super::parse_peer_urls;
 use crate::utils::printer::Printer;
+
+/// Temp type for request and testing, indicates `(id, peer_urls)`
+type MemberUpdateRequest = (u64, Vec<String>);
 
 /// Definition of `update` command
 pub(super) fn command() -> Command {
@@ -22,13 +25,16 @@ pub(super) fn build_request(matches: &ArgMatches) -> MemberUpdateRequest {
         .get_one::<Vec<String>>("peer_urls")
         .expect("required");
 
-    MemberUpdateRequest::new(*member_id, peer_urls.clone())
+    (*member_id, peer_urls.clone())
 }
 
 /// Execute the command
 pub(super) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let request = build_request(matches);
-    let resp = client.cluster_client().member_update(request).await?;
+    let resp = client
+        .cluster_client()
+        .member_update(request.0, request.1)
+        .await?;
     resp.print();
 
     Ok(())
@@ -46,13 +52,13 @@ mod tests {
         let test_cases = vec![
             TestCase::new(
                 vec!["update", "1", "127.0.0.1:2379"],
-                Some(MemberUpdateRequest::new(1, ["127.0.0.1:2379".to_owned()])),
+                Some((1, ["127.0.0.1:2379".to_owned()].into())),
             ),
             TestCase::new(
                 vec!["update", "2", "127.0.0.1:2379,127.0.0.1:2380"],
-                Some(MemberUpdateRequest::new(
+                Some((
                     2,
-                    ["127.0.0.1:2379".to_owned(), "127.0.0.1:2380".to_owned()],
+                    ["127.0.0.1:2379".to_owned(), "127.0.0.1:2380".to_owned()].into(),
                 )),
             ),
         ];
