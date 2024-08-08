@@ -338,76 +338,71 @@ impl CommandExecutor {
 type AfterSyncResult = Result<AfterSyncOk<Command>, <Command as CurpCommand>::Error>;
 
 /// Collection of after sync results
-struct ASResultStates<'a> {
-    /// After sync cmds
-    cmds: Vec<AfterSyncCmd<'a, Command>>,
-    /// After sync results
-    results: Vec<Option<AfterSyncResult>>,
+struct ASResults<'a> {
+    /// After sync cmds and there execution results
+    cmd_results: Vec<(AfterSyncCmd<'a, Command>, Option<AfterSyncResult>)>,
 }
 
-impl<'a> ASResultStates<'a> {
+impl<'a> ASResults<'a> {
     /// Creates a new [`ASResultStates`].
     fn new(cmds: Vec<AfterSyncCmd<'a, Command>>) -> Self {
         Self {
-            results: iter::repeat_with(|| None::<AfterSyncResult>)
-                .take(cmds.len())
-                .collect(),
-            cmds,
+            // Initially all commands have no results
+            cmd_results: cmds.into_iter().map(|cmd| (cmd, None)).collect(),
         }
     }
 
+    #[allow(clippy::pattern_type_mismatch)] // can't be fixed
     /// Updates the results of commands that have errors by applying a given
     /// operation.
     fn update_err<F>(&mut self, op: F)
     where
         F: Fn(&AfterSyncCmd<'_, Command>) -> Result<(), ExecuteError>,
     {
-        for (cmd, result_opt) in self
-            .cmds
-            .iter()
-            .zip(self.results.iter_mut())
-            .filter(Self::filter_ok)
-        {
+        self.map_results(|(cmd, result_opt)| {
             if let Err(e) = op(cmd) {
                 let _ignore = result_opt.replace(Err(e));
             }
-        }
+        });
     }
 
     /// Updates the results of commands by applying a given operation.
+    #[allow(clippy::pattern_type_mismatch)] // can't be fixed
     fn update_result<F>(&mut self, op: F)
     where
         F: Fn(&AfterSyncCmd<'_, Command>) -> AfterSyncResult,
     {
-        for (cmd, result_opt) in self
-            .cmds
-            .iter()
-            .zip(self.results.iter_mut())
-            .filter(Self::filter_ok)
-        {
+        self.map_results(|(cmd, result_opt)| {
             let _ignore = result_opt.replace(op(cmd));
-        }
+        });
     }
 
-    /// Skip if the command execution has already errored
-    #[allow(clippy::pattern_type_mismatch)] // Can't be fixed
-    fn filter_ok(
-        (_cmd, result_opt): &(&AfterSyncCmd<'a, Command>, &mut Option<AfterSyncResult>),
-    ) -> bool {
-        result_opt.as_ref().is_none()
+    /// Applies a given operation to each command-result pair in `cmd_results` where the result is `None`.
+    #[allow(clippy::pattern_type_mismatch)] // can't be fixed
+    fn map_results<F>(&mut self, op: F)
+    where
+        F: FnMut(&mut (AfterSyncCmd<'_, Command>, Option<AfterSyncResult>)),
+    {
+        self.cmd_results
+            .iter_mut()
+            .filter(|(_cmd, res)| res.is_none())
+            .for_each(op);
     }
 
     /// Converts into errors.
     fn into_errors(self, err: <Command as CurpCommand>::Error) -> Vec<AfterSyncResult> {
         iter::repeat(err)
             .map(Err)
-            .take(self.results.len())
+            .take(self.cmd_results.len())
             .collect()
     }
 
     /// Converts into results.
     fn into_results(self) -> Vec<AfterSyncResult> {
-        self.results.into_iter().flatten().collect()
+        self.cmd_results
+            .into_iter()
+            .filter_map(|(_cmd, res)| res)
+            .collect()
     }
 }
 
@@ -442,7 +437,7 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
             .map(AfterSyncCmd::cmd)
             .all(|c| self.quota_checker.check(c));
 
-        let mut states = ASResultStates::new(cmds);
+        let mut states = ASResults::new(cmds);
         states.update_err(|c| self.check_alarm(c.cmd()));
         states.update_err(|c| {
             self.auth_storage
