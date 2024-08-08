@@ -592,6 +592,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 );
             }
         });
+        self.append_membership(&log_entries, u64::MAX, 0);
         self.entry_process_multi(&mut log_w, &to_process, term);
 
         let log_r = RwLockWriteGuard::downgrade(log_w);
@@ -907,6 +908,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let mut log_w = RwLockUpgradableReadGuard::upgrade(log_r);
             if last_sent_index > log_w.commit_index {
                 log_w.commit_to(last_sent_index);
+                self.membership_commit_to(last_sent_index);
                 debug!("{} updates commit index to {last_sent_index}", self.id());
                 self.apply(&mut *log_w);
             }

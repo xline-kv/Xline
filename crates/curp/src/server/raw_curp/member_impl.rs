@@ -6,7 +6,6 @@ use rand::Rng;
 use crate::log_entry::EntryData;
 use crate::log_entry::LogEntry;
 use crate::member::Change;
-use crate::member::Membership;
 use crate::member::MembershipState;
 use crate::rpc::ProposeId;
 
@@ -44,22 +43,20 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         Some(ReturnValueWrapper::new((), propose_id))
     }
 
-    /// Updates the committed membership
-    pub(crate) fn commit_membership(&self, config: Membership) {
-        let mut ms_w = self.ms.write();
-        ms_w.update_commit(config);
-    }
-
     /// Append membership entries
-    pub(crate) fn append_membership(
+    pub(crate) fn append_membership<E, I>(
         &self,
-        entries: &[LogEntry<C>],
+        entries: I,
         truncate_at: LogIndex,
         commit_index: LogIndex,
-    ) {
+    ) where
+        E: AsRef<LogEntry<C>>,
+        I: IntoIterator<Item = E>,
+    {
         let mut ms_w = self.ms.write();
         ms_w.truncate(truncate_at);
-        let configs = entries.iter().filter_map(|entry| {
+        let configs = entries.into_iter().filter_map(|entry| {
+            let entry = entry.as_ref();
             if let EntryData::Member(ref m) = entry.entry_data {
                 Some((entry.index, m.clone()))
             } else {
@@ -72,6 +69,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
 
         self.update_role(&ms_w);
+    }
+
+    /// Updates the commit index
+    pub(crate) fn membership_commit_to(&self, index: LogIndex) {
+        let mut ms_w = self.ms.write();
+        ms_w.commit(index);
     }
 
     /// Updates the role of the node based on the current membership state
