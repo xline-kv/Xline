@@ -107,10 +107,54 @@ impl Membership {
 
                 Some(Self { members, nodes })
             }
+            Change::AddMember(ids) => {
+                let mut members = self.members.clone();
+                let nodes = self.nodes.clone();
+                if self.validate_ids(&ids) {
+                    return None;
+                }
+                let mut set = Self::choose_set(&members).clone();
+                for id in ids {
+                    let _ignore = set.insert(id);
+                }
+                members.push(set);
+
+                Some(Self { members, nodes })
+            }
+            Change::RemoveMember(ids) => {
+                let mut members = self.members.clone();
+                let nodes = self.nodes.clone();
+                if self.validate_ids(&ids) {
+                    return None;
+                }
+                let mut set = Self::choose_set(&members).clone();
+                for id in ids {
+                    let _ignore = set.remove(&id);
+                }
+                members.push(set);
+
+                Some(Self { members, nodes })
+            }
         }
     }
 
-    #[allow(unused)]
+    /// Choose a quorum set
+    ///
+    /// TODO: select the config where the leader is in
+    fn choose_set(members: &[BTreeSet<u64>]) -> &BTreeSet<u64> {
+        members
+            .last()
+            .unwrap_or_else(|| unreachable!("there should be at least one member set"))
+    }
+
+    /// Validates the given ids for member operations
+    fn validate_ids(&self, ids: &[u64]) -> bool {
+        // Ids should not be in any member set
+        ids.iter().all(|id| self.members.iter().all(|s| !s.contains(id)))
+        // Ids should be in nodes
+        && ids.iter().all(|id| self.nodes.contains_key(id))
+    }
+
     /// Converts to `Joint`
     pub(crate) fn as_joint(&self) -> Joint<BTreeSet<u64>, &[BTreeSet<u64>]> {
         Joint::new(self.members.as_slice())
@@ -132,10 +176,15 @@ impl Membership {
     }
 }
 
+#[allow(unused)]
 /// The change of membership
 pub(crate) enum Change {
     /// Adds learners
     AddLearner(Vec<(u64, String)>),
     /// Removes learners
     RemoveLearner(Vec<u64>),
+    /// Adds members
+    AddMember(Vec<u64>),
+    /// Removes members
+    RemoveMember(Vec<u64>),
 }
