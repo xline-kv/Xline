@@ -25,8 +25,8 @@ derive_builder = "0.20.0"
 event-listener = "5.3.1"
 futures = "0.3.30"
 getset = "0.1"
-opentelemetry = { version = "0.22.0", features = ["trace"] }
-opentelemetry_sdk = { version = "0.22.1", features = ["trace"] }
+opentelemetry = { version = "0.24.0", features = ["trace"] }
+opentelemetry_sdk = { version = "0.24.1", features = ["trace"] }
 parking_lot = { version = "0.12.3", optional = true }
 pbkdf2 = { version = "0.12.2", features = ["simple"] }
 petgraph = "0.6.4"
@@ -40,19 +40,19 @@ tokio = { version = "0.2.25", package = "madsim-tokio", features = [
   "rt-multi-thread",
 ] }
 toml = "0.8.14"
-tonic = { version = "0.4.2", package = "madsim-tonic" }
+tonic = { version = "0.5.0", package = "madsim-tonic" }
 tracing = "0.1.37"
 tracing-appender = "0.2"
-tracing-opentelemetry = "0.23.0"
+tracing-opentelemetry = "0.25.0"
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
-opentelemetry = { version = "0.22.0", features = ["trace"] }
-opentelemetry-jaeger = "0.22.0"
-opentelemetry-otlp = { version = "0.15.0", features = [
+opentelemetry = { version = "0.24.0", features = ["trace"] }
+opentelemetry-jaeger-propagator = "0.3.0"
+opentelemetry-otlp = { version = "0.17.0", features = [
   "metrics",
   "http-proto",
   "reqwest-client",
 ] }
 test-macros = { path = "../test-macros" }
-tracing-subscriber = "0.3.16"
+tracing-subscriber = "0.3.18"

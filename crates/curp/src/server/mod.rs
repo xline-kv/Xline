@@ -204,7 +204,7 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
         request: tonic::Request<TriggerShutdownRequest>,
     ) -> Result<tonic::Response<TriggerShutdownResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.trigger_shutdown(request.get_ref()),
+            self.inner.trigger_shutdown(*request.get_ref()),
         ))
     }
 

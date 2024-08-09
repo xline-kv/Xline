@@ -254,7 +254,7 @@ fn snapshot_stream(
             }
             checksum_gen.update(&buf);
             yield SnapshotResponse {
-                header: Some(header.clone()),
+                header: Some(header),
                 remaining_bytes: remain_size,
                 blob: Vec::from(buf)
             };

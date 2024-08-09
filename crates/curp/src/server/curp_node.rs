@@ -208,10 +208,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     }
 
     /// Handle `TriggerShutdown` requests
-    pub(super) fn trigger_shutdown(
-        &self,
-        _req: &TriggerShutdownRequest,
-    ) -> TriggerShutdownResponse {
+    pub(super) fn trigger_shutdown(&self, _req: TriggerShutdownRequest) -> TriggerShutdownResponse {
         self.curp.task_manager().mark_leader_notified();
         TriggerShutdownResponse::default()
     }

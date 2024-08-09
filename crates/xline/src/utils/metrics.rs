@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use opentelemetry::global;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{metrics::SdkMeterProvider, runtime::Tokio};
@@ -49,7 +51,7 @@ pub fn init_metrics(config: &MetricsConfig) -> anyhow::Result<()> {
     let provider = SdkMeterProvider::builder().with_reader(exporter).build();
     global::set_meter_provider(provider);
 
-    let addr = format!("0.0.0.0:{}", config.port())
+    let addr: SocketAddr = format!("0.0.0.0:{}", config.port())
         .parse()
         .unwrap_or_else(|_| {
             unreachable!("local address 0.0.0.0:{} should be parsed", config.port())
@@ -57,9 +59,8 @@ pub fn init_metrics(config: &MetricsConfig) -> anyhow::Result<()> {
     info!("metrics server start on {addr:?}");
     let app = axum::Router::new().route(config.path(), axum::routing::any(metrics));
     let _ig = tokio::spawn(async move {
-        axum::Server::bind(&addr)
-            .serve(app.into_make_service())
-            .await
+        let listener = real_tokio::net::TcpListener::bind(addr).await?;
+        axum::serve(listener, app).await
     });
 
     Ok(())
