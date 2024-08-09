@@ -2,7 +2,8 @@ use std::{fmt::Debug, sync::Arc};
 
 use tonic::{transport::Channel, Streaming};
 use xlineapi::{
-    AlarmRequest, AlarmResponse, SnapshotRequest, SnapshotResponse, StatusRequest, StatusResponse,
+    AlarmAction, AlarmRequest, AlarmResponse, AlarmType, SnapshotRequest, SnapshotResponse,
+    StatusRequest, StatusResponse,
 };
 
 use crate::{error::Result, AuthService};
@@ -95,14 +96,27 @@ impl MaintenanceClient {
     ///         .await?
     ///         .maintenance_client();
     ///
-    ///     client.alarm(AlarmRequest::new(AlarmAction::Get, 0, AlarmType::None)).await?;
+    ///     client.alarm(AlarmAction::Get, 0, AlarmType::None).await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     #[inline]
-    pub async fn alarm(&mut self, request: AlarmRequest) -> Result<AlarmResponse> {
-        Ok(self.inner.alarm(request).await?.into_inner())
+    pub async fn alarm(
+        &mut self,
+        action: AlarmAction,
+        member_id: u64,
+        alarm_type: AlarmType,
+    ) -> Result<AlarmResponse> {
+        Ok(self
+            .inner
+            .alarm(AlarmRequest {
+                action: action.into(),
+                member_id,
+                alarm: alarm_type.into(),
+            })
+            .await?
+            .into_inner())
     }
 
     /// Sends a status request
