@@ -359,7 +359,7 @@ impl<'a> ASResults<'a> {
     where
         F: Fn(&AfterSyncCmd<'_, Command>) -> Result<(), ExecuteError>,
     {
-        self.map_results(|(cmd, result_opt)| {
+        self.for_each_none_result(|(cmd, result_opt)| {
             if let Err(e) = op(cmd) {
                 let _ignore = result_opt.replace(Err(e));
             }
@@ -372,14 +372,14 @@ impl<'a> ASResults<'a> {
     where
         F: Fn(&AfterSyncCmd<'_, Command>) -> AfterSyncResult,
     {
-        self.map_results(|(cmd, result_opt)| {
+        self.for_each_none_result(|(cmd, result_opt)| {
             let _ignore = result_opt.replace(op(cmd));
         });
     }
 
-    /// Applies a given operation to each command-result pair in `cmd_results` where the result is `None`.
+    /// Applies the provided operation to each command-result pair in `cmd_results` where the result is `None`.
     #[allow(clippy::pattern_type_mismatch)] // can't be fixed
-    fn map_results<F>(&mut self, op: F)
+    fn for_each_none_result<F>(&mut self, op: F)
     where
         F: FnMut(&mut (AfterSyncCmd<'_, Command>, Option<AfterSyncResult>)),
     {
