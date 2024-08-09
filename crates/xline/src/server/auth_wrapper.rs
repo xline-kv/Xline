@@ -3,12 +3,13 @@ use std::sync::Arc;
 use curp::{
     cmd::PbCodec,
     rpc::{
-        AddLearnerRequest, AddLearnerResponse, FetchClusterRequest, FetchClusterResponse,
-        FetchMembershipRequest, FetchMembershipResponse, FetchReadStateRequest,
-        FetchReadStateResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse,
-        OpResponse, ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, Protocol,
-        PublishRequest, PublishResponse, ReadIndexRequest, ReadIndexResponse, RecordRequest,
-        RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse, ShutdownRequest,
+        AddLearnerRequest, AddLearnerResponse, AddMemberRequest, AddMemberResponse,
+        FetchClusterRequest, FetchClusterResponse, FetchMembershipRequest, FetchMembershipResponse,
+        FetchReadStateRequest, FetchReadStateResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
+        MoveLeaderResponse, OpResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
+        ProposeRequest, Protocol, PublishRequest, PublishResponse, ReadIndexRequest,
+        ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
+        RemoveLearnerResponse, RemoveMemberRequest, RemoveMemberResponse, ShutdownRequest,
         ShutdownResponse,
     },
 };
@@ -143,5 +144,19 @@ impl Protocol for AuthWrapper {
         request: tonic::Request<RemoveLearnerRequest>,
     ) -> Result<tonic::Response<RemoveLearnerResponse>, tonic::Status> {
         self.curp_server.remove_learner(request).await
+    }
+
+    async fn add_member(
+        &self,
+        request: tonic::Request<AddMemberRequest>,
+    ) -> Result<tonic::Response<AddMemberResponse>, tonic::Status> {
+        self.curp_server.add_member(request).await
+    }
+
+    async fn remove_member(
+        &self,
+        request: tonic::Request<RemoveMemberRequest>,
+    ) -> Result<tonic::Response<RemoveMemberResponse>, tonic::Status> {
+        self.curp_server.remove_member(request).await
     }
 }
