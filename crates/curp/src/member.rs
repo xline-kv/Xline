@@ -11,6 +11,47 @@ use serde::Serialize;
 
 use crate::quorum::Joint;
 
+/// The membership state of the node
+pub(crate) struct NodeMembershipState {
+    /// The id of current node
+    // WARN: This id should be diff from the old `ServerID`
+    // TODO: use a distinct type for this
+    node_id: u64,
+    /// The membership state of the cluster
+    cluster_state: MembershipState,
+}
+
+impl NodeMembershipState {
+    /// Creates a new `NodeMembershipState`
+    // FIXME: specify the node id and initial membership state in node config
+    pub(crate) fn new() -> Self {
+        Self {
+            node_id: 0,
+            cluster_state: MembershipState::default(),
+        }
+    }
+
+    /// Returns the id of the current node
+    pub(crate) fn node_id(&self) -> u64 {
+        self.node_id
+    }
+
+    /// Returns a reference of the membership state
+    pub(crate) fn cluster(&self) -> &MembershipState {
+        &self.cluster_state
+    }
+
+    /// Returns a mutable reference of the membership state
+    pub(crate) fn cluster_mut(&mut self) -> &mut MembershipState {
+        &mut self.cluster_state
+    }
+
+    /// Returns `true` if the current node is a member of the cluster
+    pub(crate) fn is_member(&self) -> bool {
+        self.cluster().effective().contains(self.node_id())
+    }
+}
+
 /// Membership state stored in current node
 #[derive(Debug, Default)]
 pub(crate) struct MembershipState {

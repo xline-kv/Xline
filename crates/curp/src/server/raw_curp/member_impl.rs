@@ -7,7 +7,7 @@ use crate::log_entry::EntryData;
 use crate::log_entry::LogEntry;
 use crate::member::Change;
 use crate::member::Membership;
-use crate::member::MembershipState;
+use crate::member::NodeMembershipState;
 use crate::rpc::ProposeId;
 
 use super::RawCurp;
@@ -25,7 +25,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Generate memberships based on the provided change
     pub(crate) fn generate_membership(&self, change: Change) -> Vec<Membership> {
         let ms_r = self.ms.read();
-        ms_r.committed().change(change)
+        ms_r.cluster().committed().change(change)
     }
 
     /// Updates the membership config
@@ -33,7 +33,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         // FIXME: define the lock order of log and ms
         let mut log_w = self.log.write();
         let mut ms_w = self.ms.write();
-        ms_w.update_effective(config.clone());
+        ms_w.cluster_mut().update_effective(config.clone());
         let st_r = self.st.read();
         let propose_id = ProposeId(rand::random(), 0);
         let _entry = log_w.push(st_r.term, propose_id, config);
@@ -51,7 +51,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         I: IntoIterator<Item = E>,
     {
         let mut ms_w = self.ms.write();
-        ms_w.truncate(truncate_at);
+        let ms = ms_w.cluster_mut();
+        ms.truncate(truncate_at);
         let configs = entries.into_iter().filter_map(|entry| {
             let entry = entry.as_ref();
             if let EntryData::Member(ref m) = entry.entry_data {
@@ -61,8 +62,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             }
         });
         for (index, config) in configs {
-            ms_w.append(index, config);
-            ms_w.commit(commit_index.min(index));
+            ms.append(index, config);
+            ms.commit(commit_index.min(index));
         }
 
         self.update_role(&ms_w);
@@ -71,15 +72,13 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Updates the commit index
     pub(crate) fn membership_commit_to(&self, index: LogIndex) {
         let mut ms_w = self.ms.write();
-        ms_w.commit(index);
+        ms_w.cluster_mut().commit(index);
     }
 
     /// Updates the role of the node based on the current membership state
-    fn update_role(&self, current: &MembershipState) {
-        // FIXME: implement node id
-        let id = 0;
+    fn update_role(&self, current: &NodeMembershipState) {
         let mut st_w = self.st.write();
-        if current.effective().contains(id) {
+        if current.is_member() {
             if matches!(st_w.role, Role::Learner) {
                 st_w.role = Role::Follower;
             }

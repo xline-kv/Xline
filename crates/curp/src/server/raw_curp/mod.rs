@@ -65,7 +65,7 @@ use crate::cmd::Command;
 use crate::log_entry::EntryData;
 use crate::log_entry::LogEntry;
 use crate::member::Membership;
-use crate::member::MembershipState;
+use crate::member::NodeMembershipState;
 use crate::members::ClusterInfo;
 use crate::members::ServerId;
 use crate::quorum;
@@ -126,7 +126,7 @@ pub struct RawCurp<C: Command, RC: RoleChange> {
     /// Task manager
     task_manager: Arc<TaskManager>,
     /// Membership state
-    ms: RwLock<MembershipState>,
+    ms: RwLock<NodeMembershipState>,
 }
 
 /// Tmp struct for building `RawCurp`
@@ -220,7 +220,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             log,
             ctx,
             task_manager: args.task_manager,
-            ms: RwLock::default(),
+            ms: RwLock::new(NodeMembershipState::new()),
         };
 
         if args.is_leader {
@@ -1308,7 +1308,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Get the effective membership
     pub(super) fn effective_membership(&self) -> Membership {
-        self.ms.read().effective().clone()
+        self.ms.read().cluster().effective().clone()
     }
 
     /// Get `append_entries` request for `follower_id` that contains the latest
