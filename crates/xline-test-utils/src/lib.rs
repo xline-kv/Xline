@@ -14,7 +14,7 @@ use utils::config::{
     LogConfig, MetricsConfig, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
 };
 use xline::server::XlineServer;
-use xline_client::types::auth::{AuthRoleGrantPermissionRequest, Permission, PermissionType};
+use xline_client::types::{auth::PermissionType, range_end::RangeOption};
 pub use xline_client::{clients, types, Client, ClientOptions};
 
 /// Cluster
@@ -350,10 +350,12 @@ pub async fn set_user(
     client.user_grant_role(name, role).await?;
     if !key.is_empty() {
         client
-            .role_grant_permission(AuthRoleGrantPermissionRequest::new(
+            .role_grant_permission(
                 role,
-                Permission::new(PermissionType::Readwrite, key).with_range_end(range_end),
-            ))
+                PermissionType::Readwrite,
+                key,
+                Some(RangeOption::RangeEnd(range_end.to_vec())),
+            )
             .await?;
     }
     Ok(())

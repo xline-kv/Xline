@@ -1,8 +1,9 @@
 //! The following tests are originally from `etcd-client`
 use xline_client::{
     error::Result,
-    types::auth::{
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, Permission, PermissionType,
+    types::{
+        auth::{AuthRoleRevokePermissionRequest, Permission, PermissionType},
+        range_end::RangeOption,
     },
 };
 
@@ -42,38 +43,39 @@ async fn permission_operations_should_success_in_normal_path() -> Result<()> {
     let client = client.auth_client();
 
     let role1 = "role1";
-    let perm1 = Permission::new(PermissionType::Read, "123");
-    let perm2 = Permission::new(PermissionType::Write, "abc").with_from_key();
-    let perm3 = Permission::new(PermissionType::Readwrite, "hi").with_range_end("hjj");
-    let perm4 = Permission::new(PermissionType::Write, "pp").with_prefix();
-    let perm5 = Permission::new(PermissionType::Read, vec![0]).with_from_key();
+    let perm1 = (PermissionType::Read, "123", None);
+    let perm2 = (PermissionType::Write, "abc", Some(RangeOption::FromKey));
+    let perm3 = (
+        PermissionType::Readwrite,
+        "hi",
+        Some(RangeOption::RangeEnd("hjj".into())),
+    );
+    let perm4 = (PermissionType::Write, "pp", Some(RangeOption::Prefix));
+    let perm5 = (PermissionType::Read, vec![0], Some(RangeOption::FromKey));
 
     client.role_add(role1).await?;
 
-    client
-        .role_grant_permission(AuthRoleGrantPermissionRequest::new(role1, perm1.clone()))
-        .await?;
-    client
-        .role_grant_permission(AuthRoleGrantPermissionRequest::new(role1, perm2.clone()))
-        .await?;
-    client
-        .role_grant_permission(AuthRoleGrantPermissionRequest::new(role1, perm3.clone()))
-        .await?;
-    client
-        .role_grant_permission(AuthRoleGrantPermissionRequest::new(role1, perm4.clone()))
-        .await?;
-    client
-        .role_grant_permission(AuthRoleGrantPermissionRequest::new(role1, perm5.clone()))
-        .await?;
+    let (p1, p2, p3) = perm1.clone();
+    client.role_grant_permission(role1, p1, p2, p3).await?;
+    let (p1, p2, p3) = perm2.clone();
+    client.role_grant_permission(role1, p1, p2, p3).await?;
+    let (p1, p2, p3) = perm3.clone();
+    client.role_grant_permission(role1, p1, p2, p3).await?;
+    let (p1, p2, p3) = perm4.clone();
+    client.role_grant_permission(role1, p1, p2, p3).await?;
+    let (p1, p2, p3) = perm5.clone();
+    client.role_grant_permission(role1, p1, p2, p3).await?;
 
     {
+        // get permissions for role1, and validate the result
         let resp = client.role_get(role1).await?;
         let permissions = resp.perm;
-        assert!(permissions.contains(&perm1.into()));
-        assert!(permissions.contains(&perm2.into()));
-        assert!(permissions.contains(&perm3.into()));
-        assert!(permissions.contains(&perm4.into()));
-        assert!(permissions.contains(&perm5.into()));
+
+        assert!(permissions.contains(&Permission::from(perm1).into()));
+        assert!(permissions.contains(&Permission::from(perm2).into()));
+        assert!(permissions.contains(&Permission::from(perm3).into()));
+        assert!(permissions.contains(&Permission::from(perm4).into()));
+        assert!(permissions.contains(&Permission::from(perm5).into()));
     }
 
     // revoke all permission

@@ -13,7 +13,10 @@ use xlineapi::{
 
 use crate::{
     error::{Result, XlineClientError},
-    types::auth::{AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest},
+    types::{
+        auth::{AuthRoleRevokePermissionRequest, Permission, PermissionType},
+        range_end::RangeOption,
+    },
     AuthService, CurpClient,
 };
 
@@ -660,7 +663,7 @@ impl AuthClient {
     ///
     /// ```no_run
     /// use xline_client::{
-    ///     types::auth::{AuthRoleGrantPermissionRequest, Permission, PermissionType},
+    ///     types::auth::{Permission, PermissionType},
     ///     Client, ClientOptions,
     /// };
     /// use anyhow::Result;
@@ -676,10 +679,12 @@ impl AuthClient {
     ///     // add the role and key
     ///
     ///     client
-    ///         .role_grant_permission(AuthRoleGrantPermissionRequest::new(
+    ///         .role_grant_permission(
     ///             "role",
-    ///             Permission::new(PermissionType::Read, "key"),
-    ///         ))
+    ///             PermissionType::Read,
+    ///             "key",
+    ///             None
+    ///         )
     ///         .await?;
     ///
     ///     Ok(())
@@ -688,14 +693,19 @@ impl AuthClient {
     #[inline]
     pub async fn role_grant_permission(
         &self,
-        request: AuthRoleGrantPermissionRequest,
+        name: impl Into<String>,
+        perm_type: PermissionType,
+        perm_key: impl Into<Vec<u8>>,
+        range_option: Option<RangeOption>,
     ) -> Result<AuthRoleGrantPermissionResponse> {
-        if request.inner.perm.is_none() {
-            return Err(XlineClientError::InvalidArgs(String::from(
-                "Permission not given",
-            )));
-        }
-        self.handle_req(request.inner, false).await
+        self.handle_req(
+            xlineapi::AuthRoleGrantPermissionRequest {
+                name: name.into(),
+                perm: Some(Permission::new(perm_type, perm_key.into(), range_option).into()),
+            },
+            false,
+        )
+        .await
     }
 
     /// Revokes role permission.
