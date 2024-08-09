@@ -592,7 +592,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 );
             }
         });
-        self.append_membership(&log_entries, u64::MAX, 0);
         self.entry_process_multi(&mut log_w, &to_process, term);
 
         let log_r = RwLockWriteGuard::downgrade(log_w);

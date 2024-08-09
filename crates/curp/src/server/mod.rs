@@ -261,6 +261,30 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
             .map(tonic::Response::new)
             .map_err(Into::into)
     }
+
+    #[instrument(skip_all, name = "add_member")]
+    async fn add_member(
+        &self,
+        request: tonic::Request<crate::rpc::AddMemberRequest>,
+    ) -> Result<tonic::Response<crate::rpc::AddMemberResponse>, tonic::Status> {
+        self.inner
+            .add_member(request.into_inner())
+            .await
+            .map(tonic::Response::new)
+            .map_err(Into::into)
+    }
+
+    #[instrument(skip_all, name = "remove_member")]
+    async fn remove_member(
+        &self,
+        request: tonic::Request<crate::rpc::RemoveMemberRequest>,
+    ) -> Result<tonic::Response<crate::rpc::RemoveMemberResponse>, tonic::Status> {
+        self.inner
+            .remove_member(request.into_inner())
+            .await
+            .map(tonic::Response::new)
+            .map_err(Into::into)
+    }
 }
 
 #[tonic::async_trait]

@@ -1,7 +1,9 @@
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashSet;
 use std::hash::Hash;
+use std::iter;
 
 use curp_external_api::LogIndex;
 use serde::Deserialize;
@@ -82,82 +84,108 @@ impl Membership {
     /// Generates a new membership from `Change`
     ///
     /// Returns `None` if the change is invalid
-    pub(crate) fn change(&self, change: Change) -> Option<Self> {
+    pub(crate) fn change(&self, change: Change) -> Vec<Self> {
         match change {
             Change::AddLearner(learners) => {
                 let members = self.members.clone();
                 let mut nodes = self.nodes.clone();
                 for (id, addr) in learners {
                     match nodes.entry(id) {
-                        Entry::Occupied(_) => return None,
+                        Entry::Occupied(_) => return vec![],
                         Entry::Vacant(e) => {
                             let _ignore = e.insert(addr);
                         }
                     }
                 }
 
-                Some(Self { members, nodes })
+                vec![Self { members, nodes }]
             }
             Change::RemoveLearner(ids) => {
                 let members = self.members.clone();
                 let mut nodes = self.nodes.clone();
                 for id in ids {
-                    let _ignore = nodes.remove(&id)?;
+                    if nodes.remove(&id).is_none() {
+                        return vec![];
+                    }
                 }
 
-                Some(Self { members, nodes })
+                vec![Self { members, nodes }]
             }
-            Change::AddMember(ids) => {
-                let mut members = self.members.clone();
-                let nodes = self.nodes.clone();
-                if self.validate_ids(&ids) {
-                    return None;
-                }
-                let mut set = Self::choose_set(&members).clone();
-                for id in ids {
-                    let _ignore = set.insert(id);
-                }
-                members.push(set);
-
-                Some(Self { members, nodes })
-            }
-            Change::RemoveMember(ids) => {
-                let mut members = self.members.clone();
-                let nodes = self.nodes.clone();
-                if self.validate_ids(&ids) {
-                    return None;
-                }
-                let mut set = Self::choose_set(&members).clone();
-                for id in ids {
-                    let _ignore = set.remove(&id);
-                }
-                members.push(set);
-
-                Some(Self { members, nodes })
-            }
+            Change::AddMember(ids) => self.update_members(ids, |i, set| {
+                set.union(&i.into_iter().collect()).copied().collect()
+            }),
+            Change::RemoveMember(ids) => self.update_members(ids, |i, set| {
+                set.difference(&i.into_iter().collect()).copied().collect()
+            }),
         }
     }
 
-    /// Choose a quorum set
+    /// Updates the membership based on the given operation and returns
+    /// a vector of coherent memberships.
+    fn update_members<F>(&self, ids: Vec<u64>, op: F) -> Vec<Self>
+    where
+        F: FnOnce(Vec<u64>, BTreeSet<u64>) -> BTreeSet<u64>,
+    {
+        if !self.exists(&ids) {
+            return vec![];
+        }
+        let last = self.last_set();
+        let target = op(ids, last);
+        self.all_coherent(&target)
+    }
+
+    /// Generates all coherent membership to reach the target
+    fn all_coherent(&self, target: &BTreeSet<u64>) -> Vec<Self> {
+        iter::successors(Some(self.clone()), |current| {
+            let next = Self::next_coherent(current, target.clone());
+            (current != &next).then_some(next)
+        })
+        .collect()
+    }
+
+    /// Generates a new coherent membership from a quorum set
+    fn next_coherent(ms: &Self, set: BTreeSet<u64>) -> Self {
+        let next = ms.as_joint_owned().coherent(set).into_inner();
+        let original_ids = ms
+            .members
+            .iter()
+            .flat_map(BTreeSet::iter)
+            .collect::<HashSet<_>>();
+        let next_ids = next.iter().flat_map(BTreeSet::iter).collect::<HashSet<_>>();
+        let mut nodes = ms.nodes.clone();
+        for id in original_ids.difference(&next_ids) {
+            let _ignore = nodes.remove(id);
+        }
+
+        Self {
+            members: next,
+            nodes,
+        }
+    }
+
+    /// Returns the last member set
     ///
-    /// TODO: select the config where the leader is in
-    fn choose_set(members: &[BTreeSet<u64>]) -> &BTreeSet<u64> {
-        members
+    fn last_set(&self) -> BTreeSet<u64> {
+        self.members
             .last()
             .unwrap_or_else(|| unreachable!("there should be at least one member set"))
+            .clone()
     }
 
     /// Validates the given ids for member operations
-    fn validate_ids(&self, ids: &[u64]) -> bool {
-        // Ids should not be in any member set
-        ids.iter().all(|id| self.members.iter().all(|s| !s.contains(id)))
+    fn exists(&self, ids: &[u64]) -> bool {
         // Ids should be in nodes
-        && ids.iter().all(|id| self.nodes.contains_key(id))
+        ids.iter().all(|id| self.nodes.contains_key(id))
     }
 
     /// Converts to `Joint`
     pub(crate) fn as_joint(&self) -> Joint<BTreeSet<u64>, &[BTreeSet<u64>]> {
         Joint::new(self.members.as_slice())
+    }
+
+    /// Converts to `Joint`
+    pub(crate) fn as_joint_owned(&self) -> Joint<BTreeSet<u64>, Vec<BTreeSet<u64>>> {
+        Joint::new(self.members.clone())
     }
 
     /// Gets the addresses of all members

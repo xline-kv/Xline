@@ -6,6 +6,7 @@ use rand::Rng;
 use crate::log_entry::EntryData;
 use crate::log_entry::LogEntry;
 use crate::member::Change;
+use crate::member::Membership;
 use crate::member::MembershipState;
 use crate::rpc::ProposeId;
 
@@ -41,6 +42,24 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let propose_id = ProposeId(rand::random(), 0);
         let _entry = log_w.push(st_r.term, propose_id, config);
         Some(ReturnValueWrapper::new((), propose_id))
+    }
+
+    /// Generate memberships based on the provided change
+    pub(crate) fn generate_membership(&self, change: Change) -> Vec<Membership> {
+        let ms_r = self.ms.read();
+        ms_r.committed().change(change)
+    }
+
+    /// Updates the membership config
+    pub(crate) fn update_membership(&self, config: Membership) -> ProposeId {
+        // FIXME: define the lock order of log and ms
+        let mut log_w = self.log.write();
+        let mut ms_w = self.ms.write();
+        ms_w.update_effective(config.clone());
+        let st_r = self.st.read();
+        let propose_id = ProposeId(rand::random(), 0);
+        let _entry = log_w.push(st_r.term, propose_id, config);
+        propose_id
     }
 
     /// Append membership entries
@@ -89,33 +108,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         } else {
             st_w.role = Role::Learner;
         }
-    }
-}
-
-/// Wrapper for the return value of the raw curp methods
-///
-/// It wraps the actual return value and the propose id of the request
-pub(crate) struct ReturnValueWrapper<T> {
-    /// The actual return value
-    value: T,
-    /// The propose id of the request
-    propose_id: ProposeId,
-}
-
-impl<T> ReturnValueWrapper<T> {
-    /// Creates a new return value wrapper
-    pub(crate) fn new(value: T, propose_id: ProposeId) -> Self {
-        Self { value, propose_id }
-    }
-
-    /// Returns the propose id of the request
-    pub(crate) fn propose_id(&self) -> ProposeId {
-        self.propose_id
-    }
-
-    /// Unwraps the return value
-    pub(crate) fn into_inner(self) -> T {
-        self.value
     }
 }
 

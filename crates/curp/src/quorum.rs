@@ -17,6 +17,30 @@ impl<QS, I> Joint<QS, I> {
             _qs_type: PhantomData,
         }
     }
+
+    /// Unwrap the inner quorum set
+    pub(crate) fn into_inner(self) -> I {
+        self.sets
+    }
+}
+
+impl<QS> Joint<QS, Vec<QS>>
+where
+    QS: PartialEq + Clone,
+{
+    /// Generates a new coherent joint quorum set
+    pub(crate) fn coherent(&self, qs: QS) -> Self {
+        if self.sets.iter().any(|s| *s == qs) {
+            Self::new(vec![qs])
+        } else {
+            // TODO: select the config where the leader is in
+            let last = self
+                .sets
+                .last()
+                .unwrap_or_else(|| unreachable!("there should be at least one quorum set"));
+            Self::new(vec![last.clone(), qs])
+        }
+    }
 }
 
 /// A quorum set
