@@ -1,5 +1,4 @@
 use std::{
-    env,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -50,13 +49,14 @@ impl TestRoleChangeInner {
 }
 
 pub fn init_logger() {
-    if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "curp=debug,xline=debug");
-    }
     _ = tracing_subscriber::fmt()
         .with_timer(uptime())
         .compact()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::default()
+                .add_directive("curp=debug".parse().unwrap())
+                .add_directive("xline=debug".parse().unwrap()),
+        )
         .try_init();
 }
 

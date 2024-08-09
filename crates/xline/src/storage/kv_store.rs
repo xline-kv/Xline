@@ -241,13 +241,10 @@ impl KvStore {
             if scheduled_rev > self.compacted_revision() {
                 let event = Arc::new(event_listener::Event::new());
                 let listener = event.listen();
-                if let Err(e) = self
-                    .compact_task_tx
+                self.compact_task_tx
                     .send((scheduled_rev, Some(event)))
                     .await
-                {
-                    panic!("the compactor exited unexpectedly: {e:?}");
-                }
+                    .unwrap_or_else(|e| panic!("the compactor exited unexpectedly: {e:?}"));
                 listener.await;
             }
         }
