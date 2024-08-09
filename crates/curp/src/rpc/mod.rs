@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use curp_external_api::{
     cmd::{ConflictCheck, PbCodec, PbSerializeError},
+    conflict::EntryId,
     InflightId,
 };
 use prost::Message;
@@ -579,9 +580,10 @@ impl PublishRequest {
 
 /// NOTICE:
 ///
-/// Please check test case `test_unary_fast_round_return_early_err` `test_unary_propose_return_early_err`
-/// `test_retry_propose_return_no_retry_error` `test_retry_propose_return_retry_error` if you added some
-/// new [`CurpError`]
+/// Please check test case `test_unary_fast_round_return_early_err`
+/// `test_unary_propose_return_early_err`
+/// `test_retry_propose_return_no_retry_error`
+/// `test_retry_propose_return_retry_error` if you added some new [`CurpError`]
 impl CurpError {
     /// `Duplicated` error
     #[allow(unused)]
@@ -796,32 +798,19 @@ impl From<CurpError> for tonic::Status {
 // User defined types
 
 /// Entry of speculative pool
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(PartialEq))]
-pub(crate) struct PoolEntry<C> {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PoolEntry<C> {
     /// Propose id
     pub(crate) id: ProposeId,
     /// Inner entry
-    pub(crate) inner: PoolEntryInner<C>,
-}
-
-/// Inner entry of speculative pool
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(PartialEq))]
-pub(crate) enum PoolEntryInner<C> {
-    /// Command entry
-    Command(Arc<C>),
-    /// ConfChange entry
-    ConfChange(Vec<ConfChange>),
+    pub(crate) cmd: Arc<C>,
 }
 
 impl<C> PoolEntry<C> {
     /// Create a new pool entry
-    pub(crate) fn new(id: ProposeId, inner: impl Into<PoolEntryInner<C>>) -> Self {
-        Self {
-            id,
-            inner: inner.into(),
-        }
+    #[inline]
+    pub fn new(id: ProposeId, inner: Arc<C>) -> Self {
+        Self { id, cmd: inner }
     }
 }
 
@@ -829,26 +818,74 @@ impl<C> ConflictCheck for PoolEntry<C>
 where
     C: ConflictCheck,
 {
+    #[inline]
     fn is_conflict(&self, other: &Self) -> bool {
-        let PoolEntryInner::Command(ref cmd1) = self.inner else {
-            return true;
-        };
-        let PoolEntryInner::Command(ref cmd2) = other.inner else {
-            return true;
-        };
-        cmd1.is_conflict(cmd2)
+        self.cmd.is_conflict(&other.cmd)
     }
 }
 
-impl<C> From<Arc<C>> for PoolEntryInner<C> {
-    fn from(value: Arc<C>) -> Self {
-        Self::Command(value)
+impl<C> Clone for PoolEntry<C> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            cmd: Arc::clone(&self.cmd),
+        }
     }
 }
 
-impl<C> From<Vec<ConfChange>> for PoolEntryInner<C> {
-    fn from(value: Vec<ConfChange>) -> Self {
-        Self::ConfChange(value)
+impl<C> std::ops::Deref for PoolEntry<C> {
+    type Target = C;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.cmd
+    }
+}
+
+impl<C> AsRef<C> for PoolEntry<C> {
+    #[inline]
+    fn as_ref(&self) -> &C {
+        self.cmd.as_ref()
+    }
+}
+
+impl<C> std::hash::Hash for PoolEntry<C> {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl<C> PartialEq for PoolEntry<C> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.id.eq(&other.id)
+    }
+}
+
+impl<C> Eq for PoolEntry<C> {}
+
+impl<C> PartialOrd for PoolEntry<C> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.id.cmp(&other.id))
+    }
+}
+
+impl<C> Ord for PoolEntry<C> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
+impl<C> EntryId for PoolEntry<C> {
+    type Id = ProposeId;
+
+    #[inline]
+    fn id(&self) -> Self::Id {
+        self.id
     }
 }
 
