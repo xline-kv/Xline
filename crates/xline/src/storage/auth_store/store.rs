@@ -18,8 +18,9 @@ use pbkdf2::{
 };
 use utils::parking_lot_lock::RwLockMap;
 use xlineapi::{
-    command::{CommandResponse, KeyRange, SyncResponse},
+    command::{CommandResponse, SyncResponse},
     execute_error::ExecuteError,
+    keyrange::KeyRange,
     AuthInfo,
 };
 
@@ -1114,7 +1115,7 @@ impl AuthStore {
         if user.has_role(ROOT_ROLE) {
             return Ok(());
         }
-        let key_range = KeyRange::new(key, range_end);
+        let key_range = KeyRange::new_etcd(key, range_end);
         if let Some(permissions) = self.permission_cache.read().user_permissions.get(username) {
             match perm_type {
                 Type::Read => {
@@ -1212,10 +1213,10 @@ mod test {
                 user_permissions: HashMap::from([(
                     "u".to_owned(),
                     UserPermissions {
-                        read: MergedRange::from_iter(vec![KeyRange::new("foo", "")]),
+                        read: MergedRange::from_iter(vec![KeyRange::new_etcd("foo", "")]),
                         write: MergedRange::from_iter(vec![
-                            KeyRange::new("foo", ""),
-                            KeyRange::new("fop", "foz")
+                            KeyRange::new_etcd("foo", ""),
+                            KeyRange::new_etcd("fop", "foz")
                         ]),
                     },
                 )]),
@@ -1372,8 +1373,8 @@ mod test {
                 user_permissions: HashMap::from([(
                     "u".to_owned(),
                     UserPermissions {
-                        read: MergedRange::from_iter(vec![KeyRange::new("foo", "")]),
-                        write: MergedRange::from_iter(vec![KeyRange::new("foo", "")]),
+                        read: MergedRange::from_iter(vec![KeyRange::new_etcd("foo", "")]),
+                        write: MergedRange::from_iter(vec![KeyRange::new_etcd("foo", "")]),
                     },
                 )]),
                 role_to_users_map: HashMap::from([("r".to_owned(), vec!["u".to_owned()])]),

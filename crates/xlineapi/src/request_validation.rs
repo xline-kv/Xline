@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    command::KeyRange, AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest,
+    keyrange::KeyRange, AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest,
     DeleteRangeRequest, PutRequest, RangeRequest, Request, RequestOp, SortOrder, SortTarget,
     TxnRequest,
 };
@@ -101,7 +101,7 @@ fn check_intervals(ops: &[RequestOp]) -> Result<(HashSet<&[u8]>, Vec<KeyRange>),
     for op in ops {
         if let Some(Request::RequestDeleteRange(ref req)) = op.request {
             // collect dels
-            let del = KeyRange::new(req.key.as_slice(), req.range_end.as_slice());
+            let del = KeyRange::new_etcd(req.key.as_slice(), req.range_end.as_slice());
             dels.push(del);
         }
     }

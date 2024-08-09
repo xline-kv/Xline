@@ -70,7 +70,8 @@ pub fn parse_members(s: &str) -> Result<HashMap<String, Vec<String>>, ConfigPars
     Ok(map)
 }
 
-/// Parse `ClusterRange` from the given string
+/// Parse `ClusterRange` from the given string. The string should be in the
+/// format of `start..end`, and start and end should be u64.
 ///
 /// # Errors
 ///
@@ -185,7 +186,7 @@ pub fn parse_log_file(s: &str) -> Result<PathBuf, ConfigParseError> {
     }
     // This regular expression matches file paths in a specific format.
     // Explanation of the regex pattern:
-    // ^(\.|\.\.)?            - Matches an optional prefix consisting of a dot (.), two dots (..), or a tilde (~).
+    // ^(\.|\.\.)?              - Matches an optional prefix consisting of a dot (.), two dots (..), or a tilde (~).
     // (/[a-zA-Z0-9._-]+)+/?    - Matches one or more occurrences of a forward slash (/) followed by one or more alphanumeric characters, dots (.), underscores (_), or hyphens (-).
     // /?$                      - Matches an optional trailing forward slash (/) at the end of the string.
     // Overall, this regex pattern is used to validate file paths that follow a specific format commonly used in Linux filesystem

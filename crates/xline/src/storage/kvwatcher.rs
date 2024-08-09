@@ -20,7 +20,7 @@ use utils::{
     task_manager::{tasks::TaskName, Listener, TaskManager},
     write_vec,
 };
-use xlineapi::command::KeyRange;
+use xlineapi::keyrange::KeyRange;
 
 use super::kv_store::KvStoreInner;
 use crate::rpc::{Event, KeyValue};

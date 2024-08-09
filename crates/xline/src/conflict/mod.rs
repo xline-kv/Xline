@@ -6,8 +6,8 @@ use curp::{
 };
 use utils::interval_map::Interval;
 use xlineapi::{
-    command::{Command, KeyRange},
-    interval::BytesAffine,
+    command::Command,
+    keyrange::{BytesAffine, KeyRange},
     RequestWrapper,
 };
 

@@ -15,8 +15,9 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use utils::table_names::{KV_TABLE, META_TABLE};
 use xlineapi::{
-    command::{CommandResponse, KeyRange, SyncResponse},
+    command::{CommandResponse, SyncResponse},
     execute_error::ExecuteError,
+    keyrange::KeyRange,
 };
 
 use super::{
@@ -101,25 +102,18 @@ impl KvStoreInner {
     /// Get `KeyValue` of a range
     ///
     /// If `range_end` is `&[]`, this function will return one or zero `KeyValue`.
-    fn get_range(
-        &self,
-        key: &[u8],
-        range_end: &[u8],
-        revision: i64,
-    ) -> Result<Vec<KeyValue>, ExecuteError> {
-        let revisions = self.index.get(key, range_end, revision);
+    fn get_range(&self, keyrange: KeyRange, revision: i64) -> Result<Vec<KeyValue>, ExecuteError> {
+        let revisions = self.index.get(keyrange, revision);
         self.get_values(&revisions)
     }
 
     /// Get `KeyValue` start from a revision and convert to `Event`
     pub(crate) fn get_event_from_revision(
         &self,
-        key_range: KeyRange,
+        keyrange: KeyRange,
         revision: i64,
     ) -> Result<Vec<Event>, ExecuteError> {
-        let revisions =
-            self.index
-                .get_from_rev(key_range.range_start(), key_range.range_end(), revision);
+        let revisions = self.index.get_from_rev(keyrange, revision);
         let events: Vec<Event> = self
             .get_values(&revisions)?
             .into_iter()
@@ -145,9 +139,12 @@ impl KvStoreInner {
 
     /// Get previous `KeyValue` of a `KeyValue`
     pub(crate) fn get_prev_kv(&self, kv: &KeyValue) -> Option<KeyValue> {
-        self.get_range(&kv.key, &[], kv.mod_revision.overflow_sub(1))
-            .ok()?
-            .pop()
+        self.get_range(
+            KeyRange::new_one_key(kv.key.clone()),
+            kv.mod_revision.overflow_sub(1),
+        )
+        .ok()?
+        .pop()
     }
 
     /// Get compacted revision of  KV store
@@ -158,13 +155,12 @@ impl KvStoreInner {
     /// Get `KeyValue` of a range with limit and count only, return kvs and total count
     fn get_range_with_opts(
         &self,
-        key: &[u8],
-        range_end: &[u8],
+        keyrange: KeyRange,
         revision: i64,
         limit: usize,
         count_only: bool,
     ) -> Result<(Vec<KeyValue>, usize), ExecuteError> {
-        let mut revisions = self.index.get(key, range_end, revision);
+        let mut revisions = self.index.get(keyrange, revision);
         let total = revisions.len();
         if count_only || total == 0 {
             return Ok((vec![], total));
@@ -445,7 +441,10 @@ impl KvStore {
     fn check_compare(&self, cmp: &Compare) -> bool {
         let kvs = self
             .inner
-            .get_range(&cmp.key, &cmp.range_end, 0)
+            .get_range(
+                KeyRange::new_etcd(cmp.key.clone(), cmp.range_end.clone()),
+                0,
+            )
             .unwrap_or_default();
         if kvs.is_empty() {
             if let Some(TargetUnion::Value(_)) = cmp.target_union {
@@ -565,8 +564,7 @@ impl KvStore {
             req.limit.overflow_add(1) // get one extra for "more" flag
         };
         let (mut kvs, total) = self.inner.get_range_with_opts(
-            &req.key,
-            &req.range_end,
+            KeyRange::new_etcd(req.key.clone(), req.range_end.clone()),
             req.revision,
             storage_fetch_limit.numeric_cast(),
             req.count_only,
@@ -610,7 +608,10 @@ impl KvStore {
             return Err(ExecuteError::LeaseNotFound(req.lease));
         };
         if req.prev_kv || req.ignore_lease || req.ignore_value {
-            let prev_kv = self.inner.get_range(&req.key, &[], 0)?.pop();
+            let prev_kv = self
+                .inner
+                .get_range(KeyRange::new_one_key(req.key.clone()), 0)?
+                .pop();
             if prev_kv.is_none() && (req.ignore_lease || req.ignore_value) {
                 return Err(ExecuteError::KeyNotFound);
             }
@@ -626,7 +627,10 @@ impl KvStore {
         &self,
         req: &DeleteRangeRequest,
     ) -> Result<DeleteRangeResponse, ExecuteError> {
-        let prev_kvs = self.inner.get_range(&req.key, &req.range_end, 0)?;
+        let prev_kvs = self.inner.get_range(
+            KeyRange::new_etcd(req.key.clone(), req.range_end.clone()),
+            0,
+        )?;
         let mut response = DeleteRangeResponse {
             header: Some(self.header_gen.gen_header()),
             ..DeleteRangeResponse::default()
@@ -794,7 +798,10 @@ impl KvStore {
         };
         if req.ignore_lease || req.ignore_value {
             let pre_mod_rev = prev_rev.ok_or(ExecuteError::KeyNotFound)?.mod_revision;
-            let prev_kv = self.inner.get_range(&req.key, &[], pre_mod_rev)?.pop();
+            let prev_kv = self
+                .inner
+                .get_range(KeyRange::new_one_key(req.key.clone()), pre_mod_rev)?
+                .pop();
             let prev = prev_kv.as_ref().ok_or(ExecuteError::KeyNotFound)?;
             if req.ignore_lease {
                 kv.lease = prev.lease;
@@ -871,8 +878,7 @@ impl KvStore {
         Self::delete_keys(
             &self.inner.index,
             &self.lease_collection,
-            &req.key,
-            &req.range_end,
+            KeyRange::new_etcd(req.key.clone(), req.range_end.clone()),
             revision,
             sub_revision,
         )
@@ -882,13 +888,12 @@ impl KvStore {
     pub(crate) fn delete_keys<'a>(
         index: &Index,
         lease_collection: &LeaseCollection,
-        key: &[u8],
-        range_end: &[u8],
+        keyrange: KeyRange,
         revision: i64,
         sub_revision: i64,
     ) -> (Vec<WriteOp<'a>>, Vec<Event>) {
         let mut ops = Vec::new();
-        let (revisions, keys) = index.delete(key, range_end, revision, sub_revision);
+        let (revisions, keys) = index.delete(keyrange, revision, sub_revision);
         let mut del_ops = Self::mark_deletions(&revisions, &keys);
         ops.append(&mut del_ops);
         for k in &keys {
@@ -1160,7 +1165,14 @@ mod test {
         let ops = vec![WriteOp::PutScheduledCompactRevision(8)];
         db.write_ops(ops)?;
         let (store, _rev_gen) = init_store(Arc::clone(&db)).await?;
-        assert_eq!(store.inner.index.get_from_rev(b"z", b"", 5).len(), 3);
+        assert_eq!(
+            store
+                .inner
+                .index
+                .get_from_rev(KeyRange::new_one_key("z"), 5)
+                .len(),
+            3
+        );
 
         let new_store = init_empty_store(db);
 
@@ -1180,7 +1192,14 @@ mod test {
         assert_eq!(res.kvs[0].key, b"a");
         assert_eq!(new_store.compacted_revision(), 8);
         tokio::time::sleep(Duration::from_millis(500)).await;
-        assert_eq!(new_store.inner.index.get_from_rev(b"z", b"", 5).len(), 2);
+        assert_eq!(
+            new_store
+                .inner
+                .index
+                .get_from_rev(KeyRange::new_one_key("z"), 5)
+                .len(),
+            2
+        );
 
         Ok(())
     }
@@ -1260,7 +1279,10 @@ mod test {
             }
         });
         tokio::time::sleep(std::time::Duration::from_micros(50)).await;
-        let revs = store.inner.index.get_from_rev(b"foo", b"", 1);
+        let revs = store
+            .inner
+            .index
+            .get_from_rev(KeyRange::new_one_key("foo"), 1);
         let kvs = store.inner.get_values(&revs).unwrap();
         assert_eq!(
             kvs.len(),
@@ -1271,6 +1293,7 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::too_many_lines)]
     async fn test_compaction() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
         let store = init_empty_store(db);
@@ -1308,12 +1331,20 @@ mod test {
         let target_revisions = index_compact(&store, 3);
         store.compact(target_revisions.as_ref())?;
         assert_eq!(
-            store.inner.get_range(b"a", b"", 2).unwrap().len(),
+            store
+                .inner
+                .get_range(KeyRange::new_one_key("a"), 2)
+                .unwrap()
+                .len(),
             1,
             "(a, 1) should not be removed"
         );
         assert_eq!(
-            store.inner.get_range(b"b", b"", 3).unwrap().len(),
+            store
+                .inner
+                .get_range(KeyRange::new_one_key("b"), 3)
+                .unwrap()
+                .len(),
             1,
             "(b, 2) should not be removed"
         );
@@ -1321,16 +1352,28 @@ mod test {
         let target_revisions = index_compact(&store, 4);
         store.compact(target_revisions.as_ref())?;
         assert!(
-            store.inner.get_range(b"a", b"", 2).unwrap().is_empty(),
+            store
+                .inner
+                .get_range(KeyRange::new_one_key("a"), 2)
+                .unwrap()
+                .is_empty(),
             "(a, 1) should be removed"
         );
         assert_eq!(
-            store.inner.get_range(b"b", b"", 3).unwrap().len(),
+            store
+                .inner
+                .get_range(KeyRange::new_one_key("b"), 3)
+                .unwrap()
+                .len(),
             1,
             "(b, 2) should not be removed"
         );
         assert_eq!(
-            store.inner.get_range(b"a", b"", 4).unwrap().len(),
+            store
+                .inner
+                .get_range(KeyRange::new_one_key("a"), 4)
+                .unwrap()
+                .len(),
             1,
             "(a, 3) should not be removed"
         );
@@ -1338,20 +1381,36 @@ mod test {
         let target_revisions = index_compact(&store, 5);
         store.compact(target_revisions.as_ref())?;
         assert!(
-            store.inner.get_range(b"a", b"", 2).unwrap().is_empty(),
+            store
+                .inner
+                .get_range(KeyRange::new_one_key("a"), 2)
+                .unwrap()
+                .is_empty(),
             "(a, 1) should be removed"
         );
         assert_eq!(
-            store.inner.get_range(b"b", b"", 3).unwrap().len(),
+            store
+                .inner
+                .get_range(KeyRange::new_one_key("b"), 3)
+                .unwrap()
+                .len(),
             1,
             "(b, 2) should not be removed"
         );
         assert!(
-            store.inner.get_range(b"a", b"", 4).unwrap().is_empty(),
+            store
+                .inner
+                .get_range(KeyRange::new_one_key("a"), 4)
+                .unwrap()
+                .is_empty(),
             "(a, 3) should be removed"
         );
         assert!(
-            store.inner.get_range(b"a", b"", 5).unwrap().is_empty(),
+            store
+                .inner
+                .get_range(KeyRange::new_one_key("a"), 5)
+                .unwrap()
+                .is_empty(),
             "(a, 4) should be removed"
         );
 
