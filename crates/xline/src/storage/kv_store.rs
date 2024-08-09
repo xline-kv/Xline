@@ -11,6 +11,7 @@ use std::{
 
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use engine::{Transaction, TransactionApi};
+#[cfg(not(madsim))]
 use event_listener::Listener;
 use prost::Message;
 use tracing::{debug, warn};
@@ -1123,6 +1124,7 @@ impl KvStore {
         let ops = vec![WriteOp::PutScheduledCompactRevision(revision)];
         // TODO: Remove the physical process logic here. It's better to move into the
         // KvServer
+        #[cfg_attr(madsim, allow(unused))]
         let (event, listener) = if req.physical {
             let event = Arc::new(event_listener::Event::new());
             let listener = event.listen();
@@ -1134,6 +1136,8 @@ impl KvStore {
         if let Err(e) = self.compact_task_tx.send((revision, event)) {
             panic!("the compactor exited unexpectedly: {e:?}");
         }
+        // FIXME: madsim is single threaded, we cannot use synchronous wait here
+        #[cfg(not(madsim))]
         if let Some(listener) = listener {
             listener.wait();
         }

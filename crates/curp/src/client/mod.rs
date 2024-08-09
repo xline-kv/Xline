@@ -21,6 +21,8 @@ mod state;
 #[cfg(test)]
 mod tests;
 
+#[cfg(madsim)]
+use std::sync::atomic::AtomicU64;
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
@@ -372,6 +374,32 @@ impl ClientBuilder {
             Some(self.spawn_bg_tasks(state)),
         );
         Ok(client)
+    }
+
+    #[cfg(madsim)]
+    /// Build the client, also returns the current client id
+    ///
+    /// # Errors
+    ///
+    /// Return `tonic::transport::Error` for connection failure.
+    #[inline]
+    pub async fn build_with_client_id<C: Command>(
+        &self,
+    ) -> Result<
+        (
+            impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static,
+            Arc<AtomicU64>,
+        ),
+        tonic::transport::Error,
+    > {
+        let state = Arc::new(self.init_state_builder().build().await?);
+        let client = Retry::new(
+            Unary::new(Arc::clone(&state), self.init_unary_config()),
+            self.init_retry_config(),
+            Some(self.spawn_bg_tasks(Arc::clone(&state))),
+        );
+        let client_id = state.clone_client_id();
+        Ok((client, client_id))
     }
 }
 
