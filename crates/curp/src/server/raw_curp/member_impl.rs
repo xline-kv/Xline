@@ -14,34 +14,12 @@ use super::RawCurp;
 use super::Role;
 
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
-    /// Adds a learner to the membership state
-    pub(crate) fn add_learner(&self, addrs: &[String]) -> ReturnValueWrapper<Vec<u64>> {
-        let mut ms_w = self.ms.write();
-        let mut log_w = self.log.write();
-        loop {
-            let ids = random_ids(addrs.len());
-            let change = ids.clone().into_iter().zip(addrs.to_owned()).collect();
-            let Some(config) = ms_w.committed().change(Change::AddLearner(change)) else {
-                continue;
-            };
-            ms_w.update_effective(config.clone());
-            let st_r = self.st.read();
-            let propose_id = ProposeId(rand::random(), 0);
-            let _entry = log_w.push(st_r.term, propose_id, config);
-            return ReturnValueWrapper::new(ids, propose_id);
-        }
-    }
-
-    /// Removes a learner from the membership state
-    pub(crate) fn remove_learner(&self, ids: Vec<u64>) -> Option<ReturnValueWrapper<()>> {
-        let mut ms_w = self.ms.write();
-        let mut log_w = self.log.write();
-        let config = ms_w.committed().change(Change::RemoveLearner(ids))?;
-        ms_w.update_effective(config.clone());
-        let st_r = self.st.read();
-        let propose_id = ProposeId(rand::random(), 0);
-        let _entry = log_w.push(st_r.term, propose_id, config);
-        Some(ReturnValueWrapper::new((), propose_id))
+    /// Generates new node ids
+    /// TODO: makes sure that the ids are unique
+    #[allow(clippy::unused_self)] // it should be used after the previous TODO
+    pub(crate) fn new_node_ids(&self, n: usize) -> Vec<u64> {
+        let mut rng = rand::thread_rng();
+        (0..n).map(|_| rng.gen()).collect()
     }
 
     /// Generate memberships based on the provided change
@@ -109,10 +87,4 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             st_w.role = Role::Learner;
         }
     }
-}
-
-/// Generate random ids of the given length
-fn random_ids(n: usize) -> Vec<u64> {
-    let mut rng = rand::thread_rng();
-    (0..n).map(|_| rng.gen()).collect()
 }

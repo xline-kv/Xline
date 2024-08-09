@@ -27,13 +27,14 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         request: AddLearnerRequest,
     ) -> Result<AddLearnerResponse, CurpError> {
-        let addrs = request.node_addrs;
-        let ret = self.curp.add_learner(&addrs);
-        self.curp.wait_propose_ids(Some(ret.propose_id())).await;
+        let node_addrs = request.node_addrs;
+        let node_ids = self.curp.new_node_ids(node_addrs.len());
+        self.update_and_wait(Change::AddLearner(
+            node_ids.clone().into_iter().zip(node_addrs).collect(),
+        ))
+        .await?;
 
-        Ok(AddLearnerResponse {
-            node_ids: ret.into_inner(),
-        })
+        Ok(AddLearnerResponse { node_ids })
     }
 
     /// Removes a learner from the cluster
@@ -41,12 +42,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         request: RemoveLearnerRequest,
     ) -> Result<RemoveLearnerResponse, CurpError> {
-        let node_ids = request.node_ids;
-        let ret = self
-            .curp
-            .remove_learner(node_ids)
-            .ok_or(CurpError::invalid_member_change())?;
-        self.curp.wait_propose_ids(Some(ret.propose_id())).await;
+        self.update_and_wait(Change::RemoveLearner(request.node_ids))
+            .await?;
 
         Ok(RemoveLearnerResponse {})
     }
