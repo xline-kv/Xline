@@ -190,6 +190,8 @@ pub mod barrier;
 pub mod config;
 /// Interval tree implementation
 pub mod interval_map;
+/// LCA tree implementation
+pub mod lca_tree;
 /// utils for metrics
 pub mod metrics;
 /// utils of `parking_lot` lock
