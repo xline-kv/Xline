@@ -11,6 +11,28 @@ use serde::Serialize;
 
 use crate::quorum::Joint;
 
+/// The membership info, used to build the initial states
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct MembershipInfo {
+    /// The id of current node
+    pub node_id: u64,
+    /// The initial cluster members
+    pub init_members: BTreeMap<u64, String>,
+}
+
+impl MembershipInfo {
+    /// Creates a new `MembershipInfo`
+    #[inline]
+    #[must_use]
+    pub fn new(node_id: u64, init_members: BTreeMap<u64, String>) -> Self {
+        Self {
+            node_id,
+            init_members,
+        }
+    }
+}
+
 /// The membership state of the node
 pub(crate) struct NodeMembershipState {
     /// The id of current node
@@ -22,20 +44,12 @@ pub(crate) struct NodeMembershipState {
 }
 
 impl NodeMembershipState {
-    /// Creates a new `NodeMembershipState`
-    ///
-    /// This method is used to build learners
-    pub(crate) fn new() -> Self {
-        Self {
-            node_id: 0,
-            cluster_state: MembershipState::default(),
-        }
-    }
-
     /// Creates a new `NodeMembershipState` with initial state
-    ///
-    /// This method is used to build the leader
-    pub(crate) fn new_init(node_id: u64, init_members: BTreeMap<u64, String>) -> Self {
+    pub(crate) fn new(info: MembershipInfo) -> Self {
+        let MembershipInfo {
+            node_id,
+            init_members,
+        } = info;
         let init_ms = Membership {
             members: vec![init_members.keys().copied().collect()],
             nodes: init_members,
@@ -46,7 +60,7 @@ impl NodeMembershipState {
             committed: Membership::default(),
         };
         Self {
-            node_id: 0,
+            node_id,
             cluster_state,
         }
     }

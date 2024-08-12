@@ -40,7 +40,7 @@ use super::{
 use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
-    member::Membership,
+    member::{Membership, MembershipInfo},
     members::{ClusterInfo, ServerId},
     response::ResponseSender,
     role_change::RoleChange,
@@ -873,6 +873,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     #[allow(clippy::too_many_arguments)] // TODO: refactor this use builder pattern
     #[allow(clippy::needless_pass_by_value)] // The value should be consumed
     pub(super) fn new(
+        membership_info: MembershipInfo,
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         cmd_executor: Arc<CE>,
@@ -924,6 +925,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 .as_tx(as_tx.clone())
                 .resp_txs(Arc::new(Mutex::default()))
                 .id_barrier(Arc::new(IdBarrier::new()))
+                .membership_info(membership_info)
                 .build_raw_curp()
                 .map_err(|e| CurpError::internal(format!("build raw curp failed, {e}")))?,
         );

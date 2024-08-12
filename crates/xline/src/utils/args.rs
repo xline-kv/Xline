@@ -1,4 +1,9 @@
-use std::{collections::HashMap, env, path::PathBuf, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    env,
+    path::PathBuf,
+    time::Duration,
+};
 
 use anyhow::Result;
 use clap::Parser;
@@ -21,7 +26,7 @@ use utils::{
         XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_file, parse_log_level, parse_members,
-    parse_metrics_push_protocol, parse_rotation, parse_state, ConfigFileError,
+    parse_membership, parse_metrics_push_protocol, parse_rotation, parse_state, ConfigFileError,
 };
 
 /// Xline server config path env name
@@ -213,6 +218,12 @@ pub struct ServerArgs {
     /// Client private key path
     #[clap(long)]
     client_key_path: Option<PathBuf>,
+    /// Cluster membership. eg: 0=192.168.x.x:8080,1=192.168.x.x:8081
+    #[clap(long, value_parser = parse_membership)]
+    membership_info: BTreeMap<u64, String>,
+    /// The id of current node
+    #[clap(long)]
+    node_id: u64,
 }
 
 #[allow(clippy::too_many_lines)] // will be refactored in #604
@@ -291,6 +302,8 @@ impl From<ServerArgs> for XlineServerConfig {
             client_config,
             server_timeout,
             initial_cluster_state,
+            args.membership_info,
+            args.node_id,
         );
         let log = LogConfig::new(args.log_file, args.log_rotate, args.log_level);
         let trace = TraceConfig::new(

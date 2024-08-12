@@ -20,6 +20,7 @@ use self::curp_node::CurpNode;
 pub use self::raw_curp::RawCurp;
 use crate::cmd::Command;
 use crate::cmd::CommandExecutor;
+use crate::member::MembershipInfo;
 use crate::members::ClusterInfo;
 use crate::members::ServerId;
 use crate::response::ResponseSender;
@@ -378,6 +379,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     #[inline]
     #[allow(clippy::too_many_arguments)] // TODO: refactor this use builder pattern
     pub fn new(
+        membership_info: MembershipInfo,
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         executor: Arc<CE>,
@@ -392,6 +394,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     ) -> Self {
         #[allow(clippy::panic)]
         let curp_node = match CurpNode::new(
+            membership_info,
             cluster_info,
             is_leader,
             executor,
@@ -426,6 +429,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     #[allow(clippy::too_many_arguments)]
     #[inline]
     pub async fn run_from_addr(
+        membership_info: MembershipInfo,
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         addr: std::net::SocketAddr,
@@ -449,6 +453,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
             .get_shutdown_listener(TaskName::TonicServer)
             .unwrap_or_else(|| unreachable!("cluster should never shutdown before start"));
         let server = Self::new(
+            membership_info,
             cluster_info,
             is_leader,
             executor,

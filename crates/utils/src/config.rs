@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+    time::Duration,
+};
 
 use derive_builder::Builder;
 use getset::Getters;
@@ -119,6 +123,12 @@ pub struct ClusterConfig {
     #[getset(get = "pub")]
     #[serde(with = "state_format", default = "InitialClusterState::default")]
     initial_cluster_state: InitialClusterState,
+    /// Initial cluster members
+    #[getset(get = "pub")]
+    initial_membership_info: BTreeMap<u64, String>,
+    /// Node id
+    #[getset(get = "pub")]
+    node_id: u64,
 }
 
 impl Default for ClusterConfig {
@@ -139,6 +149,8 @@ impl Default for ClusterConfig {
             client_config: ClientConfig::default(),
             server_timeout: ServerTimeout::default(),
             initial_cluster_state: InitialClusterState::default(),
+            initial_membership_info: BTreeMap::from([(0, "http://127.0.0.1:2379".to_owned())]),
+            node_id: 0,
         }
     }
 }
@@ -189,6 +201,8 @@ impl ClusterConfig {
         client_config: ClientConfig,
         server_timeout: ServerTimeout,
         initial_cluster_state: InitialClusterState,
+        initial_membership_info: BTreeMap<u64, String>,
+        node_id: u64,
     ) -> Self {
         Self {
             name,
@@ -202,6 +216,8 @@ impl ClusterConfig {
             client_config,
             server_timeout,
             initial_cluster_state,
+            initial_membership_info,
+            node_id,
         }
     }
 }
@@ -1212,6 +1228,7 @@ mod tests {
             peer_advertise_urls = ['127.0.0.1:2380']
             client_listen_urls = ['127.0.0.1:2379']
             client_advertise_urls = ['127.0.0.1:2379']
+            node_id = 1
 
             [cluster.server_timeout]
             range_retry_timeout = '3s'
@@ -1223,6 +1240,11 @@ mod tests {
             node1 = ['127.0.0.1:2378', '127.0.0.1:2379']
             node2 = ['127.0.0.1:2380']
             node3 = ['127.0.0.1:2381']
+
+            [cluster.initial_membership_info]
+            1 = '127.0.0.1:2379'
+            2 = '127.0.0.1:2380'
+            3 = '127.0.0.1:2381'
 
             [cluster.curp_config]
             heartbeat_interval = '200ms'
@@ -1320,7 +1342,13 @@ mod tests {
                 curp_config,
                 client_config,
                 server_timeout,
-                InitialClusterState::New
+                InitialClusterState::New,
+                BTreeMap::from([
+                    (1, "127.0.0.1:2379".to_owned()),
+                    (2, "127.0.0.1:2380".to_owned()),
+                    (3, "127.0.0.1:2381".to_owned()),
+                ]),
+                1,
             )
         );
 
@@ -1399,11 +1427,17 @@ mod tests {
                 peer_advertise_urls = ['127.0.0.1:2380']
                 client_listen_urls = ['127.0.0.1:2379']
                 client_advertise_urls = ['127.0.0.1:2379']
+                node_id = 1
 
                 [cluster.peers]
                 node1 = ['127.0.0.1:2379']
                 node2 = ['127.0.0.1:2380']
                 node3 = ['127.0.0.1:2381']
+
+                [cluster.initial_membership_info]
+                1 = '127.0.0.1:2379'
+                2 = '127.0.0.1:2380'
+                3 = '127.0.0.1:2381'
 
                 [cluster.storage]
 
@@ -1445,7 +1479,13 @@ mod tests {
                 CurpConfigBuilder::default().build().unwrap(),
                 ClientConfig::default(),
                 ServerTimeout::default(),
-                InitialClusterState::default()
+                InitialClusterState::default(),
+                BTreeMap::from([
+                    (1, "127.0.0.1:2379".to_owned()),
+                    (2, "127.0.0.1:2380".to_owned()),
+                    (3, "127.0.0.1:2381".to_owned()),
+                ]),
+                1,
             )
         );
 

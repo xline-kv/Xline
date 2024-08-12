@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+    time::Duration,
+};
 
 use clippy_utilities::OverflowArithmetic;
 use regex::Regex;
@@ -68,6 +72,28 @@ pub fn parse_members(s: &str) -> Result<HashMap<String, Vec<String>>, ConfigPars
         }
     }
     Ok(map)
+}
+
+/// Parse members from string like "0=addr1,1=addr2,2=addr3"
+///
+/// # Errors
+///
+/// Return error when pass wrong args
+#[inline]
+pub fn parse_membership(s: &str) -> Result<BTreeMap<u64, String>, ConfigParseError> {
+    // TODO: currently reuse `parse_members`. Rewrite this after the old membership change is
+    // removed.
+    let ms = parse_members(s)?;
+    ms.into_iter()
+        .map(|(k, v)| {
+            k.parse()
+                .ok()
+                .zip(v.into_iter().next())
+                .ok_or(ConfigParseError::InvalidValue(
+                    "parese membership error".to_owned(),
+                ))
+        })
+        .collect::<Result<_, _>>()
 }
 
 /// Parse `ClusterRange` from the given string

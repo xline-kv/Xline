@@ -1,4 +1,10 @@
-use std::{collections::HashMap, env::temp_dir, iter, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    env::temp_dir,
+    iter,
+    path::PathBuf,
+    sync::Arc,
+};
 
 use futures::future::join_all;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
@@ -103,6 +109,13 @@ impl Cluster {
                     .collect(),
                 i == 0,
                 InitialClusterState::New,
+                self.all_members_peer_urls
+                    .clone()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, addr)| (i as u64, addr))
+                    .collect(),
+                i as u64,
             );
 
             let server = Arc::new(
@@ -171,6 +184,13 @@ impl Cluster {
             peers,
             false,
             InitialClusterState::Existing,
+            self.all_members_peer_urls
+                .clone()
+                .into_iter()
+                .enumerate()
+                .map(|(i, addr)| (i as u64, addr))
+                .collect(),
+            idx as u64,
         );
 
         let server = XlineServer::new(
@@ -265,6 +285,7 @@ impl Cluster {
         Self::default_config_with_quota_and_rocks_path(path, quota)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn merge_config(
         base_config: &XlineServerConfig,
         name: String,
@@ -273,6 +294,8 @@ impl Cluster {
         peers: HashMap<String, Vec<String>>,
         is_leader: bool,
         initial_cluster_state: InitialClusterState,
+        initial_membership_info: BTreeMap<u64, String>,
+        node_id: u64,
     ) -> XlineServerConfig {
         let old_cluster = base_config.cluster();
         let new_cluster = ClusterConfig::new(
@@ -287,6 +310,8 @@ impl Cluster {
             *old_cluster.client_config(),
             *old_cluster.server_timeout(),
             initial_cluster_state,
+            initial_membership_info,
+            node_id,
         );
         XlineServerConfig::new(
             new_cluster,

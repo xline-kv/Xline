@@ -1,5 +1,11 @@
 use std::{
-    collections::HashMap, error::Error, fmt::Display, iter, path::PathBuf, sync::Arc, thread,
+    collections::{BTreeMap, HashMap},
+    error::Error,
+    fmt::Display,
+    iter,
+    path::PathBuf,
+    sync::Arc,
+    thread,
     time::Duration,
 };
 
@@ -8,6 +14,7 @@ use clippy_utilities::NumericCast;
 use curp::{
     client::{ClientApi, ClientBuilder},
     error::ServerError,
+    member::MembershipInfo,
     members::{ClusterInfo, ServerId},
     rpc::{InnerProtocolServer, Member, ProtocolServer},
     server::{
@@ -112,7 +119,7 @@ impl CurpGroup {
         let mut nodes = HashMap::new();
         let client_tls_config = None;
         let server_tls_config = None;
-        for (name, (config, xline_storage_config)) in configs.into_iter() {
+        for (node_id, (name, (config, xline_storage_config))) in configs.into_iter().enumerate() {
             let task_manager = Arc::new(TaskManager::new());
             let snapshot_allocator = Self::get_snapshot_allocator_from_cfg(&config);
             let cluster_info = Arc::new(ClusterInfo::from_members_map(
@@ -120,6 +127,13 @@ impl CurpGroup {
                 [],
                 &name,
             ));
+            let init_members = all_members_addrs
+                .values()
+                .map(|addrs| addrs[0].clone())
+                .enumerate()
+                .map(|(id, addr)| (id as u64, addr))
+                .collect();
+            let membership_info = MembershipInfo::new(node_id as u64, init_members);
             let listener = listeners.remove(&name).unwrap();
             let id = cluster_info.self_id();
             let addr = cluster_info.self_peer_urls().pop().unwrap();
@@ -137,6 +151,7 @@ impl CurpGroup {
             let role_change_arc = role_change_cb.get_inner_arc();
             let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
             let server = Arc::new(Rpc::new(
+                membership_info,
                 cluster_info,
                 name == leader_name,
                 ce,
@@ -265,7 +280,19 @@ impl CurpGroup {
         let role_change_cb = TestRoleChange::default();
         let role_change_arc = role_change_cb.get_inner_arc();
         let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
+
+        // TODO: remove cluster info and build the membership info from start
+        let init_members: BTreeMap<_, _> = cluster_info
+            .all_members_peer_urls()
+            .values()
+            .map(|addrs| addrs[0].clone())
+            .enumerate()
+            .map(|(id, addr)| (id as u64, addr))
+            .collect();
+        let node_id = init_members.len();
+        let membership_info = MembershipInfo::new(node_id as u64, init_members);
         let server = Arc::new(Rpc::new(
+            membership_info,
             cluster_info,
             false,
             ce,

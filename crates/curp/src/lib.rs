@@ -207,7 +207,7 @@ mod snapshot;
 mod response;
 
 /// Membership state
-mod member;
+pub mod member;
 
 /// Quorum definitions
 mod quorum;

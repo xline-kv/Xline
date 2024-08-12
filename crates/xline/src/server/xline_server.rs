@@ -4,6 +4,7 @@ use anyhow::{anyhow, Result};
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp::{
     client::ClientBuilder as CurpClientBuilder,
+    member::MembershipInfo,
     members::{get_cluster_info_from_remote, ClusterInfo},
     rpc::{InnerProtocolServer, ProtocolServer},
     server::{Rpc, StorageApi as _, DB as CurpDB},
@@ -73,6 +74,8 @@ pub(crate) type CurpServer = Rpc<Command, CommandExecutor, State<Arc<CurpClient>
 /// Xline server
 #[derive(Debug)]
 pub struct XlineServer {
+    /// Membership information
+    membership_info: MembershipInfo,
     /// Cluster information
     cluster_info: Arc<ClusterInfo>,
     /// Cluster Config
@@ -121,6 +124,11 @@ impl XlineServer {
             )
             .await?,
         );
+        let membership_info = MembershipInfo::new(
+            *cluster_config.node_id(),
+            cluster_config.initial_membership_info().clone(),
+        );
+
         Ok(Self {
             cluster_info,
             cluster_config,
@@ -131,6 +139,7 @@ impl XlineServer {
             server_tls_config,
             task_manager: Arc::new(TaskManager::new()),
             curp_storage,
+            membership_info,
         })
     }
 
@@ -507,6 +516,7 @@ impl XlineServer {
         let curp_config = Arc::new(self.cluster_config.curp_config().clone());
 
         let curp_server = CurpServer::new(
+            self.membership_info.clone(),
             Arc::clone(&self.cluster_info),
             *self.cluster_config.is_leader(),
             Arc::clone(&ce),

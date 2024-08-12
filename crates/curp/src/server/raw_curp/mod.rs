@@ -65,6 +65,7 @@ use crate::cmd::Command;
 use crate::log_entry::EntryData;
 use crate::log_entry::LogEntry;
 use crate::member::Membership;
+use crate::member::MembershipInfo;
 use crate::member::NodeMembershipState;
 use crate::members::ClusterInfo;
 use crate::members::ServerId;
@@ -133,6 +134,8 @@ pub struct RawCurp<C: Command, RC: RoleChange> {
 #[derive(Builder)]
 #[builder(name = "RawCurpBuilder")]
 pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
+    /// Membership information
+    membership_info: MembershipInfo,
     /// Cluster information
     cluster_info: Arc<ClusterInfo>,
     /// Current node is leader or not
@@ -220,7 +223,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             log,
             ctx,
             task_manager: args.task_manager,
-            ms: RwLock::new(NodeMembershipState::new()),
+            ms: RwLock::new(NodeMembershipState::new(args.membership_info)),
         };
 
         if args.is_leader {
