@@ -23,11 +23,31 @@ pub(crate) struct NodeMembershipState {
 
 impl NodeMembershipState {
     /// Creates a new `NodeMembershipState`
-    // FIXME: specify the node id and initial membership state in node config
+    ///
+    /// This method is used to build learners
     pub(crate) fn new() -> Self {
         Self {
             node_id: 0,
             cluster_state: MembershipState::default(),
+        }
+    }
+
+    /// Creates a new `NodeMembershipState` with initial state
+    ///
+    /// This method is used to build the leader
+    pub(crate) fn new_init(node_id: u64, init_members: BTreeMap<u64, String>) -> Self {
+        let init_ms = Membership {
+            members: vec![init_members.keys().copied().collect()],
+            nodes: init_members,
+        };
+        let cluster_state = MembershipState {
+            effective: init_ms,
+            index_effective: 1,
+            committed: Membership::default(),
+        };
+        Self {
+            node_id: 0,
+            cluster_state,
         }
     }
 
