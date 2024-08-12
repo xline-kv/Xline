@@ -49,7 +49,7 @@ workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 [dev-dependencies]
 opentelemetry = { version = "0.22.0", features = ["trace"] }
 opentelemetry-jaeger = "0.22.0"
-opentelemetry-otlp = { version = "0.15.0", features = [
+opentelemetry-otlp = { version = "0.17.0", features = [
   "metrics",
   "http-proto",
   "reqwest-client",
