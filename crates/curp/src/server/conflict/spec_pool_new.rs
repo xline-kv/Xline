@@ -18,6 +18,7 @@ impl<C> SpeculativePool<C> {
     }
 
     /// Inserts an entry into the pool
+    #[allow(clippy::needless_pass_by_value)] // we need to consume the entry
     pub(crate) fn insert(&mut self, entry: PoolEntry<C>) -> Option<PoolEntry<C>> {
         for csp in &mut self.command_sps {
             if let Some(e) = csp.insert_if_not_conflict(entry.clone()) {
