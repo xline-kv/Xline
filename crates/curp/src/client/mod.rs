@@ -23,7 +23,7 @@ mod tests;
 
 #[cfg(madsim)]
 use std::sync::atomic::AtomicU64;
-use std::{collections::HashMap, fmt::Debug, ops::Deref, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, ops::Deref, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
@@ -393,13 +393,15 @@ impl ClientBuilder {
     async fn wait_for_client_id(&self, state: Arc<state::State>) -> Result<(), tonic::Status> {
         /// Max retry count for wait a client id
         const RETRY_COUNT: usize = 10;
+        /// The interval for each retry
+        const RETRY_INTERVAL: Duration = Duration::from_secs(1);
 
         for _ in 0..RETRY_COUNT {
             if state.client_id() != 0 {
                 return Ok(());
             }
             debug!("waiting for client_id");
-            tokio::time::sleep(*self.config.propose_timeout()).await;
+            tokio::time::sleep(RETRY_INTERVAL).await;
         }
 
         Err(tonic::Status::deadline_exceeded("timeout"))
