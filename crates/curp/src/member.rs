@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::quorum::Joint;
+use crate::rpc::connect::InnerConnectApiWrapper;
 
 /// The membership info, used to build the initial states
 #[derive(Debug, Clone)]
@@ -41,11 +42,17 @@ pub(crate) struct NodeMembershipState {
     node_id: u64,
     /// The membership state of the cluster
     cluster_state: MembershipState,
+    #[allow(unused)]
+    /// The rpc connects of nodes
+    connects: BTreeMap<u64, InnerConnectApiWrapper>,
 }
 
 impl NodeMembershipState {
     /// Creates a new `NodeMembershipState` with initial state
-    pub(crate) fn new(info: MembershipInfo) -> Self {
+    pub(crate) fn new(
+        info: MembershipInfo,
+        init_connects: BTreeMap<u64, InnerConnectApiWrapper>,
+    ) -> Self {
         let MembershipInfo {
             node_id,
             init_members,
@@ -62,6 +69,7 @@ impl NodeMembershipState {
         Self {
             node_id,
             cluster_state,
+            connects: init_connects,
         }
     }
 
@@ -281,6 +289,7 @@ impl Membership {
 
 #[allow(unused)]
 /// The change of membership
+#[derive(Clone)]
 pub(crate) enum Change {
     /// Adds learners
     AddLearner(Vec<(u64, String)>),

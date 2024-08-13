@@ -893,6 +893,16 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .collect();
         let connects =
             rpc::inner_connects(cluster_info.peers_addrs(), client_tls_config.as_ref()).collect();
+        let member_connects = rpc::inner_connects(
+            membership_info
+                .init_members
+                .clone()
+                .into_iter()
+                .map(|(id, addr)| (id, vec![addr]))
+                .collect(),
+            client_tls_config.as_ref(),
+        )
+        .collect();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
         let last_applied = cmd_executor
@@ -926,6 +936,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 .resp_txs(Arc::new(Mutex::default()))
                 .id_barrier(Arc::new(IdBarrier::new()))
                 .membership_info(membership_info)
+                .member_connects(member_connects)
                 .build_raw_curp()
                 .map_err(|e| CurpError::internal(format!("build raw curp failed, {e}")))?,
         );

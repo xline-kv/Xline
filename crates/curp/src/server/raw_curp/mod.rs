@@ -12,6 +12,7 @@
 
 use std::cmp;
 use std::cmp::min;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
@@ -136,6 +137,8 @@ pub struct RawCurp<C: Command, RC: RoleChange> {
 pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     /// Membership information
     membership_info: MembershipInfo,
+    /// Member connects
+    member_connects: BTreeMap<u64, InnerConnectApiWrapper>,
     /// Cluster information
     cluster_info: Arc<ClusterInfo>,
     /// Current node is leader or not
@@ -223,7 +226,10 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             log,
             ctx,
             task_manager: args.task_manager,
-            ms: RwLock::new(NodeMembershipState::new(args.membership_info)),
+            ms: RwLock::new(NodeMembershipState::new(
+                args.membership_info,
+                args.member_connects,
+            )),
         };
 
         if args.is_leader {
