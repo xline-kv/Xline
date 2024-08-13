@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use curp_external_api::cmd::Command;
 use curp_external_api::role_change::RoleChange;
 use curp_external_api::LogIndex;
@@ -8,6 +10,8 @@ use crate::log_entry::LogEntry;
 use crate::member::Change;
 use crate::member::Membership;
 use crate::member::NodeMembershipState;
+use crate::rpc::connect::InnerConnectApiWrapper;
+use crate::rpc::inner_connects;
 use crate::rpc::ProposeId;
 
 use super::RawCurp;
@@ -33,10 +37,13 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         // FIXME: define the lock order of log and ms
         let mut log_w = self.log.write();
         let mut ms_w = self.ms.write();
-        ms_w.cluster_mut().update_effective(config.clone());
         let st_r = self.st.read();
         let propose_id = ProposeId(rand::random(), 0);
-        let _entry = log_w.push(st_r.term, propose_id, config);
+        let entry = log_w.push(st_r.term, propose_id, config.clone());
+        let new_connects = self.build_connects(&config);
+        ms_w.cluster_mut().append(entry.index, config);
+        ms_w.update_connects(new_connects);
+
         propose_id
     }
 
@@ -51,8 +58,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         I: IntoIterator<Item = E>,
     {
         let mut ms_w = self.ms.write();
-        let ms = ms_w.cluster_mut();
-        ms.truncate(truncate_at);
+        ms_w.cluster_mut().truncate(truncate_at);
         let configs = entries.into_iter().filter_map(|entry| {
             let entry = entry.as_ref();
             if let EntryData::Member(ref m) = entry.entry_data {
@@ -62,8 +68,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             }
         });
         for (index, config) in configs {
-            ms.append(index, config);
-            ms.commit(commit_index.min(index));
+            let new_connects = self.build_connects(&config);
+            ms_w.update_connects(new_connects);
+            ms_w.cluster_mut().append(index, config);
+            ms_w.cluster_mut().commit(commit_index.min(index));
         }
 
         self.update_role(&ms_w);
@@ -85,5 +93,18 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         } else {
             st_w.role = Role::Learner;
         }
+    }
+
+    /// Creates connections for new membership configuration.
+    ///
+    /// Returns a closure can be used to update the existing connections
+    fn build_connects(&self, config: &Membership) -> BTreeMap<u64, InnerConnectApiWrapper> {
+        let nodes = config
+            .nodes
+            .iter()
+            .map(|(id, addr)| (*id, vec![addr.clone()]))
+            .collect();
+
+        inner_connects(nodes, self.client_tls_config()).collect()
     }
 }

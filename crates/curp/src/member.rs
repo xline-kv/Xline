@@ -92,6 +92,20 @@ impl NodeMembershipState {
     pub(crate) fn is_member(&self) -> bool {
         self.cluster().effective().contains(self.node_id())
     }
+
+    /// Updates the connects
+    pub(crate) fn update_connects(&mut self, new_connects: BTreeMap<u64, InnerConnectApiWrapper>) {
+        self.connects.retain(|k, _| new_connects.contains_key(k));
+        for (id, conn) in new_connects {
+            let _ignore = self.connects.entry(id).or_insert(conn);
+        }
+    }
+
+    #[allow(unused)]
+    /// Get all rpc connects
+    pub(crate) fn connects(&self) -> &BTreeMap<u64, InnerConnectApiWrapper> {
+        &self.connects
+    }
 }
 
 /// Membership state stored in current node
@@ -107,16 +121,6 @@ pub(crate) struct MembershipState {
 
 #[allow(unused)]
 impl MembershipState {
-    /// Update the effective membership
-    pub(crate) fn update_effective(&mut self, config: Membership) {
-        self.effective = config;
-    }
-
-    /// Update the committed membership
-    pub(crate) fn update_commit(&mut self, config: Membership) {
-        self.committed = config;
-    }
-
     /// Append a membership change entry
     pub(crate) fn append(&mut self, index: LogIndex, membership: Membership) {
         self.index_effective = index;

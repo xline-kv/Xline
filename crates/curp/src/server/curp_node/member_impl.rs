@@ -9,8 +9,6 @@ use curp_external_api::cmd::CommandExecutor;
 use curp_external_api::role_change::RoleChange;
 
 use crate::member::Change;
-use crate::rpc::connect::InnerConnectApiWrapper;
-use crate::rpc::inner_connects;
 use crate::rpc::AddLearnerRequest;
 use crate::rpc::AddLearnerResponse;
 use crate::rpc::AddMemberRequest;
@@ -79,29 +77,11 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         if configs.is_empty() {
             return Err(CurpError::invalid_member_change());
         }
-        //let new_connects = self.connect_node(&change).await;
         for config in configs {
             let propose_id = self.curp.update_membership(config);
             self.curp.wait_propose_ids(Some(propose_id)).await;
         }
 
         Ok(())
-    }
-
-    #[allow(unused)]
-    /// Connect to the nodes if new learners are added
-    fn connect_node(
-        &self,
-        change: &Change,
-    ) -> Option<impl Iterator<Item = (u64, InnerConnectApiWrapper)>> {
-        let Change::AddLearner(ref nodes) = *change else {
-            return None;
-        };
-        let nodes = nodes
-            .iter()
-            .map(|&(id, ref addr)| (id, vec![addr.clone()]))
-            .collect();
-
-        Some(inner_connects(nodes, self.curp.client_tls_config()))
     }
 }
