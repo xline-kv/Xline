@@ -392,8 +392,8 @@ impl ClientBuilder {
     /// Wait for client id
     async fn wait_for_client_id(&self, state: Arc<state::State>) {
         while state.client_id() == 0 {
-            tokio::time::sleep(*self.config.propose_timeout()).await;
             debug!("waiting for client_id");
+            tokio::time::sleep(*self.config.propose_timeout()).await;
         }
     }
 
