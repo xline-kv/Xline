@@ -390,11 +390,19 @@ impl ClientBuilder {
     }
 
     /// Wait for client id
-    async fn wait_for_client_id(&self, state: Arc<state::State>) {
-        while state.client_id() == 0 {
+    async fn wait_for_client_id(&self, state: Arc<state::State>) -> Result<(), tonic::Status> {
+        /// Max retry count for wait a client id
+        const RETRY_COUNT: usize = 10;
+
+        for _ in 0..RETRY_COUNT {
+            if state.client_id() != 0 {
+                return Ok(());
+            }
             debug!("waiting for client_id");
             tokio::time::sleep(*self.config.propose_timeout()).await;
         }
+
+        Err(tonic::Status::deadline_exceeded("timeout"))
     }
 
     /// Build the client
@@ -405,17 +413,20 @@ impl ClientBuilder {
     #[inline]
     pub async fn build<C: Command>(
         &self,
-    ) -> Result<
-        impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static,
-        tonic::transport::Error,
-    > {
-        let state = Arc::new(self.init_state_builder().build().await?);
+    ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static, tonic::Status>
+    {
+        let state = Arc::new(
+            self.init_state_builder()
+                .build()
+                .await
+                .map_err(|e| tonic::Status::internal(e.to_string()))?,
+        );
         let client = Retry::new(
             Unary::new(Arc::clone(&state), self.init_unary_config()),
             self.init_retry_config(),
             Some(self.spawn_bg_tasks(Arc::clone(&state))),
         );
-        self.wait_for_client_id(state).await;
+        self.wait_for_client_id(state).await?;
         Ok(client)
     }
 
@@ -455,19 +466,20 @@ impl<P: Protocol> ClientBuilderWithBypass<P> {
     #[inline]
     pub async fn build<C: Command>(
         self,
-    ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C>, tonic::transport::Error> {
+    ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C>, tonic::Status> {
         let state = self
             .inner
             .init_state_builder()
             .build_bypassed::<P>(self.local_server_id, self.local_server)
-            .await?;
+            .await
+            .map_err(|e| tonic::Status::internal(e.to_string()))?;
         let state = Arc::new(state);
         let client = Retry::new(
             Unary::new(Arc::clone(&state), self.inner.init_unary_config()),
             self.inner.init_retry_config(),
             Some(self.inner.spawn_bg_tasks(Arc::clone(&state))),
         );
-        self.inner.wait_for_client_id(state).await;
+        self.inner.wait_for_client_id(state).await?;
         Ok(client)
     }
 }
