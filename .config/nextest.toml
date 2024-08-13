@@ -3,4 +3,4 @@ retries = 0
 slow-timeout = { period = "10s", terminate-after = 3 }
 status-level = "all"
 final-status-level = "slow"
-fail-fast = false
+fail-fast = true
