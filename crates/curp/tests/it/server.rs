@@ -11,7 +11,6 @@ use curp::{
 use curp_test_utils::{
     init_logger, sleep_millis, sleep_secs,
     test_cmd::{TestCommand, TestCommandResult, TestCommandType},
-    TEST_CLIENT_ID,
 };
 use futures::stream::FuturesUnordered;
 use madsim::rand::{thread_rng, Rng};
