@@ -29,7 +29,6 @@ impl RawCurp<TestCommand, TestRoleChange> {
         self.cluster().all_members().contains_key(&id)
             && self.ctx.sync_events.contains_key(&id)
             && self.lst.get_all_statuses().contains_key(&id)
-            && self.cst.lock().config.contains(id)
     }
 
     #[allow(clippy::mem_forget)] // we should prevent the channel from being dropped
@@ -132,10 +131,6 @@ impl RawCurp<TestCommand, TestRoleChange> {
                 .all_members()
                 .get(&node_id)
                 .is_some_and(|m| m.is_learner == is_learner)
-            && self.cst.map_lock(|cst_l| {
-                cst_l.config.learners.contains(&node_id) == is_learner
-                    && cst_l.config.voters().contains(&1) != is_learner
-            })
     }
 }
 

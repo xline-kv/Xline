@@ -195,7 +195,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             args.cfg.candidate_timeout_ticks,
         ));
         let lst = LeaderState::new(&args.cluster_info.peers_ids());
-        let cst = Mutex::new(CandidateState::new(args.cluster_info.all_ids().into_iter()));
+        let cst = Mutex::new(CandidateState::new());
         let log = RwLock::new(Log::new(args.cfg.batch_max_size, args.cfg.log_entries_cap));
 
         let ctx = Context::builder()
@@ -1484,31 +1484,25 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .copied()
             .chain([self.id()])
             .collect::<HashSet<_>>();
-        let mut config = self.cst.map_lock(|cst_l| cst_l.config.clone());
         let node_id = conf_change.node_id;
         match conf_change.change_type() {
-            ConfChangeType::Add => {
-                if !statuses_ids.insert(node_id) || !config.insert(node_id, false) {
+            ConfChangeType::Add | ConfChangeType::AddLearner => {
+                if !statuses_ids.insert(node_id) {
                     return Err(CurpError::node_already_exists());
                 }
             }
             ConfChangeType::Remove => {
-                if !statuses_ids.remove(&node_id) || !config.remove(node_id) {
+                if !statuses_ids.remove(&node_id) {
                     return Err(CurpError::node_not_exist());
                 }
             }
             ConfChangeType::Update => {
-                if statuses_ids.get(&node_id).is_none() || !config.contains(node_id) {
+                if statuses_ids.get(&node_id).is_none() {
                     return Err(CurpError::node_not_exist());
                 }
             }
-            ConfChangeType::AddLearner => {
-                if !statuses_ids.insert(node_id) || !config.insert(node_id, true) {
-                    return Err(CurpError::node_already_exists());
-                }
-            }
             ConfChangeType::Promote => {
-                if statuses_ids.get(&node_id).is_none() || !config.contains(node_id) {
+                if statuses_ids.get(&node_id).is_none() {
                     metrics::get()
                         .learner_promote_failed
                         .add(1, &[KeyValue::new("reason", "learner not exist")]);
@@ -1527,12 +1521,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 }
             }
         }
-        let mut all_nodes = HashSet::new();
-        all_nodes.extend(config.voters());
-        all_nodes.extend(&config.learners);
-        if all_nodes != statuses_ids || !config.voters().is_disjoint(&config.learners) {
-            return Err(CurpError::invalid_config());
-        }
+
         Ok(())
     }
 
@@ -1574,8 +1563,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         #[allow(clippy::explicit_auto_deref)] // Avoid compiler complaint about `Dashmap::Ref` type
         let fallback_change = match conf_change.change_type() {
             ConfChangeType::Add | ConfChangeType::AddLearner => {
-                self.cst
-                    .map_lock(|mut cst_l| _ = cst_l.config.remove(node_id));
                 self.lst.remove(node_id);
                 _ = self.ctx.sync_events.remove(&node_id);
                 let _ig1 = self.ctx.cluster_info.remove(&node_id);
@@ -1585,8 +1572,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             }
             ConfChangeType::Remove => {
                 let member = Member::new(node_id, name, old_addrs.clone(), [], is_learner);
-                self.cst
-                    .map_lock(|mut cst_l| _ = cst_l.config.insert(node_id, is_learner));
                 self.lst.insert(node_id, is_learner);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
                 let _ig1 = self.ctx.curp_storage.put_member(&member);
@@ -1606,10 +1591,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 Some(ConfChange::update(node_id, old_addrs))
             }
             ConfChangeType::Promote => {
-                self.cst.map_lock(|mut cst_l| {
-                    _ = cst_l.config.remove(node_id);
-                    _ = cst_l.config.insert(node_id, true);
-                });
                 self.ctx.cluster_info.demote(node_id);
                 self.lst.demote(node_id);
                 let m = self.ctx.cluster_info.get(&node_id).unwrap_or_else(|| {
@@ -2002,13 +1983,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// switching
     fn switch_config(&self, conf_change: ConfChange) -> Option<(Vec<String>, String, bool)> {
         let node_id = conf_change.node_id;
-        let mut cst_l = self.cst.lock();
         #[allow(clippy::explicit_auto_deref)] // Avoid compiler complaint about `Dashmap::Ref` type
         let (modified, fallback_info) = match conf_change.change_type() {
             ConfChangeType::Add | ConfChangeType::AddLearner => {
                 let is_learner = matches!(conf_change.change_type(), ConfChangeType::AddLearner);
                 let member = Member::new(node_id, "", conf_change.address.clone(), [], is_learner);
-                _ = cst_l.config.insert(node_id, is_learner);
                 self.lst.insert(node_id, is_learner);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
                 let _ig = self.ctx.curp_storage.put_member(&member);
@@ -2016,7 +1995,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 (m.is_none(), Some((vec![], String::new(), is_learner)))
             }
             ConfChangeType::Remove => {
-                _ = cst_l.config.remove(node_id);
                 self.lst.remove(node_id);
                 _ = self.ctx.sync_events.remove(&node_id);
                 _ = self.ctx.connects.remove(&node_id);
@@ -2047,8 +2025,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 )
             }
             ConfChangeType::Promote => {
-                _ = cst_l.config.learners.remove(&node_id);
-                _ = cst_l.config.insert(node_id, false);
                 self.lst.promote(node_id);
                 let modified = self.ctx.cluster_info.promote(node_id);
                 let m = self.ctx.cluster_info.get(&node_id).unwrap_or_else(|| {
@@ -2067,12 +2043,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
         // TODO: We could wrap lst inside a role checking to prevent accidental lst
         // mutation
-        if self.is_leader()
-            && self
-                .lst
-                .get_transferee()
-                .is_some_and(|transferee| !cst_l.config.voters().contains(&transferee))
-        {
+        if self.is_leader() && self.lst.get_transferee().is_some() {
             self.lst.reset_transferee();
         }
         fallback_info

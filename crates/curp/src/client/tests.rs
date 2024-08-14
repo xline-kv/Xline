@@ -214,7 +214,6 @@ async fn test_unary_propose_fast_path_fallback_slow_path() {
 async fn test_unary_propose_return_early_err() {
     for early_err in [
         CurpError::shutting_down(),
-        CurpError::invalid_config(),
         CurpError::node_already_exists(),
         CurpError::node_not_exist(),
         CurpError::learner_not_catch_up(),
@@ -257,7 +256,6 @@ async fn test_unary_propose_return_early_err() {
 async fn test_retry_propose_return_no_retry_error() {
     for early_err in [
         CurpError::shutting_down(),
-        CurpError::invalid_config(),
         CurpError::node_already_exists(),
         CurpError::node_not_exist(),
         CurpError::learner_not_catch_up(),

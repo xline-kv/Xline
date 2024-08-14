@@ -636,11 +636,6 @@ impl CurpError {
         Self::ExpiredClientId(())
     }
 
-    /// `InvalidConfig` error
-    pub(crate) fn invalid_config() -> Self {
-        Self::InvalidConfig(())
-    }
-
     /// `NodeNotExists` error
     pub(crate) fn node_not_exist() -> Self {
         Self::NodeNotExists(())

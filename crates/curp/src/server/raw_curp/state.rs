@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     pin::Pin,
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
@@ -17,7 +17,7 @@ use madsim::rand::{thread_rng, Rng};
 use tracing::{debug, warn};
 
 use super::Role;
-use crate::{members::ServerId, quorum, rpc::PoolEntry, LogIndex};
+use crate::{members::ServerId, rpc::PoolEntry, LogIndex};
 
 /// Curp state
 #[derive(Debug)]
@@ -50,8 +50,6 @@ pub(super) struct State {
 pub(super) struct CandidateState<C> {
     /// Collected speculative pools, used for recovery
     pub(super) sps: HashMap<ServerId, Vec<PoolEntry<C>>>,
-    /// config in current cluster
-    pub(super) config: Config,
     /// Votes received in the election
     pub(super) votes_received: HashMap<ServerId, bool>,
 }
@@ -286,17 +284,16 @@ impl LeaderState {
 
 impl<C> CandidateState<C> {
     /// Create a new `CandidateState`
-    pub(super) fn new(voters: impl Iterator<Item = ServerId>) -> Self {
+    pub(super) fn new() -> Self {
         Self {
             sps: HashMap::new(),
-            config: Config::new(voters),
             votes_received: HashMap::new(),
         }
     }
 
     /// Check if the candidate has won the election
     pub(super) fn check_vote(&self) -> VoteResult {
-        self.config.majority_config.check_vote(&self.votes_received)
+        unimplemented!()
     }
 }
 
@@ -304,98 +301,6 @@ impl<C> CandidateState<C> {
 trait ClusterConfig {
     /// Check if the candidate has won the election
     fn check_vote(&self, votes_received: &HashMap<ServerId, bool>) -> VoteResult;
-}
-
-/// `MajorityConfig` is a set of IDs that uses majority quorums to make decisions.
-#[derive(Debug, Clone)]
-pub(super) struct MajorityConfig {
-    /// The voters in the cluster
-    voters: HashSet<ServerId>,
-}
-
-/// Cluster config
-#[derive(Debug, Clone)]
-pub(super) struct Config {
-    /// The majority config
-    pub(super) majority_config: MajorityConfig,
-    /// The learners in the cluster
-    pub(super) learners: HashSet<ServerId>,
-}
-
-impl Config {
-    /// Create a new `Config`
-    pub(super) fn new(voters: impl Iterator<Item = ServerId>) -> Self {
-        Self {
-            majority_config: MajorityConfig::new(voters),
-            learners: HashSet::new(),
-        }
-    }
-
-    /// Get voters of current config
-    pub(super) fn voters(&self) -> &HashSet<ServerId> {
-        &self.majority_config.voters
-    }
-
-    /// Insert a voter
-    pub(super) fn insert(&mut self, id: ServerId, is_learner: bool) -> bool {
-        if is_learner {
-            self.learners.insert(id)
-        } else {
-            self.majority_config.voters.insert(id)
-        }
-    }
-
-    /// Remove a node
-    pub(super) fn remove(&mut self, id: ServerId) -> bool {
-        let res1 = self.majority_config.voters.remove(&id);
-        let res2 = self.learners.remove(&id);
-        debug_assert!(
-            res1 ^ res2,
-            "a node should not exist in both voters and learners"
-        );
-        res1 || res2
-    }
-
-    /// Check if a server exists
-    pub(super) fn contains(&self, id: ServerId) -> bool {
-        self.majority_config.voters.contains(&id) || self.learners.contains(&id)
-    }
-}
-
-impl MajorityConfig {
-    /// Create a new `MajorityConfig`
-    fn new(voters: impl Iterator<Item = ServerId>) -> Self {
-        Self {
-            voters: voters.collect(),
-        }
-    }
-}
-
-impl ClusterConfig for MajorityConfig {
-    fn check_vote(&self, votes_received: &HashMap<ServerId, bool>) -> VoteResult {
-        if self.voters.is_empty() {
-            return VoteResult::Won;
-        }
-
-        let mut voted_cnt = 0;
-        let mut missing_cnt = 0;
-        for id in &self.voters {
-            match votes_received.get(id) {
-                Some(&true) => voted_cnt += 1,
-                None => missing_cnt += 1,
-                _ => {}
-            }
-        }
-
-        let quorum = quorum(self.voters.len());
-        if voted_cnt >= quorum {
-            return VoteResult::Won;
-        }
-        if voted_cnt + missing_cnt >= quorum {
-            return VoteResult::Pending;
-        }
-        VoteResult::Lost
-    }
 }
 
 /// Result of a vote
@@ -412,24 +317,8 @@ pub(super) enum VoteResult {
 #[cfg(test)]
 mod test {
 
-    use curp_test_utils::test_cmd::TestCommand;
-
-    use super::*;
-
     #[test]
     fn check_vote_should_return_right_vote_result() {
-        let servers = vec![1, 2, 3, 4, 5];
-        let mut cst = CandidateState::<TestCommand>::new(servers.into_iter());
-
-        cst.votes_received =
-            HashMap::from([(1, true), (2, true), (3, true), (4, false), (5, false)]);
-        assert_eq!(cst.check_vote(), VoteResult::Won);
-
-        cst.votes_received =
-            HashMap::from([(1, true), (2, true), (3, false), (4, false), (5, false)]);
-        assert_eq!(cst.check_vote(), VoteResult::Lost);
-
-        cst.votes_received = HashMap::from([(1, true), (2, true), (3, false), (4, false)]);
-        assert_eq!(cst.check_vote(), VoteResult::Pending);
+        unimplemented!()
     }
 }
