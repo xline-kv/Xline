@@ -72,7 +72,6 @@ use crate::member::MembershipInfo;
 use crate::member::NodeMembershipState;
 use crate::members::ClusterInfo;
 use crate::members::ServerId;
-use crate::quorum;
 use crate::quorum::QuorumSet;
 use crate::response::ResponseSender;
 use crate::role_change::RoleChange;
@@ -1335,6 +1334,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.ctx.cluster_info.self_id()
     }
 
+    /// Get self's node id
+    pub(super) fn node_id(&self) -> u64 {
+        self.ms.read().node_id()
+    }
+
     /// Get a rx for leader changes
     pub(super) fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
         self.ctx.leader_tx.subscribe()
@@ -1862,12 +1866,15 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             return false;
         }
 
-        let replicated_cnt = self
+        let replicated_ids: Vec<_> = self
             .lst
             .iter()
-            .filter(|f| !f.is_learner && f.match_index >= i)
-            .count();
-        replicated_cnt + 1 >= quorum(self.ctx.cluster_info.voters_len())
+            .filter_map(|f| (!f.is_learner && f.match_index >= i).then_some(*f.key()))
+            .chain(iter::once(self.node_id()))
+            .collect();
+
+        let ms_r = self.ms.read();
+        ms_r.check_quorum(replicated_ids, |qs, ids| QuorumSet::is_quorum(qs, ids))
     }
 
     /// Recover from all voter's spec pools
