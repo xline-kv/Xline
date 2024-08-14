@@ -4,12 +4,14 @@ use std::collections::BTreeSet;
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::iter;
+use std::sync::Arc;
 
 use curp_external_api::LogIndex;
 use serde::Deserialize;
 use serde::Serialize;
 
 use crate::quorum::Joint;
+use crate::rpc::connect::InnerConnectApi;
 use crate::rpc::connect::InnerConnectApiWrapper;
 
 /// The membership info, used to build the initial states
@@ -125,6 +127,24 @@ impl NodeMembershipState {
     /// Get all rpc connects
     pub(crate) fn connects(&self) -> &BTreeMap<u64, InnerConnectApiWrapper> {
         &self.connects
+    }
+
+    /// Get all voter connects
+    pub(crate) fn voter_connects(&self) -> BTreeMap<u64, Arc<dyn InnerConnectApi>> {
+        self.cluster()
+            .effective()
+            .members()
+            .map(|(id, _)| {
+                (
+                    id,
+                    Arc::clone(
+                        self.connects
+                            .get(&id)
+                            .unwrap_or_else(|| unreachable!("connect should always exist")),
+                    ),
+                )
+            })
+            .collect()
     }
 }
 

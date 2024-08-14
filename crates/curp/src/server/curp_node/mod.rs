@@ -1066,7 +1066,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         let voters_connects = curp.voters_connects();
         let resps = voters_connects
             .into_iter()
-            .map(|connect| {
+            .map(|(id, connect)| {
                 let req = VoteRequest::new(
                     vote.term,
                     vote.candidate_id,
@@ -1076,7 +1076,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 );
                 async move {
                     let resp = connect.vote(req, rpc_timeout).await;
-                    (connect.id(), resp)
+                    (id, resp)
                 }
             })
             .collect::<FuturesUnordered<_>>()

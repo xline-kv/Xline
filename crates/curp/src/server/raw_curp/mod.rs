@@ -1664,14 +1664,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Get voters connects
-    pub(super) fn voters_connects(&self) -> Vec<Arc<dyn InnerConnectApi>> {
-        let cst_r = self.cst.lock();
-        let voters = cst_r.config.voters();
-        self.connects()
-            .iter()
-            .filter(|c| voters.contains(c.key()))
-            .map(|c| Arc::clone(c.value()))
-            .collect()
+    pub(super) fn voters_connects(&self) -> BTreeMap<u64, Arc<dyn InnerConnectApi>> {
+        let ms_r = self.ms.read();
+        ms_r.voter_connects()
     }
 
     /// Get transferee
