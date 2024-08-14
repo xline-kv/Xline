@@ -155,6 +155,8 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     task_manager: Arc<TaskManager>,
     /// Sync events
     sync_events: DashMap<ServerId, Arc<Event>>,
+    /// Followers remove event trigger
+    remove_events: Arc<Mutex<HashMap<ServerId, Arc<Event>>>>,
     /// Connects of peers
     connects: DashMap<ServerId, InnerConnectApiWrapper>,
     /// curp storage
@@ -202,6 +204,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             .lm(args.lease_manager)
             .cfg(args.cfg)
             .sync_events(args.sync_events)
+            .remove_events(args.remove_events)
             .role_change(args.role_change)
             .connects(args.connects)
             .curp_storage(args.curp_storage)
@@ -358,6 +361,8 @@ struct Context<C: Command, RC: RoleChange> {
     election_tick: AtomicU8,
     /// Followers sync event trigger
     sync_events: DashMap<ServerId, Arc<Event>>,
+    /// Followers remove event trigger
+    remove_events: Arc<Mutex<HashMap<ServerId, Arc<Event>>>>,
     /// Become leader event
     #[builder(setter(skip))]
     leader_event: Arc<Event>,
@@ -422,6 +427,10 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
             sync_events: match self.sync_events.take() {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("sync_events")),
+            },
+            remove_events: match self.remove_events.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("remove_events")),
             },
             leader_event: Arc::new(Event::new()),
             role_change: match self.role_change.take() {
@@ -788,7 +797,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Return `Ok(term, entries)` if succeeds
     /// Return `Err(term, hint_index)` if fails
     #[allow(clippy::needless_pass_by_value)] // TODO: avoid cloning of `entries`
-    pub(super) fn handle_append_entries(
+    #[allow(clippy::too_many_arguments)] // FIXME: reduce the number of arguments
+    pub(super) fn handle_append_entries<F>(
         &self,
         term: u64,
         leader_id: ServerId,
@@ -796,7 +806,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         prev_log_term: u64,
         entries: Vec<LogEntry<C>>,
         leader_commit: LogIndex,
-    ) -> Result<AppendEntriesSuccess<C>, AppendEntriesFailure> {
+        spawn_sync: F,
+    ) -> Result<AppendEntriesSuccess<C>, AppendEntriesFailure>
+    where
+        F: Fn(Arc<Event>, Arc<Event>, InnerConnectApiWrapper),
+    {
         if entries.is_empty() {
             trace!(
                 "{} received heartbeat from {}: term({}), commit({}), prev_log_index({}), prev_log_term({})",
@@ -836,7 +850,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let (to_persist, cc_entries, fallback_indexes, truncate_at) = log_w
             .try_append_entries(entries.clone(), prev_log_index, prev_log_term)
             .map_err(|_ig| (term, log_w.commit_index + 1))?;
-        self.append_membership(&entries, truncate_at, leader_commit);
+        self.append_membership(&entries, truncate_at, leader_commit, spawn_sync);
         // fallback overwritten conf change entries
         for idx in fallback_indexes.iter().sorted().rev() {
             let info = log_w.fallback_contexts.remove(idx).unwrap_or_else(|| {
@@ -1622,6 +1636,14 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Get all connects
     pub(super) fn connects(&self) -> &DashMap<ServerId, InnerConnectApiWrapper> {
         &self.ctx.connects
+    }
+
+    /// Get all connects
+    pub(super) fn with_member_connects<F, R>(&self, mut op: F) -> R
+    where
+        F: FnMut(&BTreeMap<u64, InnerConnectApiWrapper>) -> R,
+    {
+        op(self.ms.read().connects())
     }
 
     /// Insert connect

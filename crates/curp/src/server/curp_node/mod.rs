@@ -447,7 +447,17 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         req: &AppendEntriesRequest,
     ) -> Result<AppendEntriesResponse, CurpError> {
         let entries = req.entries()?;
-
+        let sync_spawner = |sync_event, remove_event, connect| {
+            self.curp.task_manager().spawn(TaskName::SyncFollower, |n| {
+                Self::sync_follower_task(
+                    Arc::clone(&self.curp),
+                    connect,
+                    sync_event,
+                    Arc::clone(&remove_event),
+                    n,
+                )
+            });
+        };
         let result = self.curp.handle_append_entries(
             req.term,
             req.leader_id,
@@ -455,6 +465,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             req.prev_log_term,
             entries,
             req.leader_commit,
+            sync_spawner,
         );
         let resp = match result {
             Ok((term, to_persist)) => {
@@ -773,7 +784,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// This task will keep a follower up-to-data when current node is leader,
     /// and it will wait for `leader_event` if current node is not leader
     #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // tokio select internal triggered
-    async fn sync_follower_task(
+    pub(crate) async fn sync_follower_task(
         curp: Arc<RawCurp<C, RC>>,
         connect: InnerConnectApiWrapper,
         sync_event: Arc<Event>,
@@ -891,6 +902,14 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .into_iter()
             .map(|server_id| (server_id, Arc::new(Event::new())))
             .collect();
+        let remove_events = Arc::new(Mutex::new(
+            membership_info
+                .init_members
+                .keys()
+                .map(|id| (*id, Arc::new(Event::new())))
+                .collect(),
+        ));
+
         let connects =
             rpc::inner_connects(cluster_info.peers_addrs(), client_tls_config.as_ref()).collect();
         let member_connects = rpc::inner_connects(
@@ -922,6 +941,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 .lease_manager(Arc::clone(&lease_manager))
                 .cfg(Arc::clone(&curp_cfg))
                 .sync_events(sync_events)
+                .remove_events(remove_events)
                 .role_change(role_change)
                 .task_manager(Arc::clone(&task_manager))
                 .connects(connects)
@@ -985,6 +1005,24 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         });
 
         let mut remove_events = HashMap::new();
+        curp.with_member_connects(|connects| {
+            for c in connects.values() {
+                let sync_event = curp.sync_event(c.id());
+                let remove_event = Arc::new(Event::new());
+
+                task_manager.spawn(TaskName::SyncFollower, |n| {
+                    Self::sync_follower_task(
+                        Arc::clone(&curp),
+                        c.clone(),
+                        sync_event,
+                        Arc::clone(&remove_event),
+                        n,
+                    )
+                });
+                _ = remove_events.insert(c.id(), remove_event);
+            }
+        });
+        // TODO: Remove this after new membership implementation
         for c in curp.connects() {
             let sync_event = curp.sync_event(c.id());
             let remove_event = Arc::new(Event::new());
@@ -1332,7 +1370,7 @@ mod tests {
             ))
         };
         let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
-        curp.handle_append_entries(2, s2_id, 0, 0, vec![], 0)
+        curp.handle_append_entries(2, s2_id, 0, 0, vec![], 0, |_, _, _| {})
             .unwrap();
 
         let mut mock_connect1 = MockInnerConnectApi::default();
@@ -1389,7 +1427,7 @@ mod tests {
             vec!["address".to_owned()],
         )]);
 
-        curp.handle_append_entries(1, s2_id, 0, 0, vec![], 0)
+        curp.handle_append_entries(1, s2_id, 0, 0, vec![], 0, |_, _, _| {})
             .unwrap();
 
         let mut mock_connect1 = MockInnerConnectApi::default();

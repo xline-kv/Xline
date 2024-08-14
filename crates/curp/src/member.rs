@@ -94,11 +94,31 @@ impl NodeMembershipState {
     }
 
     /// Updates the connects
-    pub(crate) fn update_connects(&mut self, new_connects: BTreeMap<u64, InnerConnectApiWrapper>) {
-        self.connects.retain(|k, _| new_connects.contains_key(k));
-        for (id, conn) in new_connects {
-            let _ignore = self.connects.entry(id).or_insert(conn);
+    ///
+    /// Returns a pair of (removed, added) connects
+    pub(crate) fn update_connects(
+        &mut self,
+        new_connects: &BTreeMap<u64, InnerConnectApiWrapper>,
+    ) -> (
+        BTreeMap<u64, InnerConnectApiWrapper>,
+        BTreeMap<u64, InnerConnectApiWrapper>,
+    ) {
+        /// Alias
+        type Map = BTreeMap<u64, InnerConnectApiWrapper>;
+        let diff = |x: &Map, y: &Map| {
+            x.iter()
+                .filter_map(|(k, c)| (!y.contains_key(k)).then_some((*k, c.clone())))
+                .collect::<BTreeMap<_, _>>()
+        };
+        let removed = diff(&self.connects, new_connects);
+        let added = diff(new_connects, &self.connects);
+
+        for k in removed.keys() {
+            let _ignore = self.connects.remove(k);
         }
+        self.connects.extend(added.clone());
+
+        (removed, added)
     }
 
     #[allow(unused)]

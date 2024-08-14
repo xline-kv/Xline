@@ -4,9 +4,12 @@
     clippy::needless_pass_by_value
 )] // TODO: remove this after implemented
 
+use std::sync::Arc;
+
 use curp_external_api::cmd::Command;
 use curp_external_api::cmd::CommandExecutor;
 use curp_external_api::role_change::RoleChange;
+use utils::task_manager::tasks::TaskName;
 
 use crate::member::Change;
 use crate::rpc::AddLearnerRequest;
@@ -77,8 +80,19 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         if configs.is_empty() {
             return Err(CurpError::invalid_member_change());
         }
+        let spawn_sync = |sync_event, remove_event, connect| {
+            self.curp.task_manager().spawn(TaskName::SyncFollower, |n| {
+                Self::sync_follower_task(
+                    Arc::clone(&self.curp),
+                    connect,
+                    sync_event,
+                    Arc::clone(&remove_event),
+                    n,
+                )
+            });
+        };
         for config in configs {
-            let propose_id = self.curp.update_membership(config);
+            let propose_id = self.curp.update_membership(config, spawn_sync);
             self.curp.wait_propose_ids(Some(propose_id)).await;
         }
 

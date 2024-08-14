@@ -265,7 +265,7 @@ fn handle_ae_will_calibrate_term() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
     let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
 
-    let result = curp.handle_append_entries(2, s2_id, 0, 0, vec![], 0);
+    let result = curp.handle_append_entries(2, s2_id, 0, 0, vec![], 0, |_, _, _| {});
     assert!(result.is_ok());
 
     let st_r = curp.st.read();
@@ -282,7 +282,7 @@ fn handle_ae_will_set_leader_id() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
     let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
-    let result = curp.handle_append_entries(1, s2_id, 0, 0, vec![], 0);
+    let result = curp.handle_append_entries(1, s2_id, 0, 0, vec![], 0, |_, _, _| {});
     assert!(result.is_ok());
 
     let st_r = curp.st.read();
@@ -299,7 +299,7 @@ fn handle_ae_will_reject_wrong_term() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
     let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
-    let result = curp.handle_append_entries(0, s2_id, 0, 0, vec![], 0);
+    let result = curp.handle_append_entries(0, s2_id, 0, 0, vec![], 0, |_, _, _| {});
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().0, 1);
 }
@@ -324,6 +324,7 @@ fn handle_ae_will_reject_wrong_log() {
             Arc::new(TestCommand::default()),
         )],
         0,
+        |_, _, _| {},
     );
     assert_eq!(result, Err((1, 1)));
 }
@@ -440,6 +441,7 @@ fn handle_vote_will_reject_outdated_candidate() {
             Arc::new(TestCommand::default()),
         )],
         0,
+        |_, _, _| {},
     );
     assert!(result.is_ok());
     curp.st.write().leader_id = None;
