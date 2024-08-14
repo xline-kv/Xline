@@ -36,32 +36,37 @@ where
     }
 }
 
+/// ER and ASR
+type ErAsr<C> = (<C as Command>::ER, Option<<C as Command>::ASR>);
+
 /// Cmd worker execute handler
 pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     entry: &LogEntry<C>,
     ce: &CE,
     curp: &RawCurp<C, RC>,
-) -> Result<<C as Command>::ER, <C as Command>::Error> {
+) -> Result<ErAsr<C>, <C as Command>::Error> {
     let cb = curp.cmd_board();
     let id = curp.id();
-    match entry.entry_data {
-        EntryData::Command(ref cmd) => {
-            let er = ce.execute(cmd);
-            let mut cb_w = cb.write();
-            cb_w.insert_er(entry.propose_id, er.clone());
-            debug!(
-                "{id} cmd({}) is speculatively executed, exe status: {}",
-                entry.propose_id,
-                er.is_ok(),
-            );
-            er
-        }
-        EntryData::ConfChange(_)
-        | EntryData::Shutdown
-        | EntryData::Empty
-        | EntryData::SetNodeState(_, _, _) => {
-            unreachable!("should not speculative execute {:?}", entry.entry_data)
-        }
+    let EntryData::Command(ref cmd) = entry.entry_data else {
+        unreachable!("should not speculative execute {:?}", entry.entry_data);
+    };
+    if cmd.is_read_only() {
+        let result = ce
+            .after_sync(vec![AfterSyncCmd::new(cmd, true)], None)
+            .remove(0)?;
+        let (asr, er_opt) = result.into_parts();
+        let er = er_opt.unwrap_or_else(|| unreachable!("er should exist"));
+        Ok((er, Some(asr)))
+    } else {
+        let er = ce.execute(cmd);
+        let mut cb_w = cb.write();
+        cb_w.insert_er(entry.propose_id, er.clone());
+        debug!(
+            "{id} cmd({}) is speculatively executed, exe status: {}",
+            entry.propose_id,
+            er.is_ok(),
+        );
+        er.map(|e| (e, None))
     }
 }
 
@@ -100,7 +105,7 @@ fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         .collect();
     let propose_ids = cmd_entries.iter().map(|(e, _)| e.propose_id);
 
-    let results = ce.after_sync(cmds, highest_index);
+    let results = ce.after_sync(cmds, Some(highest_index));
 
     send_results(curp, results.into_iter(), resp_txs, propose_ids);
 
