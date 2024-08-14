@@ -427,7 +427,7 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
     fn after_sync(
         &self,
         cmds: Vec<AfterSyncCmd<'_, Command>>,
-        highest_index: LogIndex,
+        highest_index: Option<LogIndex>,
     ) -> Vec<AfterSyncResult> {
         if cmds.is_empty() {
             return Vec::new();
@@ -452,8 +452,10 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         let auth_revision_state = auth_revision_gen.state();
 
         let txn_db = self.db.transaction();
-        if let Err(e) = txn_db.write_op(WriteOp::PutAppliedIndex(highest_index)) {
-            return states.into_errors(e);
+        if let Some(i) = highest_index {
+            if let Err(e) = txn_db.write_op(WriteOp::PutAppliedIndex(i)) {
+                return states.into_errors(e);
+            }
         }
 
         states.update_result(|c| {

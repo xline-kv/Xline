@@ -314,9 +314,17 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     fn build_executor(ce: Arc<CE>, curp: Arc<RawCurp<C, RC>>) -> impl Fn(ExecutorEntry<C>) + Clone {
         move |(entry, resp_tx): (_, Arc<ResponseSender>)| {
             info!("spec execute entry: {entry:?}");
-            let er_res = execute(&entry, ce.as_ref(), curp.as_ref());
-            let resp = ProposeResponse::new_result::<C>(&er_res, false);
-            resp_tx.send_propose(resp);
+            let result = execute(&entry, ce.as_ref(), curp.as_ref());
+            match result {
+                Ok((er, Some(asr))) => {
+                    resp_tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er), false));
+                    resp_tx.send_synced(SyncedResponse::new_result::<C>(&Ok(asr)));
+                }
+                Ok((er, None)) => {
+                    resp_tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er), false));
+                }
+                Err(e) => resp_tx.send_synced(SyncedResponse::new_result::<C>(&Err(e))),
+            }
         }
     }
 

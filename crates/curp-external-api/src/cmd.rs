@@ -108,7 +108,8 @@ where
     fn after_sync(
         &self,
         cmds: Vec<AfterSyncCmd<'_, C>>,
-        highest_index: LogIndex,
+        // might be `None` if it's a speculative execution
+        highest_index: Option<LogIndex>,
     ) -> Vec<Result<AfterSyncOk<C>, C::Error>>;
 
     /// Set the index of the last log entry that has been successfully applied

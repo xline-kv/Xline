@@ -287,28 +287,33 @@ impl CommandExecutor<TestCommand> for TestCE {
     fn after_sync(
         &self,
         cmds: Vec<AfterSyncCmd<'_, TestCommand>>,
-        highest_index: LogIndex,
+        highest_index: Option<LogIndex>,
     ) -> Vec<Result<AfterSyncOk<TestCommand>, <TestCommand as Command>::Error>> {
         let as_duration = cmds
             .iter()
             .fold(Duration::default(), |acc, c| acc + c.cmd().as_dur);
         std::thread::sleep(as_duration);
         let total = cmds.len();
-        for (i, cmd) in cmds.iter().enumerate() {
-            let index = highest_index - (total - i - 1) as u64;
-            self.after_sync_sender
-                .send((cmd.cmd().clone(), index))
-                .expect("failed to send after sync msg");
-        }
-        let mut wr_ops = vec![WriteOperation::new_put(
-            META_TABLE,
-            APPLIED_INDEX_KEY.into(),
-            highest_index.to_le_bytes().to_vec(),
-        )];
+        let mut wr_ops = Vec::new();
 
+        if let Some(index) = highest_index {
+            for (i, cmd) in cmds.iter().enumerate() {
+                let index = index - (total - i - 1) as u64;
+                self.after_sync_sender
+                    .send((cmd.cmd().clone(), index))
+                    .expect("failed to send after sync msg");
+            }
+            wr_ops.push(WriteOperation::new_put(
+                META_TABLE,
+                APPLIED_INDEX_KEY.into(),
+                index.to_le_bytes().to_vec(),
+            ));
+        }
         let mut asrs = Vec::new();
         for (i, (cmd, to_execute)) in cmds.iter().map(AfterSyncCmd::into_parts).enumerate() {
-            let index = highest_index - (total - i - 1) as u64;
+            let index = highest_index
+                .map(|index| index - (total - i - 1) as u64)
+                .unwrap_or(0);
             if cmd.as_should_fail {
                 asrs.push(Err(ExecuteError("fail".to_owned())));
                 continue;

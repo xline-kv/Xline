@@ -146,6 +146,7 @@ impl<C: Command> Unary<C> {
         read_index_futs: FuturesUnordered<RIF>,
         term: u64,
         quorum: usize,
+        use_fast_path: bool,
     ) -> Result<ProposeResponse<C>, CurpError>
     where
         PF: Future<
@@ -167,7 +168,7 @@ impl<C: Command> Unary<C> {
         }
         let resp_stream = propose_res?.into_inner();
         let mut response_rx = ResponseReceiver::new(resp_stream);
-        response_rx.recv::<C>(false).await
+        response_rx.recv::<C>(!use_fast_path).await
     }
 
     /// Propose for mutative commands
@@ -445,7 +446,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
             .await;
 
         if cmd.is_read_only() {
-            Self::propose_read_only(propose_fut, read_index_futs, term, quorum).await
+            Self::propose_read_only(propose_fut, read_index_futs, term, quorum, use_fast_path).await
         } else {
             Self::propose_mutative(propose_fut, record_futs, use_fast_path, superquorum).await
         }
