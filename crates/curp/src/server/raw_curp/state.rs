@@ -290,28 +290,6 @@ impl<C> CandidateState<C> {
             votes_received: HashMap::new(),
         }
     }
-
-    /// Check if the candidate has won the election
-    pub(super) fn check_vote(&self) -> VoteResult {
-        unimplemented!()
-    }
-}
-
-/// Trait for cluster configuration
-trait ClusterConfig {
-    /// Check if the candidate has won the election
-    fn check_vote(&self, votes_received: &HashMap<ServerId, bool>) -> VoteResult;
-}
-
-/// Result of a vote
-#[derive(Debug, PartialEq)]
-pub(super) enum VoteResult {
-    /// Won the election
-    Won,
-    /// Pending
-    Pending,
-    /// Lost the election
-    Lost,
 }
 
 #[cfg(test)]
@@ -319,6 +297,6 @@ mod test {
 
     #[test]
     fn check_vote_should_return_right_vote_result() {
-        unimplemented!()
+        // unimplement
     }
 }

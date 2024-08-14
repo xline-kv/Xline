@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::quorum::Joint;
+use crate::quorum::QuorumSet;
 use crate::rpc::connect::InnerConnectApi;
 use crate::rpc::connect::InnerConnectApiWrapper;
 
@@ -145,6 +146,11 @@ impl NodeMembershipState {
                 )
             })
             .collect()
+    }
+
+    /// Returns `true` if the given set of nodes forms a quorum
+    pub(crate) fn check_quorum<I: Iterator<Item = u64> + Clone>(&self, nodes: I) -> bool {
+        self.cluster().effective().as_joint().is_quorum(nodes)
     }
 }
 

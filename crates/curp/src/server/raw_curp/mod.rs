@@ -89,7 +89,6 @@ use crate::rpc::Redirect;
 use crate::server::cmd_board::CmdBoardRef;
 use crate::server::metrics;
 use crate::server::raw_curp::log::FallbackContext;
-use crate::server::raw_curp::state::VoteResult;
 use crate::snapshot::Snapshot;
 use crate::snapshot::SnapshotMeta;
 use crate::LogIndex;
@@ -508,11 +507,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let mut st_w = RwLockUpgradableReadGuard::upgrade(st_r);
         let mut cst_l = self.cst.lock();
         let log_r = self.log.upgradable_read();
+        let ms_r = self.ms.read();
         match st_w.role {
             Role::Follower | Role::PreCandidate => {
-                self.become_pre_candidate(&mut st_w, &mut cst_l, log_r)
+                self.become_pre_candidate(&mut st_w, &mut cst_l, log_r, &ms_r)
             }
-            Role::Candidate => self.become_candidate(&mut st_w, &mut cst_l, log_r),
+            Role::Candidate => self.become_candidate(&mut st_w, &mut cst_l, log_r, &ms_r),
             Role::Leader => {
                 self.lst.reset_transferee();
                 None
@@ -1102,7 +1102,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             "a server can't vote twice"
         );
 
-        if !matches!(cst_w.check_vote(), VoteResult::Won) {
+        let ms_r = self.ms.read();
+        // TODO: implement early return if vote fail is definite
+        if !ms_r.check_quorum(cst_w.votes_received.keys().copied()) {
             return Ok(false);
         }
 
@@ -1163,12 +1165,14 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
         debug!("{}'s pre vote is granted by server {}", self.id(), id);
 
-        if !matches!(cst_w.check_vote(), VoteResult::Won) {
+        let ms_r = self.ms.read();
+        // TODO: implement early return if vote fail is definite
+        if !ms_r.check_quorum(cst_w.votes_received.keys().copied()) {
             return Ok(None);
         }
 
         let log_r = self.log.upgradable_read();
-        Ok(self.become_candidate(&mut st_w, &mut cst_w, log_r))
+        Ok(self.become_candidate(&mut st_w, &mut cst_w, log_r, &ms_r))
     }
 
     /// Verify `install_snapshot` request
@@ -1290,7 +1294,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
         let mut cst_l = self.cst.lock();
         let log_r = self.log.upgradable_read();
-        self.become_candidate(&mut st_w, &mut cst_l, log_r)
+        let ms_r = self.ms.read();
+        self.become_candidate(&mut st_w, &mut cst_l, log_r, &ms_r)
     }
 }
 
@@ -1702,6 +1707,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         st: &mut State,
         cst: &mut CandidateState<C>,
         log: RwLockUpgradableReadGuard<'_, Log<C>>,
+        ms: &NodeMembershipState,
     ) -> Option<Vote> {
         let prev_role = st.role;
         assert_ne!(prev_role, Role::Leader, "leader can't start election");
@@ -1727,8 +1733,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         debug!("{}'s vote is granted by server {}", self.id(), self.id());
         cst.votes_received = HashMap::from([(self.id(), true)]);
 
-        if matches!(cst.check_vote(), VoteResult::Won) {
-            self.become_candidate(st, cst, log)
+        if ms.check_quorum(cst.votes_received.keys().copied()) {
+            self.become_candidate(st, cst, log, ms)
         } else {
             Some(Vote {
                 term: st.term.overflow_add(1),
@@ -1746,6 +1752,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         st: &mut State,
         cst: &mut CandidateState<C>,
         log: RwLockUpgradableReadGuard<'_, Log<C>>,
+        ms: &NodeMembershipState,
     ) -> Option<Vote> {
         let prev_role = st.role;
         assert_ne!(prev_role, Role::Leader, "leader can't start election");
@@ -1770,7 +1777,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         cst.votes_received = HashMap::from([(self.id(), true)]);
         cst.sps = HashMap::from([(self.id(), self_sp)]);
 
-        if matches!(cst.check_vote(), VoteResult::Won) {
+        if ms.check_quorum(cst.votes_received.keys().copied()) {
             // single node cluster
             // vote is granted by the majority of servers, can become leader
             let spec_pools = cst.sps.drain().collect();
