@@ -897,10 +897,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         sps: Vec<SpObject<C>>,
         ucps: Vec<UcpObject<C>>,
     ) -> Result<Self, CurpError> {
-        let sync_events = cluster_info
-            .peers_ids()
-            .into_iter()
-            .map(|server_id| (server_id, Arc::new(Event::new())))
+        let sync_events = membership_info
+            .init_members
+            .keys()
+            .map(|id| (*id, Arc::new(Event::new())))
             .collect();
         let remove_events = Arc::new(Mutex::new(
             membership_info
