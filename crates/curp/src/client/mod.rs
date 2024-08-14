@@ -391,8 +391,11 @@ impl ClientBuilder {
 
     /// Wait for client id
     async fn wait_for_client_id(&self, state: Arc<state::State>) -> Result<(), tonic::Status> {
-        /// Max retry count for wait a client id
-        const RETRY_COUNT: usize = 10;
+        /// Max retry count for waiting for a client ID
+        ///
+        /// TODO: This retry count is set relatively high to avoid test cluster startup timeouts.
+        /// We should consider setting this to a more reasonable value.
+        const RETRY_COUNT: usize = 30;
         /// The interval for each retry
         const RETRY_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -404,7 +407,9 @@ impl ClientBuilder {
             tokio::time::sleep(RETRY_INTERVAL).await;
         }
 
-        Err(tonic::Status::deadline_exceeded("timeout"))
+        Err(tonic::Status::deadline_exceeded(
+            "timeout waiting for client id",
+        ))
     }
 
     /// Build the client
