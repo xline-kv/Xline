@@ -13,9 +13,11 @@
 use std::cmp;
 use std::cmp::min;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::iter;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
@@ -71,7 +73,7 @@ use crate::member::NodeMembershipState;
 use crate::members::ClusterInfo;
 use crate::members::ServerId;
 use crate::quorum;
-use crate::recover_quorum;
+use crate::quorum::QuorumSet;
 use crate::response::ResponseSender;
 use crate::role_change::RoleChange;
 use crate::rpc::connect::InnerConnectApi;
@@ -1104,7 +1106,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
         let ms_r = self.ms.read();
         // TODO: implement early return if vote fail is definite
-        if !ms_r.check_quorum(cst_w.votes_received.keys().copied()) {
+        if !ms_r.check_quorum(cst_w.votes_received.keys().copied(), |qs, ids| {
+            QuorumSet::is_quorum(qs, ids)
+        }) {
             return Ok(false);
         }
 
@@ -1167,7 +1171,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
         let ms_r = self.ms.read();
         // TODO: implement early return if vote fail is definite
-        if !ms_r.check_quorum(cst_w.votes_received.keys().copied()) {
+        if !ms_r.check_quorum(cst_w.votes_received.keys().copied(), |qs, ids| {
+            QuorumSet::is_quorum(qs, ids)
+        }) {
             return Ok(None);
         }
 
@@ -1733,7 +1739,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         debug!("{}'s vote is granted by server {}", self.id(), self.id());
         cst.votes_received = HashMap::from([(self.id(), true)]);
 
-        if ms.check_quorum(cst.votes_received.keys().copied()) {
+        if ms.check_quorum(cst.votes_received.keys().copied(), |qs, ids| {
+            QuorumSet::is_quorum(qs, ids)
+        }) {
             self.become_candidate(st, cst, log, ms)
         } else {
             Some(Vote {
@@ -1777,7 +1785,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         cst.votes_received = HashMap::from([(self.id(), true)]);
         cst.sps = HashMap::from([(self.id(), self_sp)]);
 
-        if ms.check_quorum(cst.votes_received.keys().copied()) {
+        if ms.check_quorum(cst.votes_received.keys().copied(), |qs, ids| {
+            QuorumSet::is_quorum(qs, ids)
+        }) {
             // single node cluster
             // vote is granted by the majority of servers, can become leader
             let spec_pools = cst.sps.drain().collect();
@@ -1865,10 +1875,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         &self,
         st: &State,
         log: &mut Log<C>,
-        spec_pools: HashMap<ServerId, Vec<PoolEntry<C>>>,
+        spec_pools: BTreeMap<ServerId, Vec<PoolEntry<C>>>,
     ) {
         if log_enabled!(Level::Debug) {
-            let debug_sps: HashMap<ServerId, String> = spec_pools
+            let debug_sps: BTreeMap<ServerId, String> = spec_pools
                 .iter()
                 .map(|(id, sp)| {
                     let sp: Vec<String> = sp
@@ -1881,19 +1891,24 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             debug!("{} collected spec pools: {debug_sps:?}", self.id());
         }
 
-        let mut entry_cnt: HashMap<ProposeId, (PoolEntry<C>, usize)> = HashMap::new();
-        for entry in spec_pools.into_values().flatten() {
-            let entry = entry_cnt.entry(entry.id).or_insert((entry, 0));
-            entry.1 += 1;
+        let mut entry_ids = BTreeMap::<PoolEntry<C>, BTreeSet<u64>>::new();
+        for (entry, id) in spec_pools
+            .into_iter()
+            .flat_map(|(id, entry)| entry.into_iter().zip(iter::repeat(id)))
+        {
+            let ids = entry_ids.entry(entry).or_default();
+            let _ignore = ids.insert(id);
         }
 
+        let ms_r = self.ms.read();
         // get all possibly executed(fast path) entries
         let existing_log_ids = log.get_cmd_ids();
-        let recovered_cmds = entry_cnt
-            .into_values()
+        let recovered_cmds = entry_ids
+            .into_iter()
             // only cmds whose cnt >= ( f + 1 ) / 2 + 1 can be recovered
-            .filter_map(|(cmd, cnt)| {
-                (cnt >= recover_quorum(self.ctx.cluster_info.voters_len())).then_some(cmd)
+            .filter_map(|(cmd, ids)| {
+                ms_r.check_quorum(ids, |qs, i| QuorumSet::is_recover_quorum(qs, i))
+                    .then_some(cmd)
             })
             // dedup in current logs
             .filter(|entry| {

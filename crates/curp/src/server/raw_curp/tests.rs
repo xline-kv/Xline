@@ -521,7 +521,7 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
     let s3_id = curp.cluster().get_id_by_name("S3").unwrap();
     let s4_id = curp.cluster().get_id_by_name("S4").unwrap();
 
-    let spec_pools = HashMap::from([
+    let spec_pools = BTreeMap::from([
         (
             s0_id,
             vec![

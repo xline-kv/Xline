@@ -149,8 +149,13 @@ impl NodeMembershipState {
     }
 
     /// Returns `true` if the given set of nodes forms a quorum
-    pub(crate) fn check_quorum<I: Iterator<Item = u64> + Clone>(&self, nodes: I) -> bool {
-        self.cluster().effective().as_joint().is_quorum(nodes)
+    pub(crate) fn check_quorum<I, Q>(&self, nodes: I, mut expect_quorum: Q) -> bool
+    where
+        I: IntoIterator<Item = u64> + Clone,
+        Q: FnMut(&dyn QuorumSet<Vec<u64>>, Vec<u64>) -> bool,
+    {
+        let qs = self.cluster().effective().as_joint();
+        expect_quorum(&qs, nodes.into_iter().collect())
     }
 }
 
