@@ -318,6 +318,10 @@ impl CurpGroup {
         &self.nodes[id]
     }
 
+    pub fn get_node_mut(&mut self, id: &ServerId) -> &mut CurpNode {
+        self.nodes.get_mut(id).unwrap()
+    }
+
     pub async fn new_client(&self) -> impl ClientApi<Error = tonic::Status, Cmd = TestCommand> {
         let addrs = self.all_addrs().cloned().collect();
         ClientBuilder::new(ClientConfig::default(), true)
