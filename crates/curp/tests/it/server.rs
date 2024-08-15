@@ -260,7 +260,7 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
     let sample_range = 1..=100;
 
     for i in sample_range.clone() {
-        let rand_dur = Duration::from_millis(thread_rng().gen_range(0..500).numeric_cast());
+        let rand_dur = Duration::from_millis(thread_rng().gen_range(0..50).numeric_cast());
         let _er = client
             .propose(
                 &TestCommand::new_put(vec![i], i).set_as_dur(rand_dur),
