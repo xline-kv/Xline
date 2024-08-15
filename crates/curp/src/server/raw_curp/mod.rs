@@ -194,7 +194,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             args.cfg.follower_timeout_ticks,
             args.cfg.candidate_timeout_ticks,
         ));
-        let lst = LeaderState::new(&args.cluster_info.peers_ids());
+        let lst = LeaderState::new(args.membership_info.init_members.keys().copied());
         let cst = Mutex::new(CandidateState::new());
         let log = RwLock::new(Log::new(args.cfg.batch_max_size, args.cfg.log_entries_cap));
 

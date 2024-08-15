@@ -156,11 +156,14 @@ impl State {
 
 impl LeaderState {
     /// Create a `LeaderState`
-    pub(super) fn new(others: &[ServerId]) -> Self {
+    pub(super) fn new<I>(others: I) -> Self
+    where
+        I: IntoIterator<Item = u64>,
+    {
         Self {
             statuses: others
-                .iter()
-                .map(|o| (*o, FollowerStatus::default()))
+                .into_iter()
+                .map(|o| (o, FollowerStatus::default()))
                 .collect(),
             leader_transferee: AtomicU64::new(0),
             no_op_state: NoOpState::default(),
