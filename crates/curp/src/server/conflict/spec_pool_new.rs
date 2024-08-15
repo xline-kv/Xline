@@ -16,7 +16,7 @@ pub(crate) struct SpeculativePool<C> {
     /// Command speculative pools
     command_sps: Vec<SpObject<C>>,
     /// propose id to entry mapping
-    entrys: HashMap<ProposeId, PoolEntry<C>>,
+    entries: HashMap<ProposeId, PoolEntry<C>>,
 }
 
 impl<C> SpeculativePool<C> {
@@ -24,7 +24,7 @@ impl<C> SpeculativePool<C> {
     pub(crate) fn new(command_sps: Vec<SpObject<C>>) -> Self {
         Self {
             command_sps,
-            entrys: HashMap::new(),
+            entries: HashMap::new(),
         }
     }
 
@@ -37,7 +37,7 @@ impl<C> SpeculativePool<C> {
             }
         }
 
-        let _ignore = self.entrys.insert(entry.id, entry);
+        let _ignore = self.entries.insert(entry.id, entry);
 
         None
     }
@@ -48,12 +48,12 @@ impl<C> SpeculativePool<C> {
             csp.remove(entry);
         }
 
-        let _ignore = self.entrys.remove(&entry.id);
+        let _ignore = self.entries.remove(&entry.id);
     }
 
     /// Removes an entry from the pool by it's propose id
     pub(crate) fn remove_by_id(&mut self, id: &ProposeId) {
-        if let Some(entry) = self.entrys.remove(id) {
+        if let Some(entry) = self.entries.remove(id) {
             for csp in &mut self.command_sps {
                 csp.remove(&entry);
             }
