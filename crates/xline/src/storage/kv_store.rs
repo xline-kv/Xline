@@ -966,6 +966,17 @@ impl KvStore {
     {
         let (new_rev, prev_rev_opt) =
             index.register_revision(req.key.clone(), revision, *sub_revision);
+        let execute_resp = to_execute
+            .then(|| {
+                self.generate_put_resp(
+                    req,
+                    txn_db,
+                    prev_rev_opt.map(|key_rev| key_rev.as_revision()),
+                )
+                .map(|(resp, _)| resp.into())
+            })
+            .transpose()?;
+
         let mut kv = KeyValue {
             key: req.key.clone(),
             value: req.value.clone(),
@@ -1009,17 +1020,6 @@ impl KvStore {
             prev_kv: None,
         }];
 
-        let execute_resp = to_execute
-            .then(|| {
-                self.generate_put_resp(
-                    req,
-                    txn_db,
-                    prev_rev_opt.map(|key_rev| key_rev.as_revision()),
-                )
-                .map(|(resp, _)| resp.into())
-            })
-            .transpose()?;
-
         Ok((events, execute_resp))
     }
 
@@ -1036,6 +1036,11 @@ impl KvStore {
     where
         T: XlineStorageOps,
     {
+        let execute_resp = to_execute
+            .then(|| self.generate_delete_range_resp(req, txn_db, index))
+            .transpose()?
+            .map(Into::into);
+
         let keys = Self::delete_keys(
             txn_db,
             index,
@@ -1046,11 +1051,6 @@ impl KvStore {
         )?;
 
         Self::detach_leases(&keys, &self.lease_collection);
-
-        let execute_resp = to_execute
-            .then(|| self.generate_delete_range_resp(req, txn_db, index))
-            .transpose()?
-            .map(Into::into);
 
         Ok((Self::new_deletion_events(revision, keys), execute_resp))
     }
