@@ -549,19 +549,20 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let mut log_entries = Vec::with_capacity(proposes.len());
         let mut to_process = Vec::with_capacity(proposes.len());
         let mut log_w = self.log.write();
-        let mut tx_map_l = self.ctx.resp_txs.lock();
-        for propose in proposes {
-            let (cmd, id, _term, resp_tx) = propose;
-            let entry = log_w.push(term, id, cmd);
-            let index = entry.index;
-            let conflict = resp_tx.is_conflict();
-            to_process.push((index, conflict));
-            log_entries.push(entry);
-            assert!(
-                tx_map_l.insert(index, Arc::clone(&resp_tx)).is_none(),
-                "Should not insert resp_tx twice"
-            );
-        }
+        self.ctx.resp_txs.map_lock(|mut tx_map| {
+            for propose in proposes {
+                let (cmd, id, _term, resp_tx) = propose;
+                let entry = log_w.push(term, id, cmd);
+                let index = entry.index;
+                let conflict = resp_tx.is_conflict();
+                to_process.push((index, conflict));
+                log_entries.push(entry);
+                assert!(
+                    tx_map.insert(index, Arc::clone(&resp_tx)).is_none(),
+                    "Should not insert resp_tx twice"
+                );
+            }
+        });
         self.entry_process_multi(&mut log_w, &to_process, term);
 
         let log_r = RwLockWriteGuard::downgrade(log_w);
