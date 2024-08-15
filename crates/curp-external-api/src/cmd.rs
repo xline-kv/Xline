@@ -187,14 +187,14 @@ pub struct AfterSyncCmd<'a, C> {
     /// The command
     cmd: &'a C,
     /// Whether the command needs to be executed in after sync stage
-    to_exectue: bool,
+    to_execute: bool,
 }
 
 impl<'a, C> AfterSyncCmd<'a, C> {
     /// Creates a new `AfterSyncCmd`
     #[inline]
-    pub fn new(cmd: &'a C, to_exectue: bool) -> Self {
-        Self { cmd, to_exectue }
+    pub fn new(cmd: &'a C, to_execute: bool) -> Self {
+        Self { cmd, to_execute }
     }
 
     /// Gets the command
@@ -208,7 +208,7 @@ impl<'a, C> AfterSyncCmd<'a, C> {
     #[inline]
     #[must_use]
     pub fn into_parts(&'a self) -> (&'a C, bool) {
-        (self.cmd, self.to_exectue)
+        (self.cmd, self.to_execute)
     }
 }
 

@@ -89,8 +89,8 @@ mod tests {
         let id2 = lease_manager
             .write()
             .grant(Some(Duration::from_millis(900)));
-        let _ingore = board.write().tracker(id1).only_record(1);
-        let _ingore = board.write().tracker(id2).only_record(2);
+        let _ignore = board.write().tracker(id1).only_record(1);
+        let _ignore = board.write().tracker(id2).only_record(2);
         sp.lock().insert(PoolEntry::new(
             ProposeId(id1, 1),
             Arc::new(TestCommand::default()),
@@ -171,18 +171,18 @@ mod tests {
         let id2 = lease_manager
             .write()
             .grant(Some(Duration::from_millis(2000)));
-        let _ingore = board.write().tracker(id1).only_record(1);
+        let _ignore = board.write().tracker(id1).only_record(1);
         let cmd1 = Arc::new(TestCommand::new_put(vec![1], 1));
         sp.lock().insert(PoolEntry::new(ProposeId(id1, 1), cmd1));
 
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let _ingore = board.write().tracker(id1).only_record(2);
+        let _ignore = board.write().tracker(id1).only_record(2);
         let cmd2 = Arc::new(TestCommand::new_put(vec![2], 1));
         sp.lock().insert(PoolEntry::new(ProposeId(id1, 2), cmd2));
 
         // at 600ms
         tokio::time::sleep(Duration::from_millis(400)).await;
-        let _ingore = board.write().tracker(id2).only_record(1);
+        let _ignore = board.write().tracker(id2).only_record(1);
         let cmd3 = Arc::new(TestCommand::new_put(vec![3], 1));
         sp.lock()
             .insert(PoolEntry::new(ProposeId(id2, 1), Arc::clone(&cmd3)));
