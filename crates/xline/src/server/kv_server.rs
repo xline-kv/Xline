@@ -258,7 +258,7 @@ impl Kv for KvServer {
         } else {
             Either::Right(async {})
         };
-        let (cmd_res, _sync_res) = self.client.propose(&cmd, None, !physical).await??;
+        let (cmd_res, _sync_res) = self.client.propose(&cmd, None, false).await??;
         let resp = cmd_res.into_inner();
         if timeout(self.compact_timeout, compact_physical_fut)
             .await

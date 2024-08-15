@@ -119,7 +119,6 @@ impl LeaseServer {
     async fn propose<T>(
         &self,
         request: tonic::Request<T>,
-        use_fast_path: bool,
     ) -> Result<(CommandResponse, Option<SyncResponse>), tonic::Status>
     where
         T: Into<RequestWrapper>,
@@ -127,7 +126,7 @@ impl LeaseServer {
         let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let request = request.into_inner().into();
         let cmd = Command::new_with_auth_info(request, auth_info);
-        let res = self.client.propose(&cmd, None, use_fast_path).await??;
+        let res = self.client.propose(&cmd, None, false).await??;
         Ok(res)
     }
 
@@ -255,8 +254,7 @@ impl Lease for LeaseServer {
             lease_grant_req.id = self.id_gen.next();
         }
 
-        let is_fast_path = true;
-        let (res, sync_res) = self.propose(request, is_fast_path).await?;
+        let (res, sync_res) = self.propose(request).await?;
 
         let mut res: LeaseGrantResponse = res.into_inner().into();
         if let Some(sync_res) = sync_res {
@@ -276,8 +274,7 @@ impl Lease for LeaseServer {
     ) -> Result<tonic::Response<LeaseRevokeResponse>, tonic::Status> {
         debug!("Receive LeaseRevokeRequest {:?}", request);
 
-        let is_fast_path = true;
-        let (res, sync_res) = self.propose(request, is_fast_path).await?;
+        let (res, sync_res) = self.propose(request).await?;
 
         let mut res: LeaseRevokeResponse = res.into_inner().into();
         if let Some(sync_res) = sync_res {
@@ -378,8 +375,7 @@ impl Lease for LeaseServer {
     ) -> Result<tonic::Response<LeaseLeasesResponse>, tonic::Status> {
         debug!("Receive LeaseLeasesRequest {:?}", request);
 
-        let is_fast_path = true;
-        let (res, sync_res) = self.propose(request, is_fast_path).await?;
+        let (res, sync_res) = self.propose(request).await?;
 
         let mut res: LeaseLeasesResponse = res.into_inner().into();
         if let Some(sync_res) = sync_res {

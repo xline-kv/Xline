@@ -84,7 +84,6 @@ impl MaintenanceServer {
     async fn propose<T>(
         &self,
         request: tonic::Request<T>,
-        use_fast_path: bool,
     ) -> Result<(CommandResponse, Option<SyncResponse>), tonic::Status>
     where
         T: Into<RequestWrapper> + Debug,
@@ -92,7 +91,7 @@ impl MaintenanceServer {
         let auth_info = self.auth_store.try_get_auth_info_from_request(&request)?;
         let request = request.into_inner().into();
         let cmd = Command::new_with_auth_info(request, auth_info);
-        let res = self.client.propose(&cmd, None, use_fast_path).await??;
+        let res = self.client.propose(&cmd, None, false).await??;
         Ok(res)
     }
 }
@@ -103,8 +102,7 @@ impl Maintenance for MaintenanceServer {
         &self,
         request: tonic::Request<AlarmRequest>,
     ) -> Result<tonic::Response<AlarmResponse>, tonic::Status> {
-        let is_fast_path = true;
-        let (res, sync_res) = self.propose(request, is_fast_path).await?;
+        let (res, sync_res) = self.propose(request).await?;
         let mut res: AlarmResponse = res.into_inner().into();
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
