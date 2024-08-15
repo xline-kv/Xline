@@ -93,14 +93,12 @@ async fn exe_exactly_once_on_leader() {
     let er = client.propose(&cmd, None, true).await.unwrap().unwrap().0;
     assert_eq!(er, TestCommandResult::new(vec![], vec![]));
 
+    let leader = group.get_leader().await.0;
     {
-        let mut exe_futs = group
-            .exe_rxs()
-            .map(|rx| rx.recv())
-            .collect::<FuturesUnordered<_>>();
-        let (cmd1, er) = exe_futs.next().await.unwrap().unwrap();
+        let exec_rx = &mut group.get_node_mut(&leader).exe_rx;
+        let (cmd1, er) = exec_rx.recv().await.unwrap();
         assert!(
-            tokio::time::timeout(Duration::from_millis(100), exe_futs.next())
+            tokio::time::timeout(Duration::from_millis(100), exec_rx.recv())
                 .await
                 .is_err()
         );
