@@ -2,11 +2,10 @@
 
 use std::{
     cmp::{min, Ordering},
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashSet, VecDeque},
     fmt::Debug,
     ops::{Bound, Range, RangeBounds, RangeInclusive},
     sync::Arc,
-    vec,
 };
 
 use clippy_utilities::NumericCast;
@@ -17,7 +16,6 @@ use crate::{
     cmd::Command,
     log_entry::{EntryData, LogEntry},
     rpc::ProposeId,
-    server::metrics,
     snapshot::SnapshotMeta,
     LogIndex,
 };
@@ -116,39 +114,8 @@ pub(super) struct Log<C: Command> {
     pub(super) last_as: LogIndex,
     /// Index of highest log entry sent to speculatively exe. `last_exe` should always be greater than or equal to `last_as`.
     pub(super) last_exe: LogIndex,
-    /// Contexts of fallback log entries
-    pub(super) fallback_contexts: HashMap<LogIndex, FallbackContext<C>>,
     /// Entries to keep in memory
     entries_cap: usize,
-}
-
-/// Context of fallback conf change entry
-pub(super) struct FallbackContext<C: Command> {
-    /// The origin entry
-    pub(super) origin_entry: Arc<LogEntry<C>>,
-    /// The addresses of the old config
-    pub(super) addrs: Vec<String>,
-    /// The name of the old config
-    pub(super) name: String,
-    /// Whether the old config is a learner
-    pub(super) is_learner: bool,
-}
-
-impl<C: Command> FallbackContext<C> {
-    /// Create a new fallback context
-    pub(super) fn new(
-        origin_entry: Arc<LogEntry<C>>,
-        addrs: Vec<String>,
-        name: String,
-        is_learner: bool,
-    ) -> Self {
-        Self {
-            origin_entry,
-            addrs,
-            name,
-            is_learner,
-        }
-    }
 }
 
 impl<C: Command> Log<C> {
@@ -310,18 +277,8 @@ impl<C: Command> Debug for Log<C> {
     }
 }
 
-/// Conf change entries type
-type ConfChangeEntries<C> = Vec<Arc<LogEntry<C>>>;
-/// Fallback indexes type
-type FallbackIndexes = HashSet<LogIndex>;
-
 /// Type retruned when append success
-type AppendSuccess<C> = (
-    Vec<Arc<LogEntry<C>>>,
-    ConfChangeEntries<C>,
-    FallbackIndexes,
-    LogIndex,
-);
+type AppendSuccess<C> = (Vec<Arc<LogEntry<C>>>, LogIndex);
 
 impl<C: Command> Log<C> {
     /// Create a new log
@@ -337,7 +294,6 @@ impl<C: Command> Log<C> {
             base_term: 0,
             last_as: 0,
             last_exe: 0,
-            fallback_contexts: HashMap::new(),
             entries_cap,
         }
     }
@@ -383,8 +339,6 @@ impl<C: Command> Log<C> {
         prev_log_term: u64,
     ) -> Result<AppendSuccess<C>, Vec<LogEntry<C>>> {
         let mut to_persist = Vec::with_capacity(entries.len());
-        let mut conf_changes = vec![];
-        let mut need_fallback_indexes = HashSet::new();
         // check if entries can be appended
         if self.get(prev_log_index).map_or_else(
             || (self.base_index, self.base_term) != (prev_log_index, prev_log_term),
@@ -405,12 +359,6 @@ impl<C: Command> Log<C> {
             }
             pi += 1;
         }
-        // Record entries that need to be fallback in the truncated entries
-        for e in self.entries.range(pi..) {
-            if matches!(e.inner.entry_data, EntryData::ConfChange(_)) {
-                let _ig = need_fallback_indexes.insert(e.inner.index);
-            }
-        }
         // Truncate entries
         self.truncate(pi);
         let truncate_at = self
@@ -423,9 +371,6 @@ impl<C: Command> Log<C> {
             .skip(pi - self.li_to_pi(prev_log_index + 1))
             .map(Arc::new)
         {
-            if matches!(entry.entry_data, EntryData::ConfChange(_)) {
-                conf_changes.push(Arc::clone(&entry));
-            }
             #[allow(clippy::expect_used)] // It's safe to expect here.
             self.push_back(
                 Arc::clone(&entry),
@@ -435,7 +380,7 @@ impl<C: Command> Log<C> {
             to_persist.push(entry);
         }
 
-        Ok((to_persist, conf_changes, need_fallback_indexes, truncate_at))
+        Ok((to_persist, truncate_at))
     }
 
     /// Check if the candidate's log is up-to-date
@@ -569,15 +514,6 @@ impl<C: Command> Log<C> {
             self.commit_index
         );
         self.commit_index = commit_index;
-        self.fallback_contexts.retain(|&idx, c| {
-            if idx > self.commit_index {
-                return true;
-            }
-            if c.is_learner {
-                metrics::get().learner_promote_succeed.add(1, &[]);
-            }
-            false
-        });
     }
 
     #[cfg(test)]

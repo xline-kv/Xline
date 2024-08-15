@@ -42,8 +42,6 @@ use crate::rpc::LeaseKeepAliveMsg;
 use crate::rpc::MoveLeaderRequest;
 use crate::rpc::MoveLeaderResponse;
 use crate::rpc::OpResponse;
-use crate::rpc::ProposeConfChangeRequest;
-use crate::rpc::ProposeConfChangeResponse;
 use crate::rpc::ProposeRequest;
 use crate::rpc::PublishRequest;
 use crate::rpc::PublishResponse;
@@ -158,20 +156,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
         request.metadata().extract_span();
         Ok(tonic::Response::new(
             self.inner.shutdown(request.into_inner(), bypassed).await?,
-        ))
-    }
-
-    #[instrument(skip_all, name = "curp_propose_conf_change")]
-    async fn propose_conf_change(
-        &self,
-        request: tonic::Request<ProposeConfChangeRequest>,
-    ) -> Result<tonic::Response<ProposeConfChangeResponse>, tonic::Status> {
-        let bypassed = request.metadata().is_bypassed();
-        request.metadata().extract_span();
-        Ok(tonic::Response::new(
-            self.inner
-                .propose_conf_change(request.into_inner(), bypassed)
-                .await?,
         ))
     }
 

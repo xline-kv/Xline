@@ -75,17 +75,6 @@ impl Default for FollowerStatus {
     }
 }
 
-impl FollowerStatus {
-    /// Create a new `FollowerStatus`
-    fn new(next_index: LogIndex, match_index: LogIndex, is_learner: bool) -> Self {
-        Self {
-            next_index,
-            match_index,
-            is_learner,
-        }
-    }
-}
-
 /// Additional state for the leader, all volatile
 #[derive(Debug)]
 pub(super) struct LeaderState {
@@ -170,26 +159,6 @@ impl LeaderState {
         }
     }
 
-    /// Get statuses for all servers
-    pub(super) fn get_all_statuses(&self) -> HashMap<ServerId, FollowerStatus> {
-        self.statuses
-            .iter()
-            .map(|e| (*e.key(), *e.value()))
-            .collect()
-    }
-
-    /// insert new status for id
-    pub(super) fn insert(&self, id: ServerId, is_learner: bool) {
-        _ = self
-            .statuses
-            .insert(id, FollowerStatus::new(1, 0, is_learner));
-    }
-
-    /// Remove a status
-    pub(super) fn remove(&self, id: ServerId) {
-        _ = self.statuses.remove(&id);
-    }
-
     /// Get status for a server
     fn get_status(&self, id: ServerId) -> Option<Ref<'_, u64, FollowerStatus>> {
         self.statuses.get(&id)
@@ -236,20 +205,6 @@ impl LeaderState {
     /// Create a `Iterator` for all statuses
     pub(super) fn iter(&self) -> impl Iterator<Item = RefMulti<'_, ServerId, FollowerStatus>> {
         self.statuses.iter()
-    }
-
-    /// Promote a learner to voter
-    pub(super) fn promote(&self, node_id: ServerId) {
-        if let Some(mut s) = self.statuses.get_mut(&node_id) {
-            s.is_learner = false;
-        }
-    }
-
-    /// Demote a voter to learner
-    pub(super) fn demote(&self, node_id: ServerId) {
-        if let Some(mut s) = self.statuses.get_mut(&node_id) {
-            s.is_learner = true;
-        }
     }
 
     /// Get transferee

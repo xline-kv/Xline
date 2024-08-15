@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use curp_external_api::cmd::{AfterSyncCmd, AfterSyncOk};
 use tokio::sync::oneshot;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use super::{curp_node::AfterSyncEntry, raw_curp::RawCurp};
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
     log_entry::{EntryData, LogEntry},
     response::ResponseSender,
     role_change::RoleChange,
-    rpc::{ConfChangeType, PoolEntry, ProposeId, ProposeResponse, SyncedResponse},
+    rpc::{PoolEntry, ProposeId, ProposeResponse, SyncedResponse},
     snapshot::{Snapshot, SnapshotMeta},
 };
 
@@ -145,7 +145,7 @@ where
 }
 
 /// After sync entries other than cmd
-async fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
+fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     others: Vec<AfterSyncEntry<C>>,
     ce: &CE,
     curp: &RawCurp<C, RC>,
@@ -164,54 +164,6 @@ async fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
                     error!("failed to set last_applied, {e}");
                 }
                 cb.write().notify_shutdown();
-            }
-            (EntryData::ConfChange(ref conf_change), _) => {
-                if let Err(e) = ce.set_last_applied(entry.index) {
-                    error!("failed to set last_applied, {e}");
-                    return;
-                }
-                let change = conf_change.first().unwrap_or_else(|| {
-                    unreachable!("conf change should always have at least one change")
-                });
-                let shutdown_self =
-                    change.change_type() == ConfChangeType::Remove && change.node_id == id;
-                cb.write().insert_conf(entry.propose_id);
-                remove_from_sp_ucp(curp, Some(&entry));
-                if shutdown_self {
-                    if let Some(maybe_new_leader) = curp.pick_new_leader() {
-                        info!(
-                            "the old leader {} will shutdown, try to move leadership to {}",
-                            id, maybe_new_leader
-                        );
-                        if curp
-                            .handle_move_leader(maybe_new_leader)
-                            .unwrap_or_default()
-                        {
-                            if let Err(e) = curp
-                                .connects()
-                                .get(&maybe_new_leader)
-                                .unwrap_or_else(|| {
-                                    unreachable!("connect to {} should exist", maybe_new_leader)
-                                })
-                                .try_become_leader_now(curp.cfg().wait_synced_timeout)
-                                .await
-                            {
-                                warn!(
-                                    "{} send try become leader now to {} failed: {:?}",
-                                    curp.id(),
-                                    maybe_new_leader,
-                                    e
-                                );
-                            };
-                        }
-                    } else {
-                        info!(
-                        "the old leader {} will shutdown, but no other node can be the leader now",
-                        id
-                    );
-                    }
-                    curp.task_manager().shutdown(false).await;
-                }
             }
             (EntryData::SetNodeState(node_id, ref name, ref client_urls), _) => {
                 info!("setting node state: {node_id}, urls: {:?}", client_urls);
@@ -245,7 +197,7 @@ pub(super) async fn after_sync<C: Command, CE: CommandExecutor<C>, RC: RoleChang
         .into_iter()
         .partition(|(entry, _)| matches!(entry.entry_data, EntryData::Command(_)));
     after_sync_cmds(&cmd_entries, ce, curp);
-    after_sync_others(others, ce, curp).await;
+    after_sync_others(others, ce, curp);
 }
 
 /// Cmd worker reset handler

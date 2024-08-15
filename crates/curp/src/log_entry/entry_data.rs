@@ -3,10 +3,9 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::members::ServerId;
-use crate::rpc::ConfChange;
-use crate::rpc::PublishRequest;
 use crate::member::Membership;
+use crate::members::ServerId;
+use crate::rpc::PublishRequest;
 
 /// Entry data of a `LogEntry`
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,8 +15,6 @@ pub(crate) enum EntryData<C> {
     Empty,
     /// `Command` entry
     Command(Arc<C>),
-    /// `ConfChange` entry
-    ConfChange(Vec<ConfChange>),
     /// `Shutdown` entry
     Shutdown,
     /// `SetNodeState` entry
@@ -29,12 +26,6 @@ pub(crate) enum EntryData<C> {
 impl<C> From<Arc<C>> for EntryData<C> {
     fn from(cmd: Arc<C>) -> Self {
         EntryData::Command(cmd)
-    }
-}
-
-impl<C> From<Vec<ConfChange>> for EntryData<C> {
-    fn from(value: Vec<ConfChange>) -> Self {
-        Self::ConfChange(value)
     }
 }
 

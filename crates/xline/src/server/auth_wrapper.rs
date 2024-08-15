@@ -6,9 +6,8 @@ use curp::{
         AddLearnerRequest, AddLearnerResponse, AddMemberRequest, AddMemberResponse,
         FetchClusterRequest, FetchClusterResponse, FetchMembershipRequest, FetchMembershipResponse,
         FetchReadStateRequest, FetchReadStateResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
-        MoveLeaderResponse, OpResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
-        ProposeRequest, Protocol, PublishRequest, PublishResponse, ReadIndexRequest,
-        ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
+        MoveLeaderResponse, OpResponse, ProposeRequest, Protocol, PublishRequest, PublishResponse,
+        ReadIndexRequest, ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
         RemoveLearnerResponse, RemoveMemberRequest, RemoveMemberResponse, ShutdownRequest,
         ShutdownResponse,
     },
@@ -81,13 +80,6 @@ impl Protocol for AuthWrapper {
         request: tonic::Request<ShutdownRequest>,
     ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status> {
         self.curp_server.shutdown(request).await
-    }
-
-    async fn propose_conf_change(
-        &self,
-        request: tonic::Request<ProposeConfChangeRequest>,
-    ) -> Result<tonic::Response<ProposeConfChangeResponse>, tonic::Status> {
-        self.curp_server.propose_conf_change(request).await
     }
 
     async fn publish(

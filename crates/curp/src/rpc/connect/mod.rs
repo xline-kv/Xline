@@ -40,9 +40,9 @@ use crate::{
         AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchClusterRequest,
         FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
         InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
-        MoveLeaderResponse, ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest,
-        Protocol, PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse,
-        TriggerShutdownRequest, TryBecomeLeaderNowRequest, VoteRequest, VoteResponse,
+        MoveLeaderResponse, ProposeRequest, Protocol, PublishRequest, PublishResponse,
+        ShutdownRequest, ShutdownResponse, TriggerShutdownRequest, TryBecomeLeaderNowRequest,
+        VoteRequest, VoteResponse,
     },
     server::StreamingProtocol,
     snapshot::Snapshot,
@@ -193,13 +193,6 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         timeout: Duration,
     ) -> Result<tonic::Response<ReadIndexResponse>, CurpError>;
 
-    /// Send `ProposeRequest`
-    async fn propose_conf_change(
-        &self,
-        request: ProposeConfChangeRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<ProposeConfChangeResponse>, CurpError>;
-
     /// Send `PublishRequest`
     async fn publish(
         &self,
@@ -308,16 +301,6 @@ impl InnerConnectApiWrapper {
     /// Create a new `InnerConnectApiWrapper` from `Arc<dyn ConnectApi>`
     pub(crate) fn new_from_arc(connect: Arc<dyn InnerConnectApi>) -> Self {
         Self(connect)
-    }
-
-    /// Create a new `InnerConnectApiWrapper` from id and addrs
-    pub(crate) fn connect(
-        id: ServerId,
-        addrs: Vec<String>,
-        tls_config: Option<ClientTlsConfig>,
-    ) -> Self {
-        let conn = connect_to::<InnerProtocolClient<Channel>>(id, addrs, tls_config);
-        InnerConnectApiWrapper::new_from_arc(Arc::new(conn))
     }
 }
 
@@ -487,19 +470,6 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_current();
         with_timeout!(timeout, client.shutdown(req)).map_err(Into::into)
-    }
-
-    /// Send `ProposeRequest`
-    #[instrument(skip(self), name = "client propose conf change")]
-    async fn propose_conf_change(
-        &self,
-        request: ProposeConfChangeRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<ProposeConfChangeResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_current();
-        with_timeout!(timeout, client.propose_conf_change(req)).map_err(Into::into)
     }
 
     /// Send `PublishRequest`
@@ -811,21 +781,6 @@ where
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.publish(req).await.map_err(Into::into)
-    }
-
-    /// Send `ProposeRequest`
-    async fn propose_conf_change(
-        &self,
-        request: ProposeConfChangeRequest,
-        _timeout: Duration,
-    ) -> Result<tonic::Response<ProposeConfChangeResponse>, CurpError> {
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_bypassed();
-        req.metadata_mut().inject_current();
-        self.server
-            .propose_conf_change(req)
-            .await
-            .map_err(Into::into)
     }
 
     /// Send `ShutdownRequest`

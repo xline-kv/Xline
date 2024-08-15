@@ -4,7 +4,7 @@ use tracing::debug;
 
 use crate::{
     members::ServerId,
-    rpc::{ConfChange, FetchClusterResponse, Member, ReadState},
+    rpc::{FetchClusterResponse, ReadState},
 };
 
 use super::retry::Context;
@@ -33,12 +33,6 @@ pub trait ClientApi {
         token: Option<&String>, // TODO: Allow external custom interceptors, do not pass token in parameters
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, Self::Error>;
-
-    /// Send propose configuration changes to the cluster
-    async fn propose_conf_change(
-        &self,
-        changes: Vec<ConfChange>,
-    ) -> Result<Vec<Member>, Self::Error>;
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), Self::Error>;
@@ -109,13 +103,6 @@ pub(crate) trait RepeatableClientApi {
         use_fast_path: bool,
         ctx: Context,
     ) -> Result<ProposeResponse<Self::Cmd>, Self::Error>;
-
-    /// Send propose configuration changes to the cluster
-    async fn propose_conf_change(
-        &self,
-        changes: Vec<ConfChange>,
-        ctx: Context,
-    ) -> Result<Vec<Member>, Self::Error>;
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self, ctx: Context) -> Result<(), Self::Error>;

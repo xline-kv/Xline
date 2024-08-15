@@ -220,15 +220,6 @@ fn quorum(size: usize) -> usize {
     size / 2 + 1
 }
 
-/// Calculate the `recover_quorum`: the smallest number of servers who must
-/// contain a command in speculative pool for it to be recovered
-#[inline]
-#[must_use]
-#[allow(clippy::arithmetic_side_effects)] // it's safe
-fn recover_quorum(size: usize) -> usize {
-    quorum(size) / 2 + 1
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -249,7 +240,6 @@ mod test {
 
         for (node_cnt, expected) in nodes.into_iter().zip(expected_res.into_iter()) {
             assert_eq!(quorum(node_cnt), expected.0);
-            assert_eq!(recover_quorum(node_cnt), expected.1);
         }
     }
 }

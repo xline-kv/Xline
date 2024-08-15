@@ -10,9 +10,9 @@ use crate::{
         connect::ConnectApi, AddLearnerRequest, AddLearnerResponse, CurpError, FetchClusterRequest,
         FetchClusterResponse, FetchMembershipRequest, FetchMembershipResponse,
         FetchReadStateRequest, FetchReadStateResponse, MoveLeaderRequest, MoveLeaderResponse,
-        OpResponse, ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest,
-        PublishRequest, PublishResponse, ReadIndexResponse, RecordRequest, RecordResponse,
-        RemoveLearnerRequest, RemoveLearnerResponse, ShutdownRequest, ShutdownResponse,
+        OpResponse, ProposeRequest, PublishRequest, PublishResponse, ReadIndexResponse,
+        RecordRequest, RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse,
+        ShutdownRequest, ShutdownResponse,
     },
 };
 
@@ -117,15 +117,6 @@ impl<C: ConnectApi> ConnectApi for Reconnect<C> {
         timeout: Duration,
     ) -> Result<tonic::Response<ReadIndexResponse>, CurpError> {
         execute_with_reconnect!(self, ConnectApi::read_index, timeout)
-    }
-
-    /// Send `ProposeRequest`
-    async fn propose_conf_change(
-        &self,
-        request: ProposeConfChangeRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<ProposeConfChangeResponse>, CurpError> {
-        execute_with_reconnect!(self, ConnectApi::propose_conf_change, request, timeout)
     }
 
     /// Send `PublishRequest`

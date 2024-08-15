@@ -24,7 +24,6 @@ pub use self::proto::{
         curp_error::Redirect,
         fetch_read_state_response::{IdSet, ReadState},
         op_response::Op as ResponseOp,
-        propose_conf_change_request::{ConfChange, ConfChangeType},
         protocol_client,
         protocol_server::{Protocol, ProtocolServer},
         AddLearnerRequest,
@@ -45,8 +44,6 @@ pub use self::proto::{
         Node,
         OpResponse,
         OptionalU64,
-        ProposeConfChangeRequest,
-        ProposeConfChangeResponse,
         ProposeId as PbProposeId,
         ProposeRequest,
         ProposeResponse,
@@ -469,95 +466,6 @@ impl FetchReadStateResponse {
         Self {
             read_state: Some(state),
         }
-    }
-}
-
-#[allow(clippy::as_conversions)] // ConfChangeType is so small that it won't exceed the range of i32 type.
-impl ConfChange {
-    /// Create a new `ConfChange` to add a node
-    #[must_use]
-    #[inline]
-    pub fn add(node_id: ServerId, address: Vec<String>) -> Self {
-        Self {
-            change_type: ConfChangeType::Add as i32,
-            node_id,
-            address,
-        }
-    }
-
-    /// Create a new `ConfChange` to remove a node
-    #[must_use]
-    #[inline]
-    pub fn remove(node_id: ServerId) -> Self {
-        Self {
-            change_type: ConfChangeType::Remove as i32,
-            node_id,
-            address: vec![],
-        }
-    }
-
-    /// Create a new `ConfChange` to update a node
-    #[must_use]
-    #[inline]
-    pub fn update(node_id: ServerId, address: Vec<String>) -> Self {
-        Self {
-            change_type: ConfChangeType::Update as i32,
-            node_id,
-            address,
-        }
-    }
-
-    /// Create a new `ConfChange` to add a learner node
-    #[must_use]
-    #[inline]
-    pub fn add_learner(node_id: ServerId, address: Vec<String>) -> Self {
-        Self {
-            change_type: ConfChangeType::AddLearner as i32,
-            node_id,
-            address,
-        }
-    }
-
-    /// Create a new `ConfChange` to promote a learner node
-    #[must_use]
-    #[inline]
-    pub fn promote_learner(node_id: ServerId) -> Self {
-        Self {
-            change_type: ConfChangeType::Promote as i32,
-            node_id,
-            address: vec![],
-        }
-    }
-
-    /// Create a new `ConfChange` to promote a node
-    #[must_use]
-    #[inline]
-    pub fn promote(node_id: ServerId) -> Self {
-        Self {
-            change_type: ConfChangeType::Promote as i32,
-            node_id,
-            address: vec![],
-        }
-    }
-}
-
-impl ProposeConfChangeRequest {
-    /// Create a new `ProposeConfChangeRequest`
-    pub(crate) fn new(id: ProposeId, changes: Vec<ConfChange>, cluster_version: u64) -> Self {
-        Self {
-            propose_id: Some(id.into()),
-            changes,
-            cluster_version,
-        }
-    }
-
-    /// Get id of the request
-    pub(crate) fn propose_id(&self) -> ProposeId {
-        self.propose_id
-            .unwrap_or_else(|| {
-                unreachable!("propose id should be set in propose conf change request")
-            })
-            .into()
     }
 }
 

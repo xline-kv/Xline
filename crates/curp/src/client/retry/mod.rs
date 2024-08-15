@@ -19,8 +19,7 @@ use super::{
 };
 use crate::{
     members::ServerId,
-    rpc::{connects, ConfChange, CurpError, FetchClusterResponse, Member, ProposeId, ReadState},
-    tracker::Tracker,
+    rpc::{CurpError, FetchClusterResponse, ReadState, Redirect, ProposeId}, tracker::Tracker,
 };
 
 /// Backoff config
@@ -395,18 +394,6 @@ where
     ) -> Result<ProposeResponse<Self::Cmd>, tonic::Status> {
         self.retry::<_, _>(|client, ctx| async move {
             RepeatableClientApi::propose(client, cmd, token, use_fast_path, ctx).await
-        })
-        .await
-    }
-
-    /// Send propose configuration changes to the cluster
-    async fn propose_conf_change(
-        &self,
-        changes: Vec<ConfChange>,
-    ) -> Result<Vec<Member>, tonic::Status> {
-        self.retry::<_, _>(|client, ctx| {
-            let changes_c = changes.clone();
-            async move { RepeatableClientApi::propose_conf_change(client, changes_c, ctx).await }
         })
         .await
     }

@@ -1,6 +1,6 @@
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
-    hash::{Hash, Hasher},
+    hash::Hasher,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -339,22 +339,6 @@ impl ClusterInfo {
         self.cluster_version.load(Ordering::Relaxed)
     }
 
-    /// cluster version decrease
-    pub(crate) fn cluster_version_update(&self) {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.all_members_peer_urls()
-            .into_iter()
-            .sorted()
-            .for_each(|(id, mut addrs)| {
-                id.hash(&mut hasher);
-                addrs.sort();
-                addrs.hash(&mut hasher);
-            });
-        let ver = hasher.finish();
-        info!("cluster version updates to {ver}");
-        self.cluster_version.store(ver, Ordering::Relaxed);
-    }
-
     /// Get peers
     #[must_use]
     #[inline]
@@ -391,22 +375,6 @@ impl ClusterInfo {
         self.members
             .iter()
             .find_map(|m| (m.name == name).then_some(m.id))
-    }
-
-    /// Promote a learner to voter
-    pub(crate) fn promote(&self, node_id: ServerId) -> bool {
-        if let Some(mut s) = self.members.get_mut(&node_id) {
-            s.is_learner = false;
-            return true;
-        }
-        false
-    }
-
-    /// Demote a voter to learner
-    pub(crate) fn demote(&self, node_id: ServerId) {
-        if let Some(mut s) = self.members.get_mut(&node_id) {
-            s.is_learner = true;
-        }
     }
 
     /// Check if cluster contains a node

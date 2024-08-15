@@ -15,8 +15,8 @@ use super::{
 use crate::{
     members::ServerId,
     rpc::{
-        AddLearnerRequest, ConfChange, CurpError, FetchReadStateRequest, Member, MoveLeaderRequest,
-        ProposeConfChangeRequest, PublishRequest, ReadState, RemoveLearnerRequest, ShutdownRequest,
+        AddLearnerRequest, CurpError, FetchReadStateRequest, MoveLeaderRequest, PublishRequest,
+        ReadState, RemoveLearnerRequest, ShutdownRequest,
     },
 };
 
@@ -62,28 +62,6 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         } else {
             self.propose_mutative(cmd, token, use_fast_path, &ctx).await
         }
-    }
-
-    /// Send propose configuration changes to the cluster
-    async fn propose_conf_change(
-        &self,
-        changes: Vec<ConfChange>,
-        ctx: Context,
-    ) -> Result<Vec<Member>, Self::Error> {
-        let req = ProposeConfChangeRequest::new(
-            ctx.propose_id(),
-            changes,
-            ctx.cluster_state().cluster_version(),
-        );
-        let timeout = self.config.wait_synced_timeout();
-        let members = ctx
-            .cluster_state()
-            .map_leader(|conn| async move { conn.propose_conf_change(req, timeout).await })
-            .await?
-            .into_inner()
-            .members;
-
-        Ok(members)
     }
 
     /// Send propose to shutdown cluster
