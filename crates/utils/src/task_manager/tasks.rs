@@ -65,8 +65,7 @@ impl TaskName {
             | TaskName::Election
             | TaskName::SyncFollower
             | TaskName::ConfChange
-            | TaskName::GcSpecPool
-            | TaskName::GcCmdBoard
+            | TaskName::GcClientLease
             | TaskName::RevokeExpiredLeases
             | TaskName::SyncVictims
             | TaskName::AutoCompactor => false,
