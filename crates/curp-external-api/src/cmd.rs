@@ -105,6 +105,8 @@ where
     fn execute(&self, cmd: &C) -> Result<C::ER, C::Error>;
 
     /// Batch execute the after_sync callback
+    ///
+    /// This `highest_index` means the last log index of the `cmds`
     fn after_sync(
         &self,
         cmds: Vec<AfterSyncCmd<'_, C>>,

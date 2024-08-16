@@ -298,6 +298,7 @@ impl CommandExecutor<TestCommand> for TestCE {
 
         if let Some(index) = highest_index {
             for (i, cmd) in cmds.iter().enumerate() {
+                // Calculate the log index of the current cmd
                 let index = index - (total - i - 1) as u64;
                 self.after_sync_sender
                     .send((cmd.cmd().clone(), index))
