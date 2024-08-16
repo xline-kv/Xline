@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::Result;
 use clippy_utilities::{NumericCast, OverflowArithmetic};
+use futures::future::join_all;
 use indicatif::ProgressBar;
 use rand::RngCore;
 use tokio::{
@@ -158,7 +159,6 @@ impl CommandRunner {
 
     /// Create clients
     async fn create_clients(&self) -> Result<Vec<BenchClient>> {
-        let mut clients = Vec::with_capacity(self.args.clients);
         let client_options = ClientOptions::default().with_client_config(ClientConfig::new(
             Duration::from_secs(10),
             Duration::from_secs(5),
@@ -180,11 +180,15 @@ impl CommandRunner {
                 }
             })
             .collect::<Vec<_>>();
-        for _ in 0..self.args.clients {
-            let client =
-                BenchClient::new(addrs.clone(), self.args.use_curp, client_options.clone()).await?;
-            clients.push(client);
-        }
+        let clients_futs = std::iter::repeat_with(|| {
+            BenchClient::new(addrs.clone(), self.args.use_curp, client_options.clone())
+        })
+        .take(self.args.clients);
+        let clients = join_all(clients_futs)
+            .await
+            .into_iter()
+            .collect::<Result<_, _>>()?;
+
         Ok(clients)
     }
 
