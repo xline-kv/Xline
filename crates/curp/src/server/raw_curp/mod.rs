@@ -2063,7 +2063,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         Ok(())
     }
 
-    /// Acknowledge the propose id and GC it's cmd board result
+    /// Acknowledge the propose id and GC its cmd board result
+    #[allow(clippy::shadow_unrelated)] // no return value needs to be used
     fn ack(&self, id: ProposeId) {
         let _ignore = self.ctx.cb.write().er_buffer.swap_remove(&id);
         let _ignore = self.ctx.cb.write().asr_buffer.swap_remove(&id);
