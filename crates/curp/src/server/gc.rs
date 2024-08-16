@@ -34,14 +34,7 @@ fn remove_expired<R, E>(
     lease_mamanger: &LeaseManagerRef,
     buf: &mut IndexMap<ProposeId, Result<R, E>>,
 ) {
-    let expired_ids: Vec<_> = buf
-        .keys()
-        .copied()
-        .filter(|&ProposeId(client_id, _)| !lease_mamanger.read().check_alive(client_id))
-        .collect();
-    for id in expired_ids {
-        let _ignore = buf.swap_remove(&id);
-    }
+    buf.retain(|&ProposeId(client_id, _), _| lease_mamanger.read().check_alive(client_id));
 }
 
 #[cfg(test)]
