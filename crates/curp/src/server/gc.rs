@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use indexmap::IndexMap;
 use utils::task_manager::Listener;
 
 use crate::{cmd::Command, rpc::ProposeId, server::cmd_board::CmdBoardRef};
@@ -23,24 +24,23 @@ pub(super) async fn gc_cmd_board<C: Command>(
             _ = shutdown_listener.wait() => break,
         }
         let mut board = cmd_board.write();
-        let expired_er_ids: Vec<_> = board
-            .er_buffer
-            .keys()
-            .copied()
-            .filter(|ProposeId(client_id, _)| !lease_mamanger.read().check_alive(*client_id))
-            .collect();
-        for id in expired_er_ids {
-            let _ignore = board.er_buffer.swap_remove(&id);
-        }
-        let expired_asr_ids: Vec<_> = board
-            .asr_buffer
-            .keys()
-            .copied()
-            .filter(|ProposeId(client_id, _)| !lease_mamanger.read().check_alive(*client_id))
-            .collect();
-        for id in expired_asr_ids {
-            let _ignore = board.asr_buffer.swap_remove(&id);
-        }
+        remove_expired::<C::ER, C::Error>(&lease_mamanger, &mut board.er_buffer);
+        remove_expired::<C::ASR, C::Error>(&lease_mamanger, &mut board.asr_buffer);
+    }
+}
+
+/// Remove expired ids
+fn remove_expired<R, E>(
+    lease_mamanger: &LeaseManagerRef,
+    buf: &mut IndexMap<ProposeId, Result<R, E>>,
+) {
+    let expired_ids: Vec<_> = buf
+        .keys()
+        .copied()
+        .filter(|&ProposeId(client_id, _)| !lease_mamanger.read().check_alive(client_id))
+        .collect();
+    for id in expired_ids {
+        let _ignore = buf.swap_remove(&id);
     }
 }
 
