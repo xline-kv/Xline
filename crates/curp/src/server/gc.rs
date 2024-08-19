@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use indexmap::IndexMap;
 use utils::task_manager::Listener;
 
 use crate::{cmd::Command, rpc::ProposeId, server::cmd_board::CmdBoardRef};
