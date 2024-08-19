@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use curp_test_utils::test_cmd::TestCommand;
+use curp_test_utils::test_cmd::{TestCommand, TestCommandResult};
 use futures::{future::BoxFuture, Stream};
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
@@ -25,9 +25,9 @@ use crate::{
         connect::{ConnectApi, MockConnectApi},
         CurpError, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
         FetchReadStateResponse, Member, MoveLeaderRequest, MoveLeaderResponse, OpResponse,
-        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, PublishRequest,
-        PublishResponse, ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest,
-        ShutdownResponse,
+        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
+        PublishRequest, PublishResponse, ReadIndexResponse, RecordRequest, RecordResponse,
+        ResponseOp, ShutdownRequest, ShutdownResponse, SyncedResponse,
     },
 };
 
@@ -259,6 +259,19 @@ async fn test_unary_fetch_clusters_linearizable_failed() {
     let res = unary.fetch_cluster(true).await.unwrap_err();
     // only server(0, 1)'s responses are valid, less than majority quorum(3), got a mocked RpcTransport to retry
     assert_eq!(res, CurpError::RpcTransport(()));
+}
+
+fn build_propose_response(conflict: bool) -> OpResponse {
+    let resp = ResponseOp::Propose(ProposeResponse::new_result::<TestCommand>(
+        &Ok(TestCommandResult::default()),
+        conflict,
+    ));
+    OpResponse { op: Some(resp) }
+}
+
+fn build_synced_response() -> OpResponse {
+    let resp = ResponseOp::Synced(SyncedResponse::new_result::<TestCommand>(&Ok(1.into())));
+    OpResponse { op: Some(resp) }
 }
 
 // TODO: rewrite this tests
