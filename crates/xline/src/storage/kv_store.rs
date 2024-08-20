@@ -149,11 +149,9 @@ impl KvStoreInner {
 
     /// Get previous `KeyValue` of a `KeyValue`
     pub(crate) fn get_prev_kv(&self, kv: &KeyValue) -> Option<KeyValue> {
-        let txn_db = self.db.transaction();
-        let index = self.index.state();
         Self::get_range(
-            &txn_db,
-            &index,
+            self.db.as_ref(),
+            self.index.as_ref(),
             &kv.key,
             &[],
             kv.mod_revision.overflow_sub(1),
@@ -168,11 +166,10 @@ impl KvStoreInner {
         key_range: KeyRange,
         revision: i64,
     ) -> Result<Vec<Event>, ExecuteError> {
-        let txn = self.db.transaction();
         let revisions =
             self.index
                 .get_from_rev(key_range.range_start(), key_range.range_end(), revision);
-        let events = Self::get_values(&txn, &revisions)?
+        let events = Self::get_values(self.db.as_ref(), &revisions)?
             .into_iter()
             .map(|kv| {
                 // Delete
