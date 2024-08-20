@@ -295,10 +295,11 @@ impl CommandExecutor {
     }
 
     /// After sync other type of commands
-    fn after_sync_others<T>(
+    fn after_sync_others<T, I>(
         &self,
         wrapper: &RequestWrapper,
         txn_db: &T,
+        index: &I,
         general_revision: &RevisionNumberGeneratorState<'_>,
         auth_revision: &RevisionNumberGeneratorState<'_>,
         to_execute: bool,
@@ -311,6 +312,7 @@ impl CommandExecutor {
     >
     where
         T: XlineStorageOps + TransactionApi,
+        I: IndexOperate,
     {
         let er = to_execute
             .then(|| match wrapper.backend() {
@@ -323,7 +325,10 @@ impl CommandExecutor {
 
         let (asr, wr_ops) = match wrapper.backend() {
             RequestBackend::Auth => self.auth_storage.after_sync(wrapper, auth_revision)?,
-            RequestBackend::Lease => self.lease_storage.after_sync(wrapper, general_revision)?,
+            RequestBackend::Lease => {
+                self.lease_storage
+                    .after_sync(wrapper, general_revision, txn_db, index)?
+            }
             RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, general_revision),
             RequestBackend::Kv => unreachable!("Should not sync kv commands"),
         };
@@ -473,6 +478,7 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
                     .after_sync_others(
                         wrapper,
                         &txn_db,
+                        &index_state,
                         &general_revision_state,
                         &auth_revision_state,
                         to_execute,
