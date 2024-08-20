@@ -16,6 +16,7 @@ use std::{
     time::Duration,
 };
 
+use clippy_utilities::OverflowArithmetic;
 use engine::TransactionApi;
 use log::debug;
 use parking_lot::RwLock;
@@ -111,14 +112,15 @@ impl LeaseStore {
         T: XlineStorageOps + TransactionApi,
         I: IndexOperate,
     {
-        let revision = if request.skip_lease_revision() {
-            revision_gen.get()
-        } else {
+        let next_revision = revision_gen.get().overflow_add(1);
+        let updated = self.sync_request(request, next_revision, txn_db, index)?;
+        let rev = if updated {
             revision_gen.next()
+        } else {
+            revision_gen.get()
         };
         // TODO: return only a `SyncResponse`
-        self.sync_request(request, revision, txn_db, index)
-            .map(|rev| (SyncResponse::new(rev), vec![]))
+        Ok((SyncResponse::new(rev), vec![]))
     }
 
     /// Get lease by id
@@ -288,27 +290,29 @@ impl LeaseStore {
         revision: i64,
         txn_db: &T,
         index: &I,
-    ) -> Result<i64, ExecuteError>
+    ) -> Result<bool, ExecuteError>
     where
         T: XlineStorageOps + TransactionApi,
         I: IndexOperate,
     {
         #[allow(clippy::wildcard_enum_match_arm)]
-        match *wrapper {
+        let updated = match *wrapper {
             RequestWrapper::LeaseGrantRequest(ref req) => {
                 debug!("Sync LeaseGrantRequest {:?}", req);
                 self.sync_lease_grant_request(req, txn_db)?;
+                false
             }
             RequestWrapper::LeaseRevokeRequest(ref req) => {
                 debug!("Sync LeaseRevokeRequest {:?}", req);
-                self.sync_lease_revoke_request(req, revision, txn_db, index)?;
+                self.sync_lease_revoke_request(req, revision, txn_db, index)?
             }
             RequestWrapper::LeaseLeasesRequest(ref req) => {
                 debug!("Sync LeaseLeasesRequest {:?}", req);
+                false
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
-        Ok(revision)
+        Ok(updated)
     }
 
     /// Sync `LeaseGrantRequest`
@@ -344,7 +348,7 @@ impl LeaseStore {
         revision: i64,
         txn_db: &T,
         index: &I,
-    ) -> Result<(), ExecuteError>
+    ) -> Result<bool, ExecuteError>
     where
         T: XlineStorageOps + TransactionApi,
         I: IndexOperate,
@@ -359,7 +363,7 @@ impl LeaseStore {
 
         if del_keys.is_empty() {
             let _ignore = self.lease_collection.revoke(req.id);
-            return Ok(());
+            return Ok(false);
         }
 
         for (key, mut sub_revision) in del_keys.iter().zip(0..) {
@@ -376,7 +380,7 @@ impl LeaseStore {
             "Failed to send updates to KV watcher"
         );
 
-        Ok(())
+        Ok(true)
     }
 }
 
