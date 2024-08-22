@@ -188,8 +188,6 @@ pub struct ServerTlsConfig;
 pub mod barrier;
 /// configuration
 pub mod config;
-/// Interval tree implementation
-pub mod interval_map;
 /// utils for metrics
 pub mod metrics;
 /// utils of `parking_lot` lock
@@ -211,6 +209,8 @@ pub mod tokio_lock;
 pub mod tracing;
 
 use ::tracing::debug;
+/// Interval tree implementation
+pub use interval_map;
 pub use parser::*;
 use pbkdf2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
