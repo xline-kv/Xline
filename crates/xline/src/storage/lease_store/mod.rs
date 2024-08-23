@@ -16,10 +16,11 @@ use std::{
     time::Duration,
 };
 
+use clippy_utilities::OverflowArithmetic;
+use engine::TransactionApi;
 use log::debug;
 use parking_lot::RwLock;
 use prost::Message;
-use tokio::sync::mpsc;
 use utils::table_names::LEASE_TABLE;
 use xlineapi::{
     command::{CommandResponse, SyncResponse},
@@ -29,10 +30,12 @@ use xlineapi::{
 pub(crate) use self::{lease::Lease, lease_collection::LeaseCollection};
 use super::{
     db::{WriteOp, DB},
-    index::Index,
+    index::{Index, IndexOperate},
+    storage_api::XlineStorageOps,
 };
 use crate::{
     header_gen::HeaderGenerator,
+    revision_number::RevisionNumberGeneratorState,
     rpc::{
         Event, LeaseGrantRequest, LeaseGrantResponse, LeaseLeasesRequest, LeaseLeasesResponse,
         LeaseRevokeRequest, LeaseRevokeResponse, LeaseStatus, PbLease, RequestWrapper,
@@ -51,12 +54,13 @@ pub(crate) struct LeaseStore {
     lease_collection: Arc<LeaseCollection>,
     /// Db to store lease
     db: Arc<DB>,
+    #[allow(unused)] // used in tests
     /// Key to revision index
     index: Arc<Index>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// KV update sender
-    kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
+    kv_update_tx: flume::Sender<(i64, Vec<Event>)>,
     /// Primary flag
     is_primary: AtomicBool,
     /// cache unsynced lease id
@@ -72,7 +76,7 @@ impl LeaseStore {
         header_gen: Arc<HeaderGenerator>,
         db: Arc<DB>,
         index: Arc<Index>,
-        kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
+        kv_update_tx: flume::Sender<(i64, Vec<Event>)>,
         is_leader: bool,
     ) -> Self {
         Self {
@@ -97,14 +101,26 @@ impl LeaseStore {
     }
 
     /// sync a lease request
-    pub(crate) async fn after_sync(
+    pub(crate) fn after_sync<T, I>(
         &self,
         request: &RequestWrapper,
-        revision: i64,
-    ) -> Result<(SyncResponse, Vec<WriteOp>), ExecuteError> {
-        self.sync_request(request, revision)
-            .await
-            .map(|(rev, ops)| (SyncResponse::new(rev), ops))
+        revision_gen: &RevisionNumberGeneratorState<'_>,
+        txn_db: &T,
+        index: &I,
+    ) -> Result<(SyncResponse, Vec<WriteOp>), ExecuteError>
+    where
+        T: XlineStorageOps + TransactionApi,
+        I: IndexOperate,
+    {
+        let next_revision = revision_gen.get().overflow_add(1);
+        let updated = self.sync_request(request, next_revision, txn_db, index)?;
+        let rev = if updated {
+            revision_gen.next()
+        } else {
+            revision_gen.get()
+        };
+        // TODO: return only a `SyncResponse`
+        Ok((SyncResponse::new(rev), vec![]))
     }
 
     /// Get lease by id
@@ -268,36 +284,47 @@ impl LeaseStore {
     }
 
     /// Sync `RequestWithToken`
-    async fn sync_request(
+    fn sync_request<T, I>(
         &self,
         wrapper: &RequestWrapper,
         revision: i64,
-    ) -> Result<(i64, Vec<WriteOp>), ExecuteError> {
+        txn_db: &T,
+        index: &I,
+    ) -> Result<bool, ExecuteError>
+    where
+        T: XlineStorageOps + TransactionApi,
+        I: IndexOperate,
+    {
         #[allow(clippy::wildcard_enum_match_arm)]
-        let ops = match *wrapper {
+        let updated = match *wrapper {
             RequestWrapper::LeaseGrantRequest(ref req) => {
                 debug!("Sync LeaseGrantRequest {:?}", req);
-                self.sync_lease_grant_request(req)
+                self.sync_lease_grant_request(req, txn_db)?;
+                false
             }
             RequestWrapper::LeaseRevokeRequest(ref req) => {
                 debug!("Sync LeaseRevokeRequest {:?}", req);
-                self.sync_lease_revoke_request(req, revision).await?
+                self.sync_lease_revoke_request(req, revision, txn_db, index)?
             }
             RequestWrapper::LeaseLeasesRequest(ref req) => {
                 debug!("Sync LeaseLeasesRequest {:?}", req);
-                vec![]
+                false
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
-        Ok((revision, ops))
+        Ok(updated)
     }
 
     /// Sync `LeaseGrantRequest`
-    fn sync_lease_grant_request(&self, req: &LeaseGrantRequest) -> Vec<WriteOp> {
+    fn sync_lease_grant_request<T: XlineStorageOps>(
+        &self,
+        req: &LeaseGrantRequest,
+        txn_db: &T,
+    ) -> Result<(), ExecuteError> {
         let lease = self
             .lease_collection
             .grant(req.id, req.ttl, self.is_primary());
-        vec![WriteOp::PutLease(lease)]
+        txn_db.write_op(WriteOp::PutLease(lease))
     }
 
     /// Get all `PbLease`
@@ -315,14 +342,20 @@ impl LeaseStore {
     }
 
     /// Sync `LeaseRevokeRequest`
-    async fn sync_lease_revoke_request(
+    #[allow(clippy::trivially_copy_pass_by_ref)] // we can only get a reference in the caller
+    fn sync_lease_revoke_request<T, I>(
         &self,
         req: &LeaseRevokeRequest,
         revision: i64,
-    ) -> Result<Vec<WriteOp>, ExecuteError> {
-        let mut ops = Vec::new();
+        txn_db: &T,
+        index: &I,
+    ) -> Result<bool, ExecuteError>
+    where
+        T: XlineStorageOps + TransactionApi,
+        I: IndexOperate,
+    {
         let mut updates = Vec::new();
-        ops.push(WriteOp::DeleteLease(req.id));
+        txn_db.write_op(WriteOp::DeleteLease(req.id))?;
 
         let del_keys = match self.lease_collection.look_up(req.id) {
             Some(l) => l.keys(),
@@ -331,28 +364,24 @@ impl LeaseStore {
 
         if del_keys.is_empty() {
             let _ignore = self.lease_collection.revoke(req.id);
-            return Ok(Vec::new());
+            return Ok(false);
         }
 
-        for (key, sub_revision) in del_keys.iter().zip(0..) {
-            let (mut del_ops, mut del_event) = KvStore::delete_keys(
-                &self.index,
-                &self.lease_collection,
-                key,
-                &[],
-                revision,
-                sub_revision,
-            );
-            ops.append(&mut del_ops);
+        for (key, mut sub_revision) in del_keys.iter().zip(0..) {
+            let deleted =
+                KvStore::delete_keys(txn_db, index, key, &[], revision, &mut sub_revision)?;
+            KvStore::detach_leases(&deleted, &self.lease_collection);
+            let mut del_event = KvStore::new_deletion_events(revision, deleted);
             updates.append(&mut del_event);
         }
 
         let _ignore = self.lease_collection.revoke(req.id);
         assert!(
-            self.kv_update_tx.send((revision, updates)).await.is_ok(),
+            self.kv_update_tx.send((revision, updates)).is_ok(),
             "Failed to send updates to KV watcher"
         );
-        Ok(ops)
+
+        Ok(true)
     }
 }
 
@@ -364,17 +393,20 @@ mod test {
     use utils::config::EngineConfig;
 
     use super::*;
-    use crate::storage::{db::DB, storage_api::XlineStorageOps};
+    use crate::{
+        revision_number::RevisionNumberGenerator,
+        storage::{db::DB, storage_api::XlineStorageOps},
+    };
 
     #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
         let db = DB::open(&EngineConfig::Memory)?;
-        let lease_store = init_store(db);
-        let revision_gen = lease_store.header_gen.general_revision_arc();
+        let (lease_store, rev_gen) = init_store(db);
+        let rev_gen_state = rev_gen.state();
 
         let req1 = RequestWrapper::from(LeaseGrantRequest { ttl: 10, id: 1 });
-        let _ignore1 = exe_and_sync_req(&lease_store, &req1, -1).await?;
+        let _ignore1 = exe_and_sync_req(&lease_store, &req1, &rev_gen_state)?;
 
         let lo = lease_store.look_up(1).unwrap();
         assert_eq!(lo.id(), 1);
@@ -388,7 +420,7 @@ mod test {
         lease_store.lease_collection.detach(1, "key".as_bytes())?;
 
         let req2 = RequestWrapper::from(LeaseRevokeRequest { id: 1 });
-        let _ignore2 = exe_and_sync_req(&lease_store, &req2, revision_gen.next()).await?;
+        let _ignore2 = exe_and_sync_req(&lease_store, &req2, &rev_gen_state)?;
         assert!(lease_store.look_up(1).is_none());
         assert!(lease_store.leases().is_empty());
 
@@ -396,9 +428,9 @@ mod test {
         let req4 = RequestWrapper::from(LeaseGrantRequest { ttl: 10, id: 4 });
         let req5 = RequestWrapper::from(LeaseRevokeRequest { id: 3 });
         let req6 = RequestWrapper::from(LeaseLeasesRequest {});
-        let _ignore3 = exe_and_sync_req(&lease_store, &req3, -1).await?;
-        let _ignore4 = exe_and_sync_req(&lease_store, &req4, -1).await?;
-        let resp_1 = exe_and_sync_req(&lease_store, &req6, -1).await?;
+        let _ignore3 = exe_and_sync_req(&lease_store, &req3, &rev_gen_state)?;
+        let _ignore4 = exe_and_sync_req(&lease_store, &req4, &rev_gen_state)?;
+        let resp_1 = exe_and_sync_req(&lease_store, &req6, &rev_gen_state)?;
 
         let ResponseWrapper::LeaseLeasesResponse(leases_1) = resp_1 else {
             panic!("wrong response type: {resp_1:?}");
@@ -406,8 +438,8 @@ mod test {
         assert_eq!(leases_1.leases[0].id, 3);
         assert_eq!(leases_1.leases[1].id, 4);
 
-        let _ignore5 = exe_and_sync_req(&lease_store, &req5, -1).await?;
-        let resp_2 = exe_and_sync_req(&lease_store, &req6, -1).await?;
+        let _ignore5 = exe_and_sync_req(&lease_store, &req5, &rev_gen_state)?;
+        let resp_2 = exe_and_sync_req(&lease_store, &req6, &rev_gen_state)?;
         let ResponseWrapper::LeaseLeasesResponse(leases_2) = resp_2 else {
             panic!("wrong response type: {resp_2:?}");
         };
@@ -419,7 +451,10 @@ mod test {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_lease_sync() -> Result<(), Box<dyn Error>> {
         let db = DB::open(&EngineConfig::Memory)?;
-        let lease_store = init_store(db);
+        let txn = db.transaction();
+        let index = Index::new();
+        let (lease_store, rev_gen) = init_store(Arc::clone(&db));
+        let rev_gen_state = rev_gen.state();
         let wait_duration = Duration::from_millis(1);
 
         let req1 = RequestWrapper::from(LeaseGrantRequest { ttl: 10, id: 1 });
@@ -432,7 +467,7 @@ mod test {
             "the future should block until the lease is synced"
         );
 
-        let (_ignore, ops) = lease_store.after_sync(&req1, -1).await?;
+        let (_ignore, ops) = lease_store.after_sync(&req1, &rev_gen_state, &txn, &index)?;
         lease_store.db.write_ops(ops)?;
         lease_store.mark_lease_synced(&req1);
 
@@ -453,7 +488,7 @@ mod test {
             "the future should block until the lease is synced"
         );
 
-        let (_ignore, ops) = lease_store.after_sync(&req2, -1).await?;
+        let (_ignore, ops) = lease_store.after_sync(&req2, &rev_gen_state, &txn, &index)?;
         lease_store.db.write_ops(ops)?;
         lease_store.mark_lease_synced(&req2);
 
@@ -471,13 +506,14 @@ mod test {
     #[abort_on_panic]
     async fn test_recover() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
-        let store = init_store(Arc::clone(&db));
+        let (store, rev_gen) = init_store(Arc::clone(&db));
+        let rev_gen_state = rev_gen.state();
 
         let req1 = RequestWrapper::from(LeaseGrantRequest { ttl: 10, id: 1 });
-        let _ignore1 = exe_and_sync_req(&store, &req1, -1).await?;
+        let _ignore1 = exe_and_sync_req(&store, &req1, &rev_gen_state)?;
         store.lease_collection.attach(1, "key".into())?;
 
-        let new_store = init_store(db);
+        let (new_store, _) = init_store(db);
         assert!(new_store.look_up(1).is_none());
         new_store.recover()?;
 
@@ -492,22 +528,30 @@ mod test {
         Ok(())
     }
 
-    fn init_store(db: Arc<DB>) -> LeaseStore {
+    fn init_store(db: Arc<DB>) -> (LeaseStore, RevisionNumberGenerator) {
         let lease_collection = Arc::new(LeaseCollection::new(0));
-        let (kv_update_tx, _) = mpsc::channel(1);
+        let (kv_update_tx, _) = flume::bounded(1);
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
-        LeaseStore::new(lease_collection, header_gen, db, index, kv_update_tx, true)
+        (
+            LeaseStore::new(lease_collection, header_gen, db, index, kv_update_tx, true),
+            RevisionNumberGenerator::new(1),
+        )
     }
 
-    async fn exe_and_sync_req(
+    fn exe_and_sync_req(
         ls: &LeaseStore,
         req: &RequestWrapper,
-        revision: i64,
+        rev_gen: &RevisionNumberGeneratorState<'_>,
     ) -> Result<ResponseWrapper, ExecuteError> {
         let cmd_res = ls.execute(req)?;
-        let (_ignore, ops) = ls.after_sync(req, revision).await?;
-        ls.db.write_ops(ops)?;
+        let txn = ls.db.transaction();
+        let index = ls.index.state();
+        let (_ignore, _ops) = ls.after_sync(req, rev_gen, &txn, &index)?;
+        txn.commit()
+            .map_err(|e| ExecuteError::DbError(e.to_string()))?;
+        index.commit();
+        rev_gen.commit();
         Ok(cmd_res.into_inner())
     }
 }

@@ -34,11 +34,15 @@ use crate::{
         FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
         InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
         MoveLeaderResponse, ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest,
-        ProposeResponse, Protocol, PublishRequest, PublishResponse, ShutdownRequest,
-        ShutdownResponse, TriggerShutdownRequest, TryBecomeLeaderNowRequest, VoteRequest,
-        VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        Protocol, PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse,
+        TriggerShutdownRequest, TryBecomeLeaderNowRequest, VoteRequest, VoteResponse,
     },
     snapshot::Snapshot,
+};
+
+use super::{
+    proto::commandpb::{ReadIndexRequest, ReadIndexResponse},
+    OpResponse, RecordRequest, RecordResponse,
 };
 
 /// Install snapshot chunk size: 64KB
@@ -158,12 +162,28 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
     async fn update_addrs(&self, addrs: Vec<String>) -> Result<(), tonic::transport::Error>;
 
     /// Send `ProposeRequest`
-    async fn propose(
+    async fn propose_stream(
         &self,
         request: ProposeRequest,
         token: Option<String>,
         timeout: Duration,
-    ) -> Result<tonic::Response<ProposeResponse>, CurpError>;
+    ) -> Result<
+        tonic::Response<Box<dyn Stream<Item = Result<OpResponse, tonic::Status>> + Send>>,
+        CurpError,
+    >;
+
+    /// Send `RecordRequest`
+    async fn record(
+        &self,
+        request: RecordRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<RecordResponse>, CurpError>;
+
+    /// Send `ReadIndexRequest`
+    async fn read_index(
+        &self,
+        timeout: Duration,
+    ) -> Result<tonic::Response<ReadIndexResponse>, CurpError>;
 
     /// Send `ProposeRequest`
     async fn propose_conf_change(
@@ -178,13 +198,6 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         request: PublishRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<PublishResponse>, CurpError>;
-
-    /// Send `WaitSyncedRequest`
-    async fn wait_synced(
-        &self,
-        request: WaitSyncedRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, CurpError>;
 
     /// Send `ShutdownRequest`
     async fn shutdown(
@@ -369,6 +382,15 @@ impl<C> Connect<C> {
     }
 }
 
+/// Sets timeout for a client connection
+macro_rules! with_timeout {
+    ($timeout:expr, $client_op:expr) => {
+        tokio::time::timeout($timeout, $client_op)
+            .await
+            .map_err(|_| tonic::Status::deadline_exceeded("timeout"))?
+    };
+}
+
 #[async_trait]
 impl ConnectApi for Connect<ProtocolClient<Channel>> {
     /// Get server id
@@ -382,21 +404,46 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     }
 
     /// Send `ProposeRequest`
-    #[instrument(skip(self), name = "client propose")]
-    async fn propose(
+    async fn propose_stream(
         &self,
         request: ProposeRequest,
         token: Option<String>,
         timeout: Duration,
-    ) -> Result<tonic::Response<ProposeResponse>, CurpError> {
+    ) -> Result<
+        tonic::Response<Box<dyn Stream<Item = Result<OpResponse, tonic::Status>> + Send>>,
+        CurpError,
+    > {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        req.metadata_mut().inject_current();
         if let Some(token) = token {
             _ = req.metadata_mut().insert("token", token.parse()?);
         }
-        client.propose(req).await.map_err(Into::into)
+        let resp = with_timeout!(timeout, client.propose_stream(req))?.into_inner();
+        Ok(tonic::Response::new(Box::new(resp)))
+
+        // let resp = client.propose_stream(req).await?.map(Box::new);
+        // Ok(resp)
+    }
+
+    /// Send `RecordRequest`
+    async fn record(
+        &self,
+        request: RecordRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<RecordResponse>, CurpError> {
+        let mut client = self.rpc_connect.clone();
+        let req = tonic::Request::new(request);
+        with_timeout!(timeout, client.record(req)).map_err(Into::into)
+    }
+
+    /// Send `ReadIndexRequest`
+    async fn read_index(
+        &self,
+        timeout: Duration,
+    ) -> Result<tonic::Response<ReadIndexResponse>, CurpError> {
+        let mut client = self.rpc_connect.clone();
+        let req = tonic::Request::new(ReadIndexRequest {});
+        with_timeout!(timeout, client.read_index(req)).map_err(Into::into)
     }
 
     /// Send `ShutdownRequest`
@@ -408,9 +455,8 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     ) -> Result<tonic::Response<ShutdownResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.shutdown(req).await.map_err(Into::into)
+        with_timeout!(timeout, client.shutdown(req)).map_err(Into::into)
     }
 
     /// Send `ProposeRequest`
@@ -422,9 +468,8 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     ) -> Result<tonic::Response<ProposeConfChangeResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.propose_conf_change(req).await.map_err(Into::into)
+        with_timeout!(timeout, client.propose_conf_change(req)).map_err(Into::into)
     }
 
     /// Send `PublishRequest`
@@ -436,23 +481,8 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     ) -> Result<tonic::Response<PublishResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.publish(req).await.map_err(Into::into)
-    }
-
-    /// Send `WaitSyncedRequest`
-    #[instrument(skip(self), name = "client propose")]
-    async fn wait_synced(
-        &self,
-        request: WaitSyncedRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        req.metadata_mut().inject_current();
-        client.wait_synced(req).await.map_err(Into::into)
+        with_timeout!(timeout, client.publish(req)).map_err(Into::into)
     }
 
     /// Send `FetchClusterRequest`
@@ -462,9 +492,8 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         timeout: Duration,
     ) -> Result<tonic::Response<FetchClusterResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        client.fetch_cluster(req).await.map_err(Into::into)
+        let req = tonic::Request::new(request);
+        with_timeout!(timeout, client.fetch_cluster(req)).map_err(Into::into)
     }
 
     /// Send `FetchReadStateRequest`
@@ -474,9 +503,8 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         timeout: Duration,
     ) -> Result<tonic::Response<FetchReadStateResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        client.fetch_read_state(req).await.map_err(Into::into)
+        let req = tonic::Request::new(request);
+        with_timeout!(timeout, client.fetch_read_state(req)).map_err(Into::into)
     }
 
     /// Send `MoveLeaderRequest`
@@ -486,9 +514,8 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         timeout: Duration,
     ) -> Result<tonic::Response<MoveLeaderResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        client.move_leader(req).await.map_err(Into::into)
+        let req = tonic::Request::new(request);
+        with_timeout!(timeout, client.move_leader(req)).map_err(Into::into)
     }
 
     /// Keep send lease keep alive to server and mutate the client id
@@ -533,9 +560,8 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         let start_at = self.before_rpc::<AppendEntriesRequest>();
 
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        let result = client.append_entries(req).await;
+        let req = tonic::Request::new(request);
+        let result = with_timeout!(timeout, client.append_entries(req));
 
         #[cfg(feature = "client-metrics")]
         self.after_rpc(start_at, &result);
@@ -553,9 +579,8 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         let start_at = self.before_rpc::<VoteRequest>();
 
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        let result = client.vote(req).await;
+        let req = tonic::Request::new(request);
+        let result = with_timeout!(timeout, client.vote(req));
 
         #[cfg(feature = "client-metrics")]
         self.after_rpc(start_at, &result);
@@ -601,9 +626,8 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         let start_at = self.before_rpc::<TryBecomeLeaderNowRequest>();
 
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(TryBecomeLeaderNowRequest::default());
-        req.set_timeout(timeout);
-        let result = client.try_become_leader_now(req).await;
+        let req = tonic::Request::new(TryBecomeLeaderNowRequest::default());
+        let result = with_timeout!(timeout, client.try_become_leader_now(req));
 
         #[cfg(feature = "client-metrics")]
         self.after_rpc(start_at, &result);
@@ -675,19 +699,47 @@ where
     }
 
     /// Send `ProposeRequest`
-    async fn propose(
+    #[instrument(skip(self), name = "client propose stream")]
+    async fn propose_stream(
         &self,
         request: ProposeRequest,
         token: Option<String>,
         _timeout: Duration,
-    ) -> Result<tonic::Response<ProposeResponse>, CurpError> {
+    ) -> Result<
+        tonic::Response<Box<dyn Stream<Item = Result<OpResponse, tonic::Status>> + Send>>,
+        CurpError,
+    > {
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         if let Some(token) = token {
             _ = req.metadata_mut().insert("token", token.parse()?);
         }
-        self.server.propose(req).await.map_err(Into::into)
+        let resp = self.server.propose_stream(req).await?.into_inner();
+        Ok(tonic::Response::new(Box::new(resp)))
+    }
+
+    /// Send `RecordRequest`
+    #[instrument(skip(self), name = "client record")]
+    async fn record(
+        &self,
+        request: RecordRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<RecordResponse>, CurpError> {
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
+        req.metadata_mut().inject_current();
+        self.server.record(req).await.map_err(Into::into)
+    }
+
+    async fn read_index(
+        &self,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<ReadIndexResponse>, CurpError> {
+        let mut req = tonic::Request::new(ReadIndexRequest {});
+        req.metadata_mut().inject_bypassed();
+        req.metadata_mut().inject_current();
+        self.server.read_index(req).await.map_err(Into::into)
     }
 
     /// Send `PublishRequest`
@@ -715,18 +767,6 @@ where
             .propose_conf_change(req)
             .await
             .map_err(Into::into)
-    }
-
-    /// Send `WaitSyncedRequest`
-    async fn wait_synced(
-        &self,
-        request: WaitSyncedRequest,
-        _timeout: Duration,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, CurpError> {
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_bypassed();
-        req.metadata_mut().inject_current();
-        self.server.wait_synced(req).await.map_err(Into::into)
     }
 
     /// Send `ShutdownRequest`

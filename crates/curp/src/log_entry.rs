@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     members::ServerId,
-    rpc::{ConfChange, PoolEntryInner, ProposeId, PublishRequest},
+    rpc::{ConfChange, ProposeId, PublishRequest},
 };
 
 /// Log entry
@@ -53,15 +53,6 @@ impl<C> From<Vec<ConfChange>> for EntryData<C> {
     }
 }
 
-impl<C> From<PoolEntryInner<C>> for EntryData<C> {
-    fn from(value: PoolEntryInner<C>) -> Self {
-        match value {
-            PoolEntryInner::Command(cmd) => EntryData::Command(cmd),
-            PoolEntryInner::ConfChange(conf_change) => EntryData::ConfChange(conf_change),
-        }
-    }
-}
-
 impl<C> From<PublishRequest> for EntryData<C> {
     fn from(value: PublishRequest) -> Self {
         EntryData::SetNodeState(value.node_id, value.name, value.client_urls)
@@ -90,6 +81,12 @@ where
     /// Get the inflight id of this log entry
     pub(super) fn inflight_id(&self) -> InflightId {
         propose_id_to_inflight_id(self.propose_id)
+    }
+}
+
+impl<C> AsRef<LogEntry<C>> for LogEntry<C> {
+    fn as_ref(&self) -> &LogEntry<C> {
+        self
     }
 }
 

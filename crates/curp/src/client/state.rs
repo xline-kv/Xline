@@ -2,10 +2,12 @@ use std::{
     cmp::Ordering,
     collections::{hash_map::Entry, HashMap, HashSet},
     sync::{atomic::AtomicU64, Arc},
+    time::Duration,
 };
 
 use event_listener::Event;
 use futures::{stream::FuturesUnordered, Future};
+use rand::seq::IteratorRandom;
 use tokio::sync::RwLock;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
@@ -18,7 +20,7 @@ use crate::{
     rpc::{
         self,
         connect::{BypassedConnect, ConnectApi},
-        CurpError, FetchClusterResponse, Protocol,
+        CurpError, FetchClusterRequest, FetchClusterResponse, Protocol,
     },
 };
 
@@ -127,6 +129,28 @@ impl State {
         }
     }
 
+    /// Choose a random server to try to refresh the state
+    /// Use when the current leader is missing.
+    pub(crate) async fn try_refresh_state(&self) -> Result<(), CurpError> {
+        /// The timeout for refreshing the state
+        const REFRESH_TIMEOUT: Duration = Duration::from_secs(1);
+
+        let rand_conn = {
+            let state = self.mutable.read().await;
+            state
+                .connects
+                .values()
+                .choose(&mut rand::thread_rng())
+                .map(Arc::clone)
+                .ok_or_else(CurpError::wrong_cluster_version)?
+        };
+        let resp = rand_conn
+            .fetch_cluster(FetchClusterRequest::default(), REFRESH_TIMEOUT)
+            .await?;
+        self.check_and_update(&resp.into_inner()).await?;
+        Ok(())
+    }
+
     /// Get the local server connection
     pub(super) async fn local_connect(&self) -> Option<Arc<dyn ConnectApi>> {
         let id = self.immutable.local_server?;
@@ -146,6 +170,11 @@ impl State {
     /// Get the cached leader id
     pub(super) async fn leader_id(&self) -> Option<ServerId> {
         self.mutable.read().await.leader
+    }
+
+    /// Get term of the cluster
+    pub(super) async fn term(&self) -> u64 {
+        self.mutable.read().await.term
     }
 
     /// Take an async function and map to the dedicated server, return `Err(CurpError:WrongClusterVersion(()))`
@@ -170,6 +199,11 @@ impl State {
         f(conn).await
     }
 
+    /// Returns the number of members in the cluster
+    pub(super) async fn connects_len(&self) -> usize {
+        self.mutable.read().await.connects.len()
+    }
+
     /// Take an async function and map to all server, returning `FuturesUnordered<F>`
     pub(super) async fn for_each_server<R, F: Future<Output = R>>(
         &self,
@@ -180,6 +214,22 @@ impl State {
             .await
             .connects
             .values()
+            .map(Arc::clone)
+            .map(f)
+            .collect()
+    }
+
+    /// Take an async function and map to all server, returning `FuturesUnordered<F>`
+    pub(super) async fn for_each_follower<R, F: Future<Output = R>>(
+        &self,
+        leader_id: u64,
+        f: impl FnMut(Arc<dyn ConnectApi>) -> F,
+    ) -> FuturesUnordered<F> {
+        let mutable_r = self.mutable.read().await;
+        mutable_r
+            .connects
+            .iter()
+            .filter_map(|(id, conn)| (*id != leader_id).then_some(conn))
             .map(Arc::clone)
             .map(f)
             .collect()

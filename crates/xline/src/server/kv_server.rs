@@ -76,7 +76,7 @@ impl KvServer {
     fn do_serializable(&self, command: &Command) -> Result<Response, tonic::Status> {
         self.auth_storage
             .check_permission(command.request(), command.auth_info())?;
-        let cmd_res = self.kv_storage.execute(command.request())?;
+        let cmd_res = self.kv_storage.execute(command.request(), None)?;
         Ok(Self::parse_response_op(cmd_res.into_inner().into()))
     }
 
@@ -232,9 +232,9 @@ impl Kv for KvServer {
         }
     }
 
-    /// Compact compacts the event history in the etcd key-value store. The key-value
-    /// store should be periodically compacted or the event history will continue to grow
-    /// indefinitely.
+    /// Compact compacts the event history in the etcd key-value store. The
+    /// key-value store should be periodically compacted or the event
+    /// history will continue to grow indefinitely.
     #[instrument(skip_all)]
     async fn compact(
         &self,
@@ -258,7 +258,7 @@ impl Kv for KvServer {
         } else {
             Either::Right(async {})
         };
-        let (cmd_res, _sync_res) = self.client.propose(&cmd, None, !physical).await??;
+        let (cmd_res, _sync_res) = self.client.propose(&cmd, None, false).await??;
         let resp = cmd_res.into_inner();
         if timeout(self.compact_timeout, compact_physical_fut)
             .await

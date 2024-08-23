@@ -295,7 +295,10 @@ impl<C> FrameEncoder for DataFrame<'_, C>
 where
     C: Serialize,
 {
-    #[allow(clippy::arithmetic_side_effects)] // The integer shift is safe
+    #[allow(
+        clippy::arithmetic_side_effects,  // The integer shift is safe
+        clippy::indexing_slicing // The slicing is checked
+    )]
     fn encode(&self) -> Vec<u8> {
         match *self {
             DataFrame::Entry(ref entry) => {

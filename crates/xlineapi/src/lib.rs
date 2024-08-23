@@ -544,6 +544,11 @@ impl RequestWrapper {
     }
 
     /// Check whether the kv request or lease request should skip the revision or not
+    pub fn skip_lease_revision(&self) -> bool {
+        matches!(self, RequestWrapper::LeaseGrantRequest(_))
+    }
+
+    /// Check whether the kv request or lease request should skip the revision or not
     pub fn skip_general_revision(&self) -> bool {
         match self {
             RequestWrapper::RangeRequest(_)

@@ -5,7 +5,7 @@ use curp::client::ClientApi;
 use event_listener::Event;
 use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
-use tokio::{sync::mpsc::Receiver, time::sleep};
+use tokio::time::sleep;
 use utils::{
     config::AutoCompactConfig,
     task_manager::{tasks::TaskName, Listener, TaskManager},
@@ -98,13 +98,13 @@ pub(crate) async fn compact_bg_task(
     index: Arc<Index>,
     batch_limit: usize,
     interval: Duration,
-    mut compact_task_rx: Receiver<(i64, Option<Arc<Event>>)>,
+    compact_task_rx: flume::Receiver<(i64, Option<Arc<Event>>)>,
     shutdown_listener: Listener,
 ) {
     loop {
         let (revision, listener) = tokio::select! {
-            recv = compact_task_rx.recv() => {
-                let Some((revision, listener)) = recv else {
+            recv = compact_task_rx.recv_async() => {
+                let Ok((revision, listener)) = recv else {
                     return;
                 };
                 (revision, listener)

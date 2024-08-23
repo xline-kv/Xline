@@ -10,7 +10,7 @@ use std::{
 use clippy_utilities::OverflowArithmetic;
 use dashmap::DashMap;
 use tokio::{sync::Notify, task::JoinHandle};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use self::tasks::{TaskName, ALL_EDGES};
 
@@ -33,8 +33,6 @@ pub struct TaskManager {
 pub struct ClusterShutdownTracker {
     /// Cluster shutdown notify
     notify: Notify,
-    /// State of mpsc channel.
-    mpmc_channel_shutdown: AtomicBool,
     /// Count of sync follower tasks.
     sync_follower_task_count: AtomicU8,
     /// Shutdown Applied
@@ -48,18 +46,9 @@ impl ClusterShutdownTracker {
     pub fn new() -> Self {
         Self {
             notify: Notify::new(),
-            mpmc_channel_shutdown: AtomicBool::new(false),
             sync_follower_task_count: AtomicU8::new(0),
             leader_notified: AtomicBool::new(false),
         }
-    }
-
-    /// Mark mpmc channel shutdown
-    #[inline]
-    pub fn mark_mpmc_channel_shutdown(&self) {
-        self.mpmc_channel_shutdown.store(true, Ordering::Relaxed);
-        self.notify.notify_one();
-        debug!("mark mpmc channel shutdown");
     }
 
     /// Sync follower task count inc
@@ -93,10 +82,9 @@ impl ClusterShutdownTracker {
 
     /// Check if the cluster shutdown condition is met
     fn check(&self) -> bool {
-        let mpmc_channel_shutdown = self.mpmc_channel_shutdown.load(Ordering::Relaxed);
         let sync_follower_task_count = self.sync_follower_task_count.load(Ordering::Relaxed);
         let leader_notified = self.leader_notified.load(Ordering::Relaxed);
-        mpmc_channel_shutdown && sync_follower_task_count == 0 && leader_notified
+        sync_follower_task_count == 0 && leader_notified
     }
 }
 
@@ -189,9 +177,17 @@ impl TaskManager {
             };
             task.notifier.notify_waiters();
             for handle in task.handle.drain(..) {
-                handle
-                    .await
-                    .unwrap_or_else(|e| unreachable!("background task should not panic: {e}"));
+                // Directly abort the task if it's cancel safe
+                if task.name.cancel_safe() {
+                    handle.abort();
+                    if let Err(e) = handle.await {
+                        assert!(e.is_cancelled(), "background task should not panic: {e}");
+                    }
+                } else {
+                    handle
+                        .await
+                        .unwrap_or_else(|e| unreachable!("background task should not panic: {e}"));
+                }
             }
             for child in task.depend_by.drain(..) {
                 let Some(mut child_task) = tasks.get_mut(&child) else {
@@ -227,9 +223,9 @@ impl TaskManager {
         let _ig = tokio::spawn(async move {
             info!("cluster shutdown start");
             state.store(2, Ordering::Release);
-            for name in [TaskName::SyncFollower, TaskName::ConflictCheckedMpmc] {
-                _ = tasks.get(&name).map(|n| n.notifier.notify_waiters());
-            }
+            _ = tasks
+                .get(&TaskName::SyncFollower)
+                .map(|n| n.notifier.notify_waiters());
             loop {
                 if tracker.check() {
                     break;
@@ -254,6 +250,7 @@ impl TaskManager {
         for t in self.tasks.iter() {
             for h in &t.handle {
                 if !h.is_finished() {
+                    warn!("task: {:?} not finished", t.name);
                     return false;
                 }
             }
@@ -374,6 +371,14 @@ impl Listener {
         self.state()
     }
 
+    /// Checks whether self has shutdown.
+    #[inline]
+    #[must_use]
+    pub fn is_shutdown(&self) -> bool {
+        let state = self.state();
+        matches!(state, State::Shutdown)
+    }
+
     /// Get a sync follower guard
     #[must_use]
     #[inline]
@@ -382,12 +387,6 @@ impl Listener {
         SyncFollowerGuard {
             tracker: Arc::clone(&self.cluster_shutdown_tracker),
         }
-    }
-
-    /// Mark mpmc channel shutdown
-    #[inline]
-    pub fn mark_mpmc_channel_shutdown(&self) {
-        self.cluster_shutdown_tracker.mark_mpmc_channel_shutdown();
     }
 }
 
@@ -421,8 +420,13 @@ mod test {
         for name in TaskName::iter() {
             let record_tx = record_tx.clone();
             tm.spawn(name, move |listener| async move {
-                listener.wait().await;
-                record_tx.send(name).unwrap();
+                if name.cancel_safe() {
+                    record_tx.send(name).unwrap();
+                    listener.wait().await;
+                } else {
+                    listener.wait().await;
+                    record_tx.send(name).unwrap();
+                }
             });
         }
         drop(record_tx);

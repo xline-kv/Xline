@@ -54,7 +54,7 @@ impl XlineGroup {
                     vec!["0.0.0.0:2379".to_owned()],
                     vec![format!("192.168.1.{}:2379", i + 1)],
                     all.clone(),
-                    false,
+                    i == 0,
                     CurpConfig::default(),
                     ClientConfig::default(),
                     ServerTimeout::default(),

@@ -55,11 +55,7 @@ pub use commandpb::{
 
 /// `BOTTOM_TASKS` are tasks which not dependent on other tasks in the task group.
 /// `CurpGroup` uses `BOTTOM_TASKS` to detect whether the curp group is closed or not.
-const BOTTOM_TASKS: [TaskName; 3] = [
-    TaskName::WatchTask,
-    TaskName::ConfChange,
-    TaskName::LogPersist,
-];
+const BOTTOM_TASKS: [TaskName; 2] = [TaskName::WatchTask, TaskName::ConfChange];
 
 /// The default shutdown timeout used in `wait_for_targets_shutdown`
 pub(crate) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(7);
@@ -217,7 +213,7 @@ impl CurpGroup {
     }
 
     async fn run(
-        server: Arc<Rpc<TestCommand, TestRoleChange>>,
+        server: Arc<Rpc<TestCommand, TestCE, TestRoleChange>>,
         listener: TcpListener,
         shutdown_listener: Listener,
     ) -> Result<(), tonic::transport::Error> {
@@ -320,6 +316,10 @@ impl CurpGroup {
 
     pub fn get_node(&self, id: &ServerId) -> &CurpNode {
         &self.nodes[id]
+    }
+
+    pub fn get_node_mut(&mut self, id: &ServerId) -> &mut CurpNode {
+        self.nodes.get_mut(id).unwrap()
     }
 
     pub async fn new_client(&self) -> impl ClientApi<Error = tonic::Status, Cmd = TestCommand> {

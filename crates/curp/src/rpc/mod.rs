@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use curp_external_api::{
     cmd::{ConflictCheck, PbCodec, PbSerializeError},
+    conflict::EntryId,
     InflightId,
 };
 use prost::Message;
@@ -22,6 +23,7 @@ pub use self::proto::{
         curp_error::Err as CurpError, // easy for match
         curp_error::Redirect,
         fetch_read_state_response::{IdSet, ReadState},
+        op_response::Op as ResponseOp,
         propose_conf_change_request::{ConfChange, ConfChangeType},
         protocol_client,
         protocol_server::{Protocol, ProtocolServer},
@@ -34,6 +36,7 @@ pub use self::proto::{
         Member,
         MoveLeaderRequest,
         MoveLeaderResponse,
+        OpResponse,
         OptionalU64,
         ProposeConfChangeRequest,
         ProposeConfChangeResponse,
@@ -42,8 +45,13 @@ pub use self::proto::{
         ProposeResponse,
         PublishRequest,
         PublishResponse,
+        ReadIndexRequest,
+        ReadIndexResponse,
+        RecordRequest,
+        RecordResponse,
         ShutdownRequest,
         ShutdownResponse,
+        SyncedResponse,
         WaitSyncedRequest,
         WaitSyncedResponse,
     },
@@ -160,11 +168,21 @@ impl FetchClusterResponse {
 impl ProposeRequest {
     /// Create a new `Propose` request
     #[inline]
-    pub fn new<C: Command>(propose_id: ProposeId, cmd: &C, cluster_version: u64) -> Self {
+    pub fn new<C: Command>(
+        propose_id: ProposeId,
+        cmd: &C,
+        cluster_version: u64,
+        term: u64,
+        slow_path: bool,
+        first_incomplete: u64,
+    ) -> Self {
         Self {
             propose_id: Some(propose_id.into()),
             command: cmd.encode(),
             cluster_version,
+            term,
+            slow_path,
+            first_incomplete,
         }
     }
 
@@ -190,7 +208,7 @@ impl ProposeRequest {
 
 impl ProposeResponse {
     /// Create an ok propose response
-    pub(crate) fn new_result<C: Command>(result: &Result<C::ER, C::Error>) -> Self {
+    pub(crate) fn new_result<C: Command>(result: &Result<C::ER, C::Error>, conflict: bool) -> Self {
         let result = match *result {
             Ok(ref er) => Some(CmdResult {
                 result: Some(CmdResultInner::Ok(er.encode())),
@@ -199,12 +217,16 @@ impl ProposeResponse {
                 result: Some(CmdResultInner::Error(e.encode())),
             }),
         };
-        Self { result }
+        Self { result, conflict }
     }
 
     /// Create an empty propose response
+    #[allow(unused)]
     pub(crate) fn new_empty() -> Self {
-        Self { result: None }
+        Self {
+            result: None,
+            conflict: false,
+        }
     }
 
     /// Deserialize result in response and take a map function
@@ -223,16 +245,16 @@ impl ProposeResponse {
     }
 }
 
-impl WaitSyncedRequest {
-    /// Create a `WaitSynced` request
-    pub(crate) fn new(id: ProposeId, cluster_version: u64) -> Self {
-        Self {
-            propose_id: Some(id.into()),
-            cluster_version,
+impl RecordRequest {
+    /// Creates a new `RecordRequest`
+    pub(crate) fn new<C: Command>(propose_id: ProposeId, command: &C) -> Self {
+        RecordRequest {
+            propose_id: Some(propose_id.into()),
+            command: command.encode(),
         }
     }
 
-    /// Get the `propose_id` reference
+    /// Get the propose id
     pub(crate) fn propose_id(&self) -> ProposeId {
         self.propose_id
             .unwrap_or_else(|| {
@@ -240,101 +262,43 @@ impl WaitSyncedRequest {
             })
             .into()
     }
+
+    /// Get command
+    pub(crate) fn cmd<C: Command>(&self) -> Result<C, PbSerializeError> {
+        C::decode(&self.command)
+    }
 }
 
-impl WaitSyncedResponse {
-    /// Create a success response
-    fn new_success<C: Command>(asr: &C::ASR, er: &C::ER) -> Self {
-        Self {
-            after_sync_result: Some(CmdResult {
-                result: Some(CmdResultInner::Ok(asr.encode())),
-            }),
-            exe_result: Some(CmdResult {
-                result: Some(CmdResultInner::Ok(er.encode())),
-            }),
+impl SyncedResponse {
+    /// Create a new response from `after_sync` result
+    pub(crate) fn new_result<C: Command>(result: &Result<C::ASR, C::Error>) -> Self {
+        match *result {
+            Ok(ref asr) => SyncedResponse {
+                after_sync_result: Some(CmdResult {
+                    result: Some(CmdResultInner::Ok(asr.encode())),
+                }),
+            },
+            Err(ref e) => SyncedResponse {
+                after_sync_result: Some(CmdResult {
+                    result: Some(CmdResultInner::Error(e.encode())),
+                }),
+            },
         }
     }
 
-    /// Create an error response which includes an execution error
-    fn new_er_error<C: Command>(er: &C::Error) -> Self {
-        Self {
-            after_sync_result: None,
-            exe_result: Some(CmdResult {
-                result: Some(CmdResultInner::Error(er.encode())),
-            }),
-        }
-    }
-
-    /// Create an error response which includes an `after_sync` error
-    fn new_asr_error<C: Command>(er: &C::ER, asr_err: &C::Error) -> Self {
-        Self {
-            after_sync_result: Some(CmdResult {
-                result: Some(CmdResultInner::Error(asr_err.encode())),
-            }),
-            exe_result: Some(CmdResult {
-                result: Some(CmdResultInner::Ok(er.encode())),
-            }),
-        }
-    }
-
-    /// Create a new response from execution result and `after_sync` result
-    pub(crate) fn new_from_result<C: Command>(
-        er: Result<C::ER, C::Error>,
-        asr: Option<Result<C::ASR, C::Error>>,
-    ) -> Self {
-        match (er, asr) {
-            (Ok(ref er), Some(Err(ref asr_err))) => {
-                WaitSyncedResponse::new_asr_error::<C>(er, asr_err)
-            }
-            (Ok(ref er), Some(Ok(ref asr))) => WaitSyncedResponse::new_success::<C>(asr, er),
-            (Ok(ref _er), None) => unreachable!("can't get after sync result"),
-            (Err(ref err), _) => WaitSyncedResponse::new_er_error::<C>(err),
-        }
-    }
-
-    /// Similar to `ProposeResponse::map_result`
+    /// Deserialize result in response and take a map function
     pub(crate) fn map_result<C: Command, F, R>(self, f: F) -> Result<R, PbSerializeError>
     where
-        F: FnOnce(Result<(C::ASR, C::ER), C::Error>) -> R,
+        F: FnOnce(Option<Result<C::ASR, C::Error>>) -> R,
     {
-        // according to the above methods, we can only get the following response union
-        // ER: Some(OK), ASR: Some(OK)  <-  WaitSyncedResponse::new_success
-        // ER: Some(Err), ASR: None     <-  WaitSyncedResponse::new_er_error
-        // ER: Some(OK), ASR: Some(Err) <- WaitSyncedResponse::new_asr_error
-        let res = match (self.exe_result, self.after_sync_result) {
-            (
-                Some(CmdResult {
-                    result: Some(CmdResultInner::Ok(ref er)),
-                }),
-                Some(CmdResult {
-                    result: Some(CmdResultInner::Ok(ref asr)),
-                }),
-            ) => {
-                let er = <C as Command>::ER::decode(er)?;
-                let asr = <C as Command>::ASR::decode(asr)?;
-                Ok((asr, er))
-            }
-            (
-                Some(CmdResult {
-                    result: Some(CmdResultInner::Error(ref buf)),
-                }),
-                None,
-            )
-            | (
-                Some(CmdResult {
-                    result: Some(CmdResultInner::Ok(_)),
-                }),
-                Some(CmdResult {
-                    result: Some(CmdResultInner::Error(ref buf)),
-                }),
-            ) => {
-                let er = <C as Command>::Error::decode(buf.as_slice())?;
-                Err(er)
-            }
-            _ => unreachable!("got unexpected WaitSyncedResponse"),
+        let Some(res) = self.after_sync_result.and_then(|res| res.result) else {
+            return Ok(f(None));
         };
-
-        Ok(f(res))
+        let res = match res {
+            CmdResultInner::Ok(ref buf) => Ok(<C as Command>::ASR::decode(buf)?),
+            CmdResultInner::Error(ref buf) => Err(<C as Command>::Error::decode(buf)?),
+        };
+        Ok(f(Some(res)))
     }
 }
 
@@ -639,16 +603,13 @@ impl PublishRequest {
 
 /// NOTICE:
 ///
-/// Please check test case `test_unary_fast_round_return_early_err` `test_unary_propose_return_early_err`
-/// `test_retry_propose_return_no_retry_error` `test_retry_propose_return_retry_error` if you added some
-/// new [`CurpError`]
+/// Please check test case `test_unary_fast_round_return_early_err`
+/// `test_unary_propose_return_early_err`
+/// `test_retry_propose_return_no_retry_error`
+/// `test_retry_propose_return_retry_error` if you added some new [`CurpError`]
 impl CurpError {
-    /// `KeyConflict` error
-    pub(crate) fn key_conflict() -> Self {
-        Self::KeyConflict(())
-    }
-
     /// `Duplicated` error
+    #[allow(unused)]
     pub(crate) fn duplicated() -> Self {
         Self::Duplicated(())
     }
@@ -718,6 +679,7 @@ impl CurpError {
     }
 
     /// Whether to abort slow round early
+    #[allow(unused)]
     pub(crate) fn should_abort_slow_round(&self) -> bool {
         matches!(
             *self,
@@ -743,7 +705,8 @@ impl CurpError {
             | CurpError::LearnerNotCatchUp(())
             | CurpError::ExpiredClientId(())
             | CurpError::Redirect(_)
-            | CurpError::WrongClusterVersion(()) => CurpErrorPriority::High,
+            | CurpError::WrongClusterVersion(())
+            | CurpError::Zombie(()) => CurpErrorPriority::High,
             CurpError::RpcTransport(())
             | CurpError::Internal(_)
             | CurpError::KeyConflict(())
@@ -846,6 +809,10 @@ impl From<CurpError> for tonic::Status {
                 tonic::Code::FailedPrecondition,
                 "Leader transfer error: A leader transfer error occurred.",
             ),
+            CurpError::Zombie(()) => (
+                tonic::Code::FailedPrecondition,
+                "Zombie leader error: The leader is a zombie with outdated term.",
+            ),
         };
 
         let details = CurpErrorWrapper { err: Some(err) }.encode_to_vec();
@@ -857,32 +824,19 @@ impl From<CurpError> for tonic::Status {
 // User defined types
 
 /// Entry of speculative pool
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(PartialEq))]
-pub(crate) struct PoolEntry<C> {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PoolEntry<C> {
     /// Propose id
     pub(crate) id: ProposeId,
     /// Inner entry
-    pub(crate) inner: PoolEntryInner<C>,
-}
-
-/// Inner entry of speculative pool
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(PartialEq))]
-pub(crate) enum PoolEntryInner<C> {
-    /// Command entry
-    Command(Arc<C>),
-    /// ConfChange entry
-    ConfChange(Vec<ConfChange>),
+    pub(crate) cmd: Arc<C>,
 }
 
 impl<C> PoolEntry<C> {
     /// Create a new pool entry
-    pub(crate) fn new(id: ProposeId, inner: impl Into<PoolEntryInner<C>>) -> Self {
-        Self {
-            id,
-            inner: inner.into(),
-        }
+    #[inline]
+    pub fn new(id: ProposeId, inner: Arc<C>) -> Self {
+        Self { id, cmd: inner }
     }
 }
 
@@ -890,26 +844,74 @@ impl<C> ConflictCheck for PoolEntry<C>
 where
     C: ConflictCheck,
 {
+    #[inline]
     fn is_conflict(&self, other: &Self) -> bool {
-        let PoolEntryInner::Command(ref cmd1) = self.inner else {
-            return true;
-        };
-        let PoolEntryInner::Command(ref cmd2) = other.inner else {
-            return true;
-        };
-        cmd1.is_conflict(cmd2)
+        self.cmd.is_conflict(&other.cmd)
     }
 }
 
-impl<C> From<Arc<C>> for PoolEntryInner<C> {
-    fn from(value: Arc<C>) -> Self {
-        Self::Command(value)
+impl<C> Clone for PoolEntry<C> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            cmd: Arc::clone(&self.cmd),
+        }
     }
 }
 
-impl<C> From<Vec<ConfChange>> for PoolEntryInner<C> {
-    fn from(value: Vec<ConfChange>) -> Self {
-        Self::ConfChange(value)
+impl<C> std::ops::Deref for PoolEntry<C> {
+    type Target = C;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.cmd
+    }
+}
+
+impl<C> AsRef<C> for PoolEntry<C> {
+    #[inline]
+    fn as_ref(&self) -> &C {
+        self.cmd.as_ref()
+    }
+}
+
+impl<C> std::hash::Hash for PoolEntry<C> {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl<C> PartialEq for PoolEntry<C> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.id.eq(&other.id)
+    }
+}
+
+impl<C> Eq for PoolEntry<C> {}
+
+impl<C> PartialOrd for PoolEntry<C> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.id.cmp(&other.id))
+    }
+}
+
+impl<C> Ord for PoolEntry<C> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
+impl<C> EntryId for PoolEntry<C> {
+    type Id = ProposeId;
+
+    #[inline]
+    fn id(&self) -> Self::Id {
+        self.id
     }
 }
 

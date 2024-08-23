@@ -417,6 +417,7 @@ mod test {
         time::Duration,
     };
 
+    use engine::TransactionApi;
     use parking_lot::Mutex;
     use test_macros::abort_on_panic;
     use tokio::{
@@ -431,8 +432,7 @@ mod test {
         rpc::{PutRequest, WatchProgressRequest},
         storage::{
             compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, kv_store::KvStoreInner,
-            kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection,
-            storage_api::XlineStorageOps, KvStore,
+            kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection, KvStore,
         },
     };
 
@@ -444,20 +444,24 @@ mod test {
             && wr.header.as_ref().map_or(false, |h| h.revision != 0)
     }
 
-    async fn put(
-        store: &KvStore,
-        db: &DB,
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        revision: i64,
-    ) {
+    fn put(store: &KvStore, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
         let req = RequestWrapper::from(PutRequest {
             key: key.into(),
             value: value.into(),
             ..Default::default()
         });
-        let (_sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
-        db.write_ops(ops).unwrap();
+
+        let rev_gen = store.revision_gen();
+        let index = store.index();
+        let txn = store.db().transaction();
+        let rev_state = rev_gen.state();
+        let index_state = index.state();
+        store
+            .after_sync(&req, &txn, &index_state, &rev_state, false)
+            .unwrap();
+        txn.commit().unwrap();
+        index_state.commit();
+        rev_state.commit();
     }
 
     #[tokio::test]
@@ -581,13 +585,13 @@ mod test {
     #[abort_on_panic]
     async fn test_watch_prev_kv() {
         let task_manager = Arc::new(TaskManager::new());
-        let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
+        let (compact_tx, _compact_rx) = flume::bounded(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
         let db = DB::open(&EngineConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let next_id_gen = Arc::new(WatchIdGenerator::new(1));
-        let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
+        let (kv_update_tx, kv_update_rx) = flume::bounded(CHANNEL_SIZE);
         let kv_store_inner = Arc::new(KvStoreInner::new(index, Arc::clone(&db)));
         let kv_store = Arc::new(KvStore::new(
             Arc::clone(&kv_store_inner),
@@ -602,8 +606,8 @@ mod test {
             Duration::from_millis(10),
             &task_manager,
         );
-        put(&kv_store, &db, "foo", "old_bar", 2).await;
-        put(&kv_store, &db, "foo", "bar", 3).await;
+        put(&kv_store, "foo", "old_bar");
+        put(&kv_store, "foo", "bar");
 
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
         let req_stream = ReceiverStream::new(req_rx);
@@ -767,13 +771,13 @@ mod test {
     #[tokio::test]
     async fn watch_compacted_revision_should_fail() {
         let task_manager = Arc::new(TaskManager::new());
-        let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
+        let (compact_tx, _compact_rx) = flume::bounded(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
         let db = DB::open(&EngineConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let next_id_gen = Arc::new(WatchIdGenerator::new(1));
-        let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
+        let (kv_update_tx, kv_update_rx) = flume::bounded(CHANNEL_SIZE);
         let kv_store_inner = Arc::new(KvStoreInner::new(index, Arc::clone(&db)));
         let kv_store = Arc::new(KvStore::new(
             Arc::clone(&kv_store_inner),
@@ -788,9 +792,9 @@ mod test {
             Duration::from_millis(10),
             &task_manager,
         );
-        put(&kv_store, &db, "foo", "old_bar", 2).await;
-        put(&kv_store, &db, "foo", "bar", 3).await;
-        put(&kv_store, &db, "foo", "new_bar", 4).await;
+        put(&kv_store, "foo", "old_bar");
+        put(&kv_store, "foo", "bar");
+        put(&kv_store, "foo", "new_bar");
 
         kv_store.update_compacted_revision(3);
 

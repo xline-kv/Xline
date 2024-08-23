@@ -1,6 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 
 use engine::SnapshotAllocator;
+use flume::r#async::RecvStream;
 use tokio::sync::broadcast;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
@@ -14,19 +15,24 @@ pub use self::{
     conflict::{spec_pool_new::SpObject, uncommitted_pool::UcpObject},
     raw_curp::RawCurp,
 };
+use crate::rpc::{OpResponse, RecordRequest, RecordResponse};
 use crate::{
     cmd::{Command, CommandExecutor},
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
-        AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
-        InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse,
-        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
+        connect::Bypass, AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest,
+        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
+        MoveLeaderResponse, ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest,
         PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
         TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
-        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        VoteRequest, VoteResponse,
     },
+};
+use crate::{
+    response::ResponseSender,
+    rpc::{ReadIndexRequest, ReadIndexResponse},
 };
 
 /// Command worker to do execution and after sync
@@ -62,12 +68,12 @@ pub use storage::{db::DB, StorageApi, StorageError};
 ///
 /// This Wrapper is introduced due to the `MadSim` rpc lib
 #[derive(Debug)]
-pub struct Rpc<C: Command, RC: RoleChange> {
+pub struct Rpc<C: Command, CE: CommandExecutor<C>, RC: RoleChange> {
     /// The inner server is wrapped in an Arc so that its state can be shared while cloning the rpc wrapper
-    inner: Arc<CurpNode<C, RC>>,
+    inner: Arc<CurpNode<C, CE, RC>>,
 }
 
-impl<C: Command, RC: RoleChange> Clone for Rpc<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Clone for Rpc<C, CE, RC> {
     #[inline]
     fn clone(&self) -> Self {
         Self {
@@ -77,16 +83,40 @@ impl<C: Command, RC: RoleChange> Clone for Rpc<C, RC> {
 }
 
 #[tonic::async_trait]
-impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
-    #[instrument(skip_all, name = "curp_propose")]
-    async fn propose(
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol for Rpc<C, CE, RC> {
+    type ProposeStreamStream = RecvStream<'static, Result<OpResponse, tonic::Status>>;
+
+    #[instrument(skip_all, name = "propose_stream")]
+    async fn propose_stream(
         &self,
         request: tonic::Request<ProposeRequest>,
-    ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
-        request.metadata().extract_span();
+    ) -> Result<tonic::Response<Self::ProposeStreamStream>, tonic::Status> {
+        let bypassed = request.metadata().is_bypassed();
+        let (tx, rx) = flume::bounded(2);
+        let resp_tx = Arc::new(ResponseSender::new(tx));
+        self.inner
+            .propose_stream(&request.into_inner(), resp_tx, bypassed)
+            .await?;
+
+        Ok(tonic::Response::new(rx.into_stream()))
+    }
+
+    #[instrument(skip_all, name = "record")]
+    async fn record(
+        &self,
+        request: tonic::Request<RecordRequest>,
+    ) -> Result<tonic::Response<RecordResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.propose(request.into_inner()).await?,
+            self.inner.record(&request.into_inner())?,
         ))
+    }
+
+    #[instrument(skip_all, name = "read_index")]
+    async fn read_index(
+        &self,
+        _request: tonic::Request<ReadIndexRequest>,
+    ) -> Result<tonic::Response<ReadIndexResponse>, tonic::Status> {
+        Ok(tonic::Response::new(self.inner.read_index()?))
     }
 
     #[instrument(skip_all, name = "curp_shutdown")]
@@ -94,9 +124,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
         &self,
         request: tonic::Request<ShutdownRequest>,
     ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status> {
+        let bypassed = request.metadata().is_bypassed();
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.shutdown(request.into_inner()).await?,
+            self.inner.shutdown(request.into_inner(), bypassed).await?,
         ))
     }
 
@@ -105,9 +136,12 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
         &self,
         request: tonic::Request<ProposeConfChangeRequest>,
     ) -> Result<tonic::Response<ProposeConfChangeResponse>, tonic::Status> {
+        let bypassed = request.metadata().is_bypassed();
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.propose_conf_change(request.into_inner()).await?,
+            self.inner
+                .propose_conf_change(request.into_inner(), bypassed)
+                .await?,
         ))
     }
 
@@ -116,20 +150,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
         &self,
         request: tonic::Request<PublishRequest>,
     ) -> Result<tonic::Response<PublishResponse>, tonic::Status> {
+        let bypassed = request.metadata().is_bypassed();
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.publish(request.into_inner())?,
-        ))
-    }
-
-    #[instrument(skip_all, name = "curp_wait_synced")]
-    async fn wait_synced(
-        &self,
-        request: tonic::Request<WaitSyncedRequest>,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
-        request.metadata().extract_span();
-        Ok(tonic::Response::new(
-            self.inner.wait_synced(request.into_inner()).await?,
+            self.inner.publish(request.into_inner(), bypassed)?,
         ))
     }
 
@@ -177,7 +201,9 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
 }
 
 #[tonic::async_trait]
-impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::InnerProtocol
+    for Rpc<C, CE, RC>
+{
     #[instrument(skip_all, name = "curp_append_entries")]
     async fn append_entries(
         &self,
@@ -194,7 +220,7 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
         request: tonic::Request<VoteRequest>,
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.vote(request.into_inner()).await?,
+            self.inner.vote(&request.into_inner())?,
         ))
     }
 
@@ -230,7 +256,7 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
     }
 }
 
-impl<C: Command, RC: RoleChange> Rpc<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     /// New `Rpc`
     ///
     /// # Panics
@@ -238,7 +264,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     /// Panic if storage creation failed
     #[inline]
     #[allow(clippy::too_many_arguments)] // TODO: refactor this use builder pattern
-    pub async fn new<CE: CommandExecutor<C>>(
+    pub async fn new(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         executor: Arc<CE>,
@@ -287,7 +313,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     #[cfg(madsim)]
     #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub async fn run_from_addr<CE>(
+    pub async fn run_from_addr(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         addr: std::net::SocketAddr,
@@ -300,10 +326,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         client_tls_config: Option<ClientTlsConfig>,
         sps: Vec<SpObject<C>>,
         ucps: Vec<UcpObject<C>>,
-    ) -> Result<(), crate::error::ServerError>
-    where
-        CE: CommandExecutor<C>,
-    {
+    ) -> Result<(), crate::error::ServerError> {
         use utils::task_manager::tasks::TaskName;
 
         use crate::rpc::{InnerProtocolServer, ProtocolServer};

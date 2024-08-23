@@ -1,12 +1,13 @@
-//  CONFLICT_CHECKED_MPMC
-//            |
-//       CMD_WORKER            LEASE_KEEP_ALIVE
-//         /     \                    |
-//  COMPACT_BG  KV_UPDATES      TONIC_SERVER       ELECTION
-//                    \        /      |      \       /
-//                   WATCH_TASK  CONF_CHANGE  LOG_PERSIST
+//  AFTER_SYNC     LEASE_KEEP_ALIVE
+//      |                  |
+//  KV_UPDATES      TONIC_SERVER
+//       \        /      |
+//      WATCH_TASK  CONF_CHANGE
+//
+// Other tasks like `CompactBg`, `GcSpecPool`, `GcCmdBoard`, `RevokeExpiredLeases`, `SyncVictims`,
+// `Election`, and `AutoCompactor` do not have dependent tasks.
 
-// NOTE: In integration tests, we use bottom tasks, like `WatchTask`, `ConfChange`, and `LogPersist`,
+// NOTE: In integration tests, we use bottom tasks, like `WatchTask` and `ConfChange`,
 // which are not dependent on other tasks to detect the curp group is closed or not. If you want
 // to refactor the task group, don't forget to modify the `BOTTOM_TASKS` in `crates/curp/tests/it/common/curp_group.rs`
 // to prevent the integration tests from failing.
@@ -35,33 +36,48 @@ macro_rules! enum_with_iter {
     }
 }
 enum_with_iter! {
-    ConflictCheckedMpmc,
-    CmdWorker,
     CompactBg,
     KvUpdates,
     WatchTask,
     LeaseKeepAlive,
     TonicServer,
-    LogPersist,
     Election,
     SyncFollower,
     ConfChange,
-    GcSpecPool,
-    GcCmdBoard,
+    GcClientLease,
     RevokeExpiredLeases,
     SyncVictims,
     AutoCompactor,
+    AfterSync,
+    HandlePropose,
+}
+
+impl TaskName {
+    /// Returns `true` if the task is cancel safe
+    pub(super) fn cancel_safe(self) -> bool {
+        match self {
+            TaskName::HandlePropose | TaskName::AfterSync => true,
+            TaskName::CompactBg
+            | TaskName::KvUpdates
+            | TaskName::WatchTask
+            | TaskName::LeaseKeepAlive
+            | TaskName::TonicServer
+            | TaskName::Election
+            | TaskName::SyncFollower
+            | TaskName::ConfChange
+            | TaskName::GcClientLease
+            | TaskName::RevokeExpiredLeases
+            | TaskName::SyncVictims
+            | TaskName::AutoCompactor => false,
+        }
+    }
 }
 
 /// All edges of task graph, the first item in each pair must be shut down before the second item
-pub const ALL_EDGES: [(TaskName, TaskName); 9] = [
-    (TaskName::ConflictCheckedMpmc, TaskName::CmdWorker),
-    (TaskName::CmdWorker, TaskName::CompactBg),
-    (TaskName::CmdWorker, TaskName::KvUpdates),
+pub const ALL_EDGES: [(TaskName, TaskName); 5] = [
+    (TaskName::AfterSync, TaskName::KvUpdates),
     (TaskName::KvUpdates, TaskName::WatchTask),
     (TaskName::LeaseKeepAlive, TaskName::TonicServer),
     (TaskName::TonicServer, TaskName::WatchTask),
     (TaskName::TonicServer, TaskName::ConfChange),
-    (TaskName::TonicServer, TaskName::LogPersist),
-    (TaskName::Election, TaskName::LogPersist),
 ];
