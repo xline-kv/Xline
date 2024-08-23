@@ -15,7 +15,7 @@ use parking_lot::RwLock;
 use tracing::warn;
 use utils::{barrier::IdBarrier, table_names::META_TABLE};
 use xlineapi::{
-    command::{Command, CurpClient},
+    command::{Command, CurpClient, SyncResponse},
     execute_error::ExecuteError,
     AlarmAction, AlarmRequest, AlarmType,
 };
@@ -427,6 +427,24 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
             RequestBackend::Lease => self.lease_storage.execute(wrapper),
             RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
         }
+    }
+
+    fn execute_ro(
+        &self,
+        cmd: &Command,
+    ) -> Result<
+        (<Command as CurpCommand>::ER, <Command as CurpCommand>::ASR),
+        <Command as CurpCommand>::Error,
+    > {
+        let er = self.execute(cmd)?;
+        let wrapper = cmd.request();
+        let rev = match wrapper.backend() {
+            RequestBackend::Kv | RequestBackend::Lease | RequestBackend::Alarm => {
+                self.kv_storage.revision_gen().get()
+            }
+            RequestBackend::Auth => self.auth_storage.revision_gen().get(),
+        };
+        Ok((er, SyncResponse::new(rev)))
     }
 
     fn after_sync(

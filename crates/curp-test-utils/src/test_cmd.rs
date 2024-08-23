@@ -284,6 +284,16 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(result)
     }
 
+    fn execute_ro(
+        &self,
+        cmd: &TestCommand,
+    ) -> Result<
+        (<TestCommand as Command>::ER, <TestCommand as Command>::ASR),
+        <TestCommand as Command>::Error,
+    > {
+        self.execute(cmd).map(|er| (er, LogIndexResult(0)))
+    }
+
     fn after_sync(
         &self,
         cmds: Vec<AfterSyncCmd<'_, TestCommand>>,

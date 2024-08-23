@@ -51,12 +51,7 @@ pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         unreachable!("should not speculative execute {:?}", entry.entry_data);
     };
     if cmd.is_read_only() {
-        let result = ce
-            .after_sync(vec![AfterSyncCmd::new(cmd, true)], None)
-            .remove(0)?;
-        let (asr, er_opt) = result.into_parts();
-        let er = er_opt.unwrap_or_else(|| unreachable!("er should exist"));
-        Ok((er, Some(asr)))
+        ce.execute_ro(cmd).map(|(er, asr)| (er, Some(asr)))
     } else {
         let er = ce.execute(cmd);
         let mut cb_w = cb.write();

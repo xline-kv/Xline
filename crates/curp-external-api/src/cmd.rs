@@ -104,6 +104,14 @@ where
     /// command.
     fn execute(&self, cmd: &C) -> Result<C::ER, C::Error>;
 
+    /// Execute the read-only command
+    ///
+    /// # Errors
+    ///
+    /// This function may return an error if there is a problem executing the
+    /// command.
+    fn execute_ro(&self, cmd: &C) -> Result<(C::ER, C::ASR), C::Error>;
+
     /// Batch execute the after_sync callback
     ///
     /// This `highest_index` means the last log index of the `cmds`
