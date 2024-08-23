@@ -270,20 +270,6 @@ impl<C: Command> ClientApi for Unary<C> {
     /// Send fetch cluster requests to all servers
     /// Note: The fetched cluster may still be outdated if `linearizable` is false
     async fn fetch_cluster(&self, linearizable: bool) -> Result<FetchClusterResponse, Self::Error> {
-        /// Checks the member list, returns `true` if all member has been published
-        fn check_members(members: &[Member]) -> bool {
-            if members.is_empty() {
-                return false;
-            }
-            for member in members {
-                if member.client_urls.is_empty() {
-                    debug!("new node {} not published yet", member.id());
-                    return false;
-                }
-            }
-            true
-        }
-
         let timeout = self.config.wait_synced_timeout;
         if !linearizable {
             // firstly, try to fetch the local server
@@ -344,14 +330,14 @@ impl<C: Command> ClientApi for Unary<C> {
                 match max_term.cmp(&inner.term) {
                     Ordering::Less => {
                         max_term = inner.term;
-                        if check_members(&inner.members) {
+                        if !inner.members.is_empty() {
                             res = Some(inner);
                         }
                         // reset ok count to 1
                         ok_cnt = 1;
                     }
                     Ordering::Equal => {
-                        if check_members(&inner.members) {
+                        if !inner.members.is_empty() {
                             res = Some(inner);
                         }
                         ok_cnt += 1;
