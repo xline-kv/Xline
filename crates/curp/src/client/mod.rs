@@ -451,15 +451,23 @@ impl ClientBuilder {
             impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static,
             Arc<AtomicU64>,
         ),
-        tonic::transport::Error,
+        tonic::Status,
     > {
-        let state = Arc::new(self.init_state_builder().build().await?);
+        let state = Arc::new(
+            self.init_state_builder()
+                .build()
+                .await
+                .map_err(|e| tonic::Status::internal(e.to_string()))?,
+        );
+
         let client = Retry::new(
             Unary::new(Arc::clone(&state), self.init_unary_config()),
             self.init_retry_config(),
             Some(self.spawn_bg_tasks(Arc::clone(&state))),
         );
         let client_id = state.clone_client_id();
+        self.wait_for_client_id(state).await?;
+
         Ok((client, client_id))
     }
 }
