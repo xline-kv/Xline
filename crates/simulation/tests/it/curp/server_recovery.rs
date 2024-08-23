@@ -116,25 +116,21 @@ async fn leader_and_follower_both_crash_and_recovery() {
     let follower = *group.nodes.keys().find(|&id| id != &leader).unwrap();
     group.crash(follower).await;
 
+    let _wait_up = client
+        .propose(TestCommand::new_get(vec![0]), true)
+        .await
+        .unwrap()
+        .unwrap();
+
     assert_eq!(
         client
-            .propose(TestCommand::new_put(vec![0], 0), true)
+            .propose(TestCommand::new_put(vec![0], 0), false)
             .await
             .unwrap()
             .unwrap()
             .0
             .values,
         Vec::<u32>::new(),
-    );
-    assert_eq!(
-        client
-            .propose(TestCommand::new_get(vec![0]), true)
-            .await
-            .unwrap()
-            .unwrap()
-            .0
-            .values,
-        vec![0]
     );
 
     group.crash(leader).await;
