@@ -11,8 +11,6 @@ use std::{
 
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use engine::{Transaction, TransactionApi};
-#[cfg(not(madsim))]
-use event_listener::Listener;
 use prost::Message;
 use tracing::{debug, warn};
 use utils::table_names::{KV_TABLE, META_TABLE};
@@ -1121,41 +1119,21 @@ impl KvStore {
         let ops = vec![WriteOp::PutScheduledCompactRevision(revision)];
         // TODO: Remove the physical process logic here. It's better to move into the
         // KvServer
-        // TODO: sync compaction task
         // FIXME: madsim is single threaded, we cannot use synchronous wait here
-        #[cfg(not(madsim))]
-        {
-            let (event, listener) = if req.physical {
-                let event = Arc::new(event_listener::Event::new());
-                let listener = event.listen();
-                (Some(event), Some(listener))
-            } else {
-                (None, None)
-            };
-            if let Err(e) = self.compact_task_tx.send((revision, event)) {
-                panic!("the compactor exited unexpectedly: {e:?}");
-            }
-            if let Some(listener) = listener {
-                listener.wait();
+        let index = self.index();
+        let target_revisions = index
+            .compact(revision)
+            .into_iter()
+            .map(|key_rev| key_rev.as_revision().encode_to_vec())
+            .collect::<Vec<Vec<_>>>();
+        // Given that the Xline uses a lim-tree database with smaller write amplification as the storage backend ,  does using progressive compaction really good at improving performance?
+        for revision_chunk in target_revisions.chunks(1000) {
+            if let Err(e) = self.compact(revision_chunk) {
+                panic!("failed to compact revision chunk {revision_chunk:?} due to {e}");
             }
         }
-        #[cfg(madsim)]
-        {
-            let index = self.index();
-            let target_revisions = index
-                .compact(revision)
-                .into_iter()
-                .map(|key_rev| key_rev.as_revision().encode_to_vec())
-                .collect::<Vec<Vec<_>>>();
-            // Given that the Xline uses a lim-tree database with smaller write amplification as the storage backend ,  does using progressive compaction really good at improving performance?
-            for revision_chunk in target_revisions.chunks(1000) {
-                if let Err(e) = self.compact(revision_chunk) {
-                    panic!("failed to compact revision chunk {revision_chunk:?} due to {e}");
-                }
-            }
-            if let Err(e) = self.compact_finished(revision) {
-                panic!("failed to set finished compact revision {revision:?} due to {e}");
-            }
+        if let Err(e) = self.compact_finished(revision) {
+            panic!("failed to set finished compact revision {revision:?} due to {e}");
         }
 
         self.inner.db.write_ops(ops)?;
