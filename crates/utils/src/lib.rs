@@ -188,6 +188,8 @@ pub struct ServerTlsConfig;
 pub mod barrier;
 /// configuration
 pub mod config;
+/// LCA tree implementation
+pub mod lca_tree;
 /// utils for metrics
 pub mod metrics;
 /// utils of `parking_lot` lock
