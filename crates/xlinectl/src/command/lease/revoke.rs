@@ -1,5 +1,5 @@
 use clap::{arg, value_parser, ArgMatches, Command};
-use xline_client::{error::Result, types::lease::LeaseRevokeRequest, Client};
+use xline_client::{error::Result, Client};
 
 use crate::utils::printer::Printer;
 
@@ -11,9 +11,9 @@ pub(super) fn command() -> Command {
 }
 
 /// Build request from matches
-pub(super) fn build_request(matches: &ArgMatches) -> LeaseRevokeRequest {
+pub(super) fn build_request(matches: &ArgMatches) -> i64 {
     let lease_id = matches.get_one::<i64>("leaseId").expect("required");
-    LeaseRevokeRequest::new(*lease_id)
+    *lease_id
 }
 
 /// Execute the command
@@ -30,14 +30,11 @@ mod tests {
     use super::*;
     use crate::test_case_struct;
 
-    test_case_struct!(LeaseRevokeRequest);
+    test_case_struct!(i64);
 
     #[test]
     fn command_parse_should_be_valid() {
-        let test_cases = vec![TestCase::new(
-            vec!["revoke", "123"],
-            Some(LeaseRevokeRequest::new(123)),
-        )];
+        let test_cases = vec![TestCase::new(vec!["revoke", "123"], Some(123))];
 
         for case in test_cases {
             case.run_test();

@@ -1,7 +1,11 @@
 name: Build CI Env Image
 
 on:
-  workflow_dispatch: {}
+  push:
+    paths:
+      - "ci/build-env.sh"
+      - "ci/Dockerfile"
+  workflow_dispatch:
 
 jobs:
   build_env:

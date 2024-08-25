@@ -59,11 +59,11 @@ impl<C> SpeculativePool<C> {
         match ConflictPoolEntry::from(entry) {
             ConflictPoolEntry::Command(c) => {
                 for csp in &mut self.command_sps {
-                    csp.remove(c.clone());
+                    csp.remove(&c);
                 }
             }
             ConflictPoolEntry::ConfChange(c) => {
-                self.conf_change_sp.remove(c);
+                self.conf_change_sp.remove(&c);
             }
         }
     }
@@ -102,7 +102,7 @@ impl ConflictPoolOp for ConfChangeSp {
         self.change.is_none()
     }
 
-    fn remove(&mut self, _entry: Self::Entry) {
+    fn remove(&mut self, _entry: &Self::Entry) {
         self.change = None;
     }
 

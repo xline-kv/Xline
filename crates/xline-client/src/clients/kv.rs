@@ -8,7 +8,7 @@ use xlineapi::{
 
 use crate::{
     error::Result,
-    types::kv::{CompactionRequest, DeleteRangeRequest, PutRequest, RangeRequest, TxnRequest},
+    types::kv::{DeleteRangeOptions, PutOptions, RangeOptions, TxnRequest},
     AuthService, CurpClient,
 };
 
@@ -65,7 +65,7 @@ impl KvClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::kv::PutRequest, Client, ClientOptions};
+    /// use xline_client::{types::kv::PutOptions, Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -76,14 +76,22 @@ impl KvClient {
     ///         .await?
     ///         .kv_client();
     ///
-    ///     client.put(PutRequest::new("key1", "value1")).await?;
+    ///     client.put("key1", "value1", None).await?;
+    ///     client.put("key2", "value2", Some(PutOptions::default().with_prev_kv(true))).await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     #[inline]
-    pub async fn put(&self, request: PutRequest) -> Result<PutResponse> {
-        let request = RequestWrapper::from(xlineapi::PutRequest::from(request));
+    pub async fn put(
+        &self,
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+        option: Option<PutOptions>,
+    ) -> Result<PutResponse> {
+        let request = RequestWrapper::from(xlineapi::PutRequest::from(
+            option.unwrap_or_default().with_kv(key.into(), value.into()),
+        ));
         let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client
@@ -101,7 +109,7 @@ impl KvClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::kv::RangeRequest, Client, ClientOptions};
+    /// use xline_client::{types::kv::RangeOptions, Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -112,7 +120,8 @@ impl KvClient {
     ///         .await?
     ///         .kv_client();
     ///
-    ///     let resp = client.range(RangeRequest::new("key1")).await?;
+    ///     let resp = client.range("key1", None).await?;
+    ///     let resp = client.range("key2", Some(RangeOptions::default().with_limit(6))).await?;
     ///
     ///     if let Some(kv) = resp.kvs.first() {
     ///         println!(
@@ -126,8 +135,14 @@ impl KvClient {
     /// }
     /// ```
     #[inline]
-    pub async fn range(&self, request: RangeRequest) -> Result<RangeResponse> {
-        let request = RequestWrapper::from(xlineapi::RangeRequest::from(request));
+    pub async fn range(
+        &self,
+        key: impl Into<Vec<u8>>,
+        options: Option<RangeOptions>,
+    ) -> Result<RangeResponse> {
+        let request = RequestWrapper::from(xlineapi::RangeRequest::from(
+            options.unwrap_or_default().with_key(key),
+        ));
         let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client
@@ -144,7 +159,7 @@ impl KvClient {
     ///
     /// # Examples
     /// ```no_run
-    /// use xline_client::{types::kv::DeleteRangeRequest, Client, ClientOptions};
+    /// use xline_client::{types::kv::DeleteRangeOptions, Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -156,15 +171,21 @@ impl KvClient {
     ///         .kv_client();
     ///
     ///     client
-    ///         .delete(DeleteRangeRequest::new("key1").with_prev_kv(true))
+    ///         .delete("key1", Some(DeleteRangeOptions::default().with_prev_kv(true)))
     ///         .await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     #[inline]
-    pub async fn delete(&self, request: DeleteRangeRequest) -> Result<DeleteRangeResponse> {
-        let request = RequestWrapper::from(xlineapi::DeleteRangeRequest::from(request));
+    pub async fn delete(
+        &self,
+        key: impl Into<Vec<u8>>,
+        options: Option<DeleteRangeOptions>,
+    ) -> Result<DeleteRangeResponse> {
+        let request = RequestWrapper::from(xlineapi::DeleteRangeRequest::from(
+            options.unwrap_or_default().with_key(key),
+        ));
         let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client
@@ -183,7 +204,7 @@ impl KvClient {
     ///
     /// ```no_run
     /// use xline_client::{
-    ///     types::kv::{Compare, PutRequest, RangeRequest, TxnOp, TxnRequest, CompareResult},
+    ///     types::kv::{Compare, PutOptions, TxnOp, TxnRequest, CompareResult},
     ///     Client, ClientOptions,
     /// };
     /// use anyhow::Result;
@@ -199,11 +220,9 @@ impl KvClient {
     ///     let txn_req = TxnRequest::new()
     ///         .when(&[Compare::value("key2", CompareResult::Equal, "value2")][..])
     ///         .and_then(
-    ///             &[TxnOp::put(
-    ///                 PutRequest::new("key2", "value3").with_prev_kv(true),
-    ///             )][..],
+    ///             &[TxnOp::put("key2", "value3", Some(PutOptions::default().with_prev_kv(true)))][..],
     ///         )
-    ///         .or_else(&[TxnOp::range(RangeRequest::new("key2"))][..]);
+    ///         .or_else(&[TxnOp::range("key2", None)][..]);
     ///
     ///     let _resp = client.txn(txn_req).await?;
     ///
@@ -233,6 +252,11 @@ impl KvClient {
     /// We compact at revision 3. After the compaction, the revision list will become [(A, 3), (A, 4), (A, 5)].
     /// All revisions less than 3 are deleted. The latest revision, 3, will be kept.
     ///
+    /// `Revision` is the key-value store revision for the compaction operation.
+    /// `Physical` is set so the RPC will wait until the compaction is physically
+    /// applied to the local database such that compacted entries are totally
+    /// removed from the backend database.
+    ///
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
@@ -241,8 +265,7 @@ impl KvClient {
     ///
     ///```no_run
     /// use xline_client::{
-    ///     types::kv::{CompactionRequest, PutRequest},
-    ///     Client, ClientOptions,
+    ///     Client, ClientOptions
     /// };
     /// use anyhow::Result;
     ///
@@ -254,26 +277,26 @@ impl KvClient {
     ///         .await?
     ///         .kv_client();
     ///
-    ///     let resp_put = client.put(PutRequest::new("key", "val")).await?;
+    ///     let resp_put = client.put("key", "val", None).await?;
     ///     let rev = resp_put.header.unwrap().revision;
     ///
-    ///     let _resp = client.compact(CompactionRequest::new(rev)).await?;
+    ///     let _resp = client.compact(rev, false).await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     #[inline]
-    pub async fn compact(&self, request: CompactionRequest) -> Result<CompactionResponse> {
-        if request.physical() {
+    pub async fn compact(&self, revision: i64, physical: bool) -> Result<CompactionResponse> {
+        let request = xlineapi::CompactionRequest { revision, physical };
+        if physical {
             let mut kv_client = self.kv_client.clone();
             return kv_client
-                .compact(xlineapi::CompactionRequest::from(request))
+                .compact(request)
                 .await
                 .map(tonic::Response::into_inner)
                 .map_err(Into::into);
         }
-        let request = RequestWrapper::from(xlineapi::CompactionRequest::from(request));
-        let cmd = Command::new(request);
+        let cmd = Command::new(RequestWrapper::from(request));
         let (cmd_res, _sync_res) = self
             .curp_client
             .propose(&cmd, self.token.as_ref(), true)

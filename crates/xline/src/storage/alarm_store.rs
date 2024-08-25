@@ -160,10 +160,10 @@ impl AlarmStore {
     fn handle_alarm_get(&self, alarm: AlarmType) -> Vec<AlarmMember> {
         let types = self.types.read();
         match alarm {
-            AlarmType::None => types.values().flat_map(HashMap::values).cloned().collect(),
+            AlarmType::None => types.values().flat_map(HashMap::values).copied().collect(),
             a @ (AlarmType::Nospace | AlarmType::Corrupt) => types
                 .get(&a)
-                .map(|s| s.values().cloned().collect())
+                .map(|s| s.values().copied().collect())
                 .unwrap_or_default(),
         }
     }
@@ -175,7 +175,7 @@ impl AlarmStore {
             .read()
             .get(&alarm)
             .and_then(|e| e.get(&member_id))
-            .map_or_else(|| vec![new_alarm], |m| vec![m.clone()])
+            .map_or_else(|| vec![new_alarm], |m| vec![*m])
     }
 
     /// Handle alarm deactivate request
@@ -184,7 +184,7 @@ impl AlarmStore {
             .read()
             .get(&alarm)
             .and_then(|e| e.get(&member_id))
-            .map(|m| vec![m.clone()])
+            .map(|m| vec![*m])
             .unwrap_or_default()
     }
 
@@ -195,7 +195,7 @@ impl AlarmStore {
         let e = types_w.entry(alarm).or_default();
         let mut ops = vec![];
         if e.get(&member_id).is_none() {
-            _ = e.insert(new_alarm.member_id, new_alarm.clone());
+            _ = e.insert(new_alarm.member_id, new_alarm);
             ops.push(WriteOp::PutAlarm(new_alarm));
         }
         self.refresh_current_alarm(&types_w);

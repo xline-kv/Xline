@@ -12,16 +12,15 @@ use xline::server::XlineServer;
 use xline_client::{
     error::XlineClientError,
     types::{
-        cluster::{MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse},
-        kv::{
-            CompactionRequest, CompactionResponse, PutRequest, PutResponse, RangeRequest,
-            RangeResponse,
-        },
-        watch::{WatchRequest, WatchStreaming, Watcher},
+        kv::{CompactionResponse, PutOptions, PutResponse, RangeOptions, RangeResponse},
+        watch::{WatchOptions, WatchStreaming, Watcher},
     },
     Client, ClientOptions,
 };
-use xlineapi::{command::Command, ClusterClient, KvClient, RequestUnion, WatchClient};
+use xlineapi::{
+    command::Command, ClusterClient, KvClient, MemberAddResponse, MemberListResponse, RequestUnion,
+    WatchClient,
+};
 
 pub struct XlineNode {
     pub client_url: String,
@@ -159,27 +158,59 @@ pub struct SimClient {
     handle: NodeHandle,
 }
 
-macro_rules! impl_client_method {
-    ($method:ident, $client:ident, $request:ty, $response:ty) => {
-        pub async fn $method(
-            &self,
-            request: $request,
-        ) -> Result<$response, XlineClientError<Command>> {
-            let client = self.inner.clone();
-            self.handle
-                .spawn(async move { client.$client().$method(request).await })
-                .await
-                .unwrap()
-        }
-    };
-}
-
 impl SimClient {
-    impl_client_method!(put, kv_client, PutRequest, PutResponse);
-    impl_client_method!(range, kv_client, RangeRequest, RangeResponse);
-    impl_client_method!(compact, kv_client, CompactionRequest, CompactionResponse);
+    pub async fn put(
+        &self,
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+        option: Option<PutOptions>,
+    ) -> Result<PutResponse, XlineClientError<Command>> {
+        let client = self.inner.clone();
+        let key = key.into();
+        let value = value.into();
+        self.handle
+            .spawn(async move { client.kv_client().put(key, value, option).await })
+            .await
+            .unwrap()
+    }
 
-    impl_client_method!(watch, watch_client, WatchRequest, (Watcher, WatchStreaming));
+    pub async fn range(
+        &self,
+        key: impl Into<Vec<u8>>,
+        options: Option<RangeOptions>,
+    ) -> Result<RangeResponse, XlineClientError<Command>> {
+        let client = self.inner.clone();
+        let key = key.into();
+        self.handle
+            .spawn(async move { client.kv_client().range(key, options).await })
+            .await
+            .unwrap()
+    }
+
+    pub async fn compact(
+        &self,
+        revision: i64,
+        physical: bool,
+    ) -> Result<CompactionResponse, XlineClientError<Command>> {
+        let client = self.inner.clone();
+        self.handle
+            .spawn(async move { client.kv_client().compact(revision, physical).await })
+            .await
+            .unwrap()
+    }
+
+    pub async fn watch(
+        &self,
+        key: impl Into<Vec<u8>>,
+        options: Option<WatchOptions>,
+    ) -> Result<(Watcher, WatchStreaming), XlineClientError<Command>> {
+        let client = self.inner.clone();
+        let key = key.into();
+        self.handle
+            .spawn(async move { client.watch_client().watch(key, options).await })
+            .await
+            .unwrap()
+    }
 }
 
 impl Drop for XlineGroup {
@@ -225,12 +256,21 @@ impl SimEtcdClient {
         }
     }
 
-    pub async fn put(&self, request: PutRequest) -> Result<PutResponse, XlineClientError<Command>> {
+    pub async fn put(
+        &self,
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+        option: Option<PutOptions>,
+    ) -> Result<PutResponse, XlineClientError<Command>> {
         let mut client = self.kv.clone();
+        let key = key.into();
+        let value = value.into();
         self.handle
             .spawn(async move {
                 client
-                    .put(xlineapi::PutRequest::from(request))
+                    .put(xlineapi::PutRequest::from(
+                        option.unwrap_or_default().with_kv(key, value),
+                    ))
                     .await
                     .map(|r| r.into_inner())
                     .map_err(Into::into)
@@ -241,13 +281,14 @@ impl SimEtcdClient {
 
     pub async fn compact(
         &self,
-        request: CompactionRequest,
+        revision: i64,
+        physical: bool,
     ) -> Result<CompactionResponse, XlineClientError<Command>> {
         let mut client = self.kv.clone();
         self.handle
             .spawn(async move {
                 client
-                    .compact(xlineapi::CompactionRequest::from(request))
+                    .compact(xlineapi::CompactionRequest { revision, physical })
                     .await
                     .map(|r| r.into_inner())
                     .map_err(Into::into)
@@ -258,17 +299,20 @@ impl SimEtcdClient {
 
     pub async fn watch(
         &self,
-        request: WatchRequest,
+        key: impl Into<Vec<u8>>,
+        options: Option<WatchOptions>,
     ) -> Result<(Watcher, WatchStreaming), XlineClientError<Command>> {
         let mut client = self.watch.clone();
-
+        let key = key.into();
         self.handle
             .spawn(async move {
                 let (mut request_sender, request_receiver) =
                     futures::channel::mpsc::channel::<xlineapi::WatchRequest>(128);
 
                 let request = xlineapi::WatchRequest {
-                    request_union: Some(RequestUnion::CreateRequest(request.into())),
+                    request_union: Some(RequestUnion::CreateRequest(
+                        options.unwrap_or_default().with_key(key).into(),
+                    )),
                 };
 
                 request_sender
@@ -298,15 +342,20 @@ impl SimEtcdClient {
             .unwrap()
     }
 
-    pub async fn member_add(
-        &self,
-        request: MemberAddRequest,
+    pub async fn member_add<I: Into<String>>(
+        &mut self,
+        peer_urls: impl Into<Vec<I>>,
+        is_learner: bool,
     ) -> Result<MemberAddResponse, XlineClientError<Command>> {
         let mut client = self.cluster.clone();
+        let peer_urls: Vec<String> = peer_urls.into().into_iter().map(Into::into).collect();
         self.handle
             .spawn(async move {
                 client
-                    .member_add(xlineapi::MemberAddRequest::from(request))
+                    .member_add(xlineapi::MemberAddRequest {
+                        peer_ur_ls: peer_urls,
+                        is_learner,
+                    })
                     .await
                     .map(|r| r.into_inner())
                     .map_err(Into::into)
@@ -316,14 +365,14 @@ impl SimEtcdClient {
     }
 
     pub async fn member_list(
-        &self,
-        request: MemberListRequest,
+        &mut self,
+        linearizable: bool,
     ) -> Result<MemberListResponse, XlineClientError<Command>> {
         let mut client = self.cluster.clone();
         self.handle
             .spawn(async move {
                 client
-                    .member_list(xlineapi::MemberListRequest::from(request))
+                    .member_list(xlineapi::MemberListRequest { linearizable })
                     .await
                     .map(|r| r.into_inner())
                     .map_err(Into::into)

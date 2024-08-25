@@ -1,5 +1,6 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
+    ops::RangeBounds,
     time::{Duration, Instant},
 };
 
@@ -14,6 +15,7 @@ use crate::rpc::PbLease;
 
 /// Collection of lease related data
 #[derive(Debug)]
+#[cfg_attr(test, derive(Default))]
 pub(crate) struct LeaseCollection {
     /// Inner data of `LeaseCollection`
     inner: RwLock<LeaseCollectionInner>,
@@ -22,12 +24,13 @@ pub(crate) struct LeaseCollection {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(Default))]
 /// Inner data of `LeaseCollection`
 struct LeaseCollectionInner {
     /// lease id to lease
     lease_map: HashMap<i64, Lease>,
     /// key to lease id
-    item_map: HashMap<Vec<u8>, i64>,
+    item_map: BTreeMap<Vec<u8>, i64>,
     /// lease queue
     expired_queue: LeaseQueue,
 }
@@ -38,7 +41,7 @@ impl LeaseCollection {
         Self {
             inner: RwLock::new(LeaseCollectionInner {
                 lease_map: HashMap::new(),
-                item_map: HashMap::new(),
+                item_map: BTreeMap::new(),
                 expired_queue: LeaseQueue::new(),
             }),
             min_ttl,
@@ -106,6 +109,19 @@ impl LeaseCollection {
     /// Get lease id by given key
     pub(crate) fn get_lease(&self, key: &[u8]) -> i64 {
         self.inner.read().item_map.get(key).copied().unwrap_or(0)
+    }
+
+    /// Get lease id by given key
+    pub(crate) fn get_lease_by_range<R>(&self, range: R) -> Vec<i64>
+    where
+        R: RangeBounds<Vec<u8>>,
+    {
+        self.inner
+            .read()
+            .item_map
+            .range(range)
+            .map(|(_, lease)| *lease)
+            .collect()
     }
 
     /// Get Lease by lease id

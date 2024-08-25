@@ -1,13 +1,7 @@
 use std::error::Error;
 
 use test_macros::abort_on_panic;
-use xline_test_utils::{
-    types::{
-        kv::{DeleteRangeRequest, PutRequest},
-        watch::WatchRequest,
-    },
-    Cluster,
-};
+use xline_test_utils::Cluster;
 use xlineapi::EventType;
 
 fn event_type(event_type: i32) -> EventType {
@@ -27,7 +21,7 @@ async fn test_watch() -> Result<(), Box<dyn Error>> {
     let mut watch_client = client.watch_client();
     let kv_client = client.kv_client();
 
-    let (_watcher, mut stream) = watch_client.watch(WatchRequest::new("foo")).await?;
+    let (_watcher, mut stream) = watch_client.watch("foo", None).await?;
     let handle = tokio::spawn(async move {
         if let Ok(Some(res)) = stream.message().await {
             let event = res.events.get(0).unwrap();
@@ -45,8 +39,8 @@ async fn test_watch() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    kv_client.put(PutRequest::new("foo", "bar")).await?;
-    kv_client.delete(DeleteRangeRequest::new("foo")).await?;
+    kv_client.put("foo", "bar", None).await?;
+    kv_client.delete("foo", None).await?;
 
     handle.await?;
 

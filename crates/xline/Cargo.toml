@@ -15,41 +15,43 @@ categories = ["KV"]
 anyhow = "1.0.83"
 async-stream = "0.3.5"
 async-trait = "0.1.80"
-axum = "0.6.20"
+axum = "0.7.0"
 bytes = "1.4.0"
 clap = { version = "4", features = ["derive"] }
 clippy-utilities = "0.2.0"
-crc32fast = "1.4.0"
+crc32fast = "1.4.2"
 crossbeam-skiplist = "0.1.1"
 curp = { path = "../curp", version = "0.1.0", features = ["client-metrics"] }
 curp-external-api = { path = "../curp-external-api" }
-dashmap = "5.5.3"
+dashmap = "6.0.1"
 engine = { path = "../engine" }
-event-listener = "5.3.0"
+event-listener = "5.3.1"
 futures = "0.3.25"
-hyper = "0.14.27"
+hyper = "1.0.0"
 itertools = "0.13"
 jsonwebtoken = "9.3.0"
 log = "0.4.21"
 merged_range = "0.1.0"
 nix = "0.28.0"
-opentelemetry = { version = "0.22.0", features = ["metrics"] }
-opentelemetry-contrib = { version = "0.14.0", features = [
+opentelemetry = { version = "0.24.0", features = ["metrics"] }
+opentelemetry-contrib = { version = "0.16.0", features = [
   "jaeger_json_exporter",
   "rt-tokio",
 ] }
-opentelemetry-otlp = { version = "0.15.0", features = [
+opentelemetry-otlp = { version = "0.17.0", features = [
+  "grpc-tonic",
   "metrics",
   "http-proto",
   "reqwest-client",
 ] }
-opentelemetry-prometheus = { version = "0.15.0" }
-opentelemetry_sdk = { version = "0.22.1", features = ["metrics", "rt-tokio"] }
+opentelemetry-prometheus = { version = "0.17.0" }
+opentelemetry_sdk = { version = "0.24.1", features = ["metrics", "rt-tokio"] }
 parking_lot = "0.12.3"
 pbkdf2 = { version = "0.12.2", features = ["simple"] }
 priority-queue = "2.0.2"
 prometheus = "0.13.4"
-prost = "0.12.3"
+prost = "0.13.0"
+real_tokio = { version = "1", package = "tokio" }
 serde = { version = "1.0.204", features = ["derive"] }
 sha2 = "0.10.6"
 tokio = { version = "0.2.25", package = "madsim-tokio", features = [
@@ -62,24 +64,23 @@ tokio = { version = "0.2.25", package = "madsim-tokio", features = [
 tokio-stream = { git = "https://github.com/madsim-rs/tokio.git", rev = "ab251ad" }
 tokio-util = { version = "0.7.11", features = ["io"] }
 toml = "0.8.14"
-# tonic = "0.11.0"
-tonic = { version = "0.4.2", package = "madsim-tonic" }
-tonic-health = "0.11.0"
+tonic = { version = "0.5.0", package = "madsim-tonic" }
+tonic-health = "0.12.0"
 tracing = "0.1.37"
 tracing-appender = "0.2"
-tracing-opentelemetry = "0.23.0"
+tracing-opentelemetry = "0.25.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 utils = { path = "../utils", features = ["parking_lot"] }
-uuid = { version = "1.9.0", features = ["v4"] }
+uuid = { version = "1.10.0", features = ["v4"] }
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 x509-certificate = "0.23.1"
 xlineapi = { path = "../xlineapi" }
 
 [build-dependencies]
-tonic-build = { version = "0.4.3", package = "madsim-tonic-build" }
+tonic-build = { version = "0.5.0", package = "madsim-tonic-build" }
 
 [dev-dependencies]
-etcd-client = { version = "0.13.0", features = ["tls"] }
+etcd-client = { version = "0.14.0", features = ["tls"] }
 mockall = "0.12.1"
 rand = "0.8.5"
 strum = "0.26"

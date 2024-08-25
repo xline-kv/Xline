@@ -6,7 +6,7 @@ use xlineapi::{self, RequestUnion};
 
 use crate::{
     error::{Result, XlineClientError},
-    types::watch::{WatchRequest, WatchStreaming, Watcher},
+    types::watch::{WatchOptions, WatchStreaming, Watcher},
     AuthService,
 };
 
@@ -53,10 +53,7 @@ impl WatchClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{
-    ///     types::{kv::PutRequest, watch::WatchRequest},
-    ///     Client, ClientOptions,
-    /// };
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -67,8 +64,8 @@ impl WatchClient {
     ///     let mut watch_client = client.watch_client();
     ///     let mut kv_client = client.kv_client();
     ///
-    ///     let (mut watcher, mut stream) = watch_client.watch(WatchRequest::new("key1")).await?;
-    ///     kv_client.put(PutRequest::new("key1", "value1")).await?;
+    ///     let (mut watcher, mut stream) = watch_client.watch("key1", None).await?;
+    ///     kv_client.put("key1", "value1", None).await?;
     ///
     ///     let resp = stream.message().await?.unwrap();
     ///     let kv = resp.events[0].kv.as_ref().unwrap();
@@ -86,12 +83,18 @@ impl WatchClient {
     /// }
     /// ```
     #[inline]
-    pub async fn watch(&mut self, request: WatchRequest) -> Result<(Watcher, WatchStreaming)> {
+    pub async fn watch(
+        &mut self,
+        key: impl Into<Vec<u8>>,
+        options: Option<WatchOptions>,
+    ) -> Result<(Watcher, WatchStreaming)> {
         let (mut request_sender, request_receiver) =
             channel::<xlineapi::WatchRequest>(CHANNEL_SIZE);
 
         let request = xlineapi::WatchRequest {
-            request_union: Some(RequestUnion::CreateRequest(request.into())),
+            request_union: Some(RequestUnion::CreateRequest(
+                options.unwrap_or_default().with_key(key.into()).into(),
+            )),
         };
 
         request_sender

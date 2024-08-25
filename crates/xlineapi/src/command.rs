@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     ops::{Bound, RangeBounds},
 };
 
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     execute_error::ExecuteError, AuthInfo, PbCommand, PbCommandResponse, PbKeyRange,
-    PbSyncResponse, Request, RequestWrapper, ResponseWrapper,
+    PbSyncResponse, RequestWrapper, ResponseWrapper,
 };
 
 /// The curp client trait object on the command of xline
@@ -131,7 +131,8 @@ impl KeyRange {
     #[allow(clippy::indexing_slicing)] // end[i] is always valid
     #[must_use]
     #[inline]
-    pub fn get_prefix(key: &[u8]) -> Vec<u8> {
+    pub fn get_prefix(key: impl AsRef<[u8]>) -> Vec<u8> {
+        let key = key.as_ref();
         let mut end = key.to_vec();
         for i in (0..key.len()).rev() {
             if key[i] < 0xFF {
@@ -221,67 +222,6 @@ pub struct Command {
     auth_info: Option<AuthInfo>,
 }
 
-/// get all lease ids in the request wrapper
-pub fn get_lease_ids(wrapper: &RequestWrapper) -> HashSet<i64> {
-    match *wrapper {
-        RequestWrapper::LeaseGrantRequest(ref req) => HashSet::from_iter(vec![req.id]),
-        RequestWrapper::LeaseRevokeRequest(ref req) => HashSet::from_iter(vec![req.id]),
-        RequestWrapper::PutRequest(ref req) if req.lease != 0 => {
-            HashSet::from_iter(vec![req.lease])
-        }
-        RequestWrapper::TxnRequest(ref txn_req) => {
-            let mut lease_ids = HashSet::new();
-            let mut reqs = txn_req
-                .success
-                .iter()
-                .chain(txn_req.failure.iter())
-                .filter_map(|op| op.request.as_ref())
-                .collect::<VecDeque<_>>();
-            while let Some(req) = reqs.pop_front() {
-                match *req {
-                    Request::RequestPut(ref req) => {
-                        if req.lease != 0 {
-                            let _ignore = lease_ids.insert(req.lease);
-                        }
-                    }
-                    Request::RequestTxn(ref req) => reqs.extend(
-                        &mut req
-                            .success
-                            .iter()
-                            .chain(req.failure.iter())
-                            .filter_map(|op| op.request.as_ref()),
-                    ),
-                    Request::RequestRange(_) | Request::RequestDeleteRange(_) => {}
-                }
-            }
-            lease_ids
-        }
-        RequestWrapper::PutRequest(_)
-        | RequestWrapper::RangeRequest(_)
-        | RequestWrapper::DeleteRangeRequest(_)
-        | RequestWrapper::CompactionRequest(_)
-        | RequestWrapper::AuthEnableRequest(_)
-        | RequestWrapper::AuthDisableRequest(_)
-        | RequestWrapper::AuthStatusRequest(_)
-        | RequestWrapper::AuthRoleAddRequest(_)
-        | RequestWrapper::AuthRoleDeleteRequest(_)
-        | RequestWrapper::AuthRoleGetRequest(_)
-        | RequestWrapper::AuthRoleGrantPermissionRequest(_)
-        | RequestWrapper::AuthRoleListRequest(_)
-        | RequestWrapper::AuthRoleRevokePermissionRequest(_)
-        | RequestWrapper::AuthUserAddRequest(_)
-        | RequestWrapper::AuthUserChangePasswordRequest(_)
-        | RequestWrapper::AuthUserDeleteRequest(_)
-        | RequestWrapper::AuthUserGetRequest(_)
-        | RequestWrapper::AuthUserGrantRoleRequest(_)
-        | RequestWrapper::AuthUserListRequest(_)
-        | RequestWrapper::AuthUserRevokeRoleRequest(_)
-        | RequestWrapper::AuthenticateRequest(_)
-        | RequestWrapper::LeaseLeasesRequest(_)
-        | RequestWrapper::AlarmRequest(_) => HashSet::new(),
-    }
-}
-
 impl ConflictCheck for Command {
     #[inline]
     fn is_conflict(&self, other: &Self) -> bool {
@@ -334,8 +274,8 @@ impl ConflictCheck for Command {
             }
         }
 
-        let this_lease_ids = get_lease_ids(this_req);
-        let other_lease_ids = get_lease_ids(other_req);
+        let this_lease_ids = this_req.leases().into_iter().collect::<HashSet<_>>();
+        let other_lease_ids = other_req.leases().into_iter().collect::<HashSet<_>>();
         let lease_conflict = !this_lease_ids.is_disjoint(&other_lease_ids);
         let key_conflict = self
             .keys()
@@ -541,6 +481,13 @@ impl CurpCommand for Command {
     }
 }
 
+impl Command {
+    /// Get leases of the command
+    pub fn leases(&self) -> Vec<i64> {
+        self.request().leases()
+    }
+}
+
 impl PbCodec for Command {
     #[inline]
     fn encode(&self) -> Vec<u8> {
@@ -569,9 +516,9 @@ impl PbCodec for Command {
 mod test {
     use super::*;
     use crate::{
-        AuthEnableRequest, AuthStatusRequest, CommandKeys, CompactionRequest, Compare,
+        AuthEnableRequest, AuthStatusRequest, CommandAttr, CompactionRequest, Compare,
         DeleteRangeRequest, LeaseGrantRequest, LeaseLeasesRequest, LeaseRevokeRequest, PutRequest,
-        PutResponse, RangeRequest, RequestOp, TxnRequest,
+        PutResponse, RangeRequest, Request, RequestOp, TxnRequest,
     };
 
     #[test]

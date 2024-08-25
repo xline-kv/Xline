@@ -82,7 +82,7 @@ async fn test_unary_fetch_clusters_serializable() {
     let connects = init_mocked_connects(3, |_id, conn| {
         conn.expect_fetch_cluster().return_once(|_req, _timeout| {
             Ok(tonic::Response::new(FetchClusterResponse {
-                leader_id: Some(0),
+                leader_id: Some(0.into()),
                 term: 1,
                 cluster_id: 123,
                 members: vec![
@@ -119,7 +119,7 @@ async fn test_unary_fetch_clusters_serializable_local_first() {
                     panic!("other server's `fetch_cluster` should not be invoked");
                 };
                 Ok(tonic::Response::new(FetchClusterResponse {
-                    leader_id: Some(0),
+                    leader_id: Some(0.into()),
                     term: 1,
                     cluster_id: 123,
                     members,
@@ -140,7 +140,7 @@ async fn test_unary_fetch_clusters_linearizable() {
             .return_once(move |_req, _timeout| {
                 let resp = match id {
                     0 => FetchClusterResponse {
-                        leader_id: Some(0),
+                        leader_id: Some(0.into()),
                         term: 2,
                         cluster_id: 123,
                         members: vec![
@@ -153,7 +153,7 @@ async fn test_unary_fetch_clusters_linearizable() {
                         cluster_version: 1,
                     },
                     1 | 4 => FetchClusterResponse {
-                        leader_id: Some(0),
+                        leader_id: Some(0.into()),
                         term: 2,
                         cluster_id: 123,
                         members: vec![], // linearizable read from follower returns empty members
@@ -167,8 +167,8 @@ async fn test_unary_fetch_clusters_linearizable() {
                         cluster_version: 1,
                     },
                     3 => FetchClusterResponse {
-                        leader_id: Some(3), // imagine this node is a old leader
-                        term: 1,            // with the old term
+                        leader_id: Some(3.into()), // imagine this node is a old leader
+                        term: 1,                   // with the old term
                         cluster_id: 123,
                         members: vec![
                             Member::new(0, "S0", vec!["B0".to_owned()], [], false),
@@ -206,7 +206,7 @@ async fn test_unary_fetch_clusters_linearizable_failed() {
             .return_once(move |_req, _timeout| {
                 let resp = match id {
                     0 => FetchClusterResponse {
-                        leader_id: Some(0),
+                        leader_id: Some(0.into()),
                         term: 2,
                         cluster_id: 123,
                         members: vec![
@@ -219,7 +219,7 @@ async fn test_unary_fetch_clusters_linearizable_failed() {
                         cluster_version: 1,
                     },
                     1 => FetchClusterResponse {
-                        leader_id: Some(0),
+                        leader_id: Some(0.into()),
                         term: 2,
                         cluster_id: 123,
                         members: vec![], // linearizable read from follower returns empty members
@@ -233,8 +233,8 @@ async fn test_unary_fetch_clusters_linearizable_failed() {
                         cluster_version: 1,
                     },
                     3 => FetchClusterResponse {
-                        leader_id: Some(3), // imagine this node is a old leader
-                        term: 1,            // with the old term
+                        leader_id: Some(3.into()), // imagine this node is a old leader
+                        term: 1,                   // with the old term
                         cluster_id: 123,
                         members: vec![
                             Member::new(0, "S0", vec!["B0".to_owned()], [], false),
@@ -246,8 +246,8 @@ async fn test_unary_fetch_clusters_linearizable_failed() {
                         cluster_version: 1,
                     },
                     4 => FetchClusterResponse {
-                        leader_id: Some(3), // imagine this node is a old follower of old leader(3)
-                        term: 1,            // with the old term
+                        leader_id: Some(3.into()), // imagine this node is a old follower of old leader(3)
+                        term: 1,                   // with the old term
                         cluster_id: 123,
                         members: vec![],
                         cluster_version: 1,
@@ -420,7 +420,7 @@ async fn test_unary_slow_round_fetch_leader_first() {
             .return_once(move |_req, _timeout| {
                 flag_c.store(true, std::sync::atomic::Ordering::Relaxed);
                 Ok(tonic::Response::new(FetchClusterResponse {
-                    leader_id: Some(0),
+                    leader_id: Some(0.into()),
                     term: 1,
                     cluster_id: 123,
                     members: vec![
@@ -684,7 +684,7 @@ async fn test_retry_propose_return_retry_error() {
             conn.expect_fetch_cluster()
                 .returning(move |_req, _timeout| {
                     Ok(tonic::Response::new(FetchClusterResponse {
-                        leader_id: Some(0),
+                        leader_id: Some(0.into()),
                         term: 2,
                         cluster_id: 123,
                         members: vec![

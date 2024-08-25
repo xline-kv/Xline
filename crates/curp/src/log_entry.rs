@@ -98,5 +98,7 @@ pub(super) fn propose_id_to_inflight_id(id: ProposeId) -> InflightId {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     id.0.hash(&mut hasher);
     id.1.hash(&mut hasher);
-    hasher.finish()
+    let inflight = hasher.finish();
+    tracing::debug!("convert: {id:?} to {inflight:?}");
+    inflight
 }

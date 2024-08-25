@@ -1,10 +1,6 @@
 use anyhow::Result;
 use xline_client::{
-    types::auth::{
-        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, Permission,
-        PermissionType,
-    },
+    types::auth::{AuthRoleRevokePermissionRequest, PermissionType},
     Client, ClientOptions,
 };
 
@@ -18,21 +14,15 @@ async fn main() -> Result<()> {
         .auth_client();
 
     // add roles
-    client.role_add(AuthRoleAddRequest::new("role1")).await?;
-    client.role_add(AuthRoleAddRequest::new("role2")).await?;
+    client.role_add("role1").await?;
+    client.role_add("role2").await?;
 
     // grant permissions to roles
     client
-        .role_grant_permission(AuthRoleGrantPermissionRequest::new(
-            "role1",
-            Permission::new(PermissionType::Read, "key1"),
-        ))
+        .role_grant_permission("role1", PermissionType::Read, "key1", None)
         .await?;
     client
-        .role_grant_permission(AuthRoleGrantPermissionRequest::new(
-            "role2",
-            Permission::new(PermissionType::Readwrite, "key2"),
-        ))
+        .role_grant_permission("role2", PermissionType::Readwrite, "key2", None)
         .await?;
 
     // list all roles and their permissions
@@ -40,7 +30,7 @@ async fn main() -> Result<()> {
     println!("roles:");
     for role in resp.roles {
         println!("{}", role);
-        let get_resp = client.role_get(AuthRoleGetRequest::new(role)).await?;
+        let get_resp = client.role_get(role).await?;
         println!("permmisions:");
         for perm in get_resp.perm {
             println!("{} {}", perm.perm_type, String::from_utf8_lossy(&perm.key));
@@ -56,12 +46,8 @@ async fn main() -> Result<()> {
         .await?;
 
     // delete roles
-    client
-        .role_delete(AuthRoleDeleteRequest::new("role1"))
-        .await?;
-    client
-        .role_delete(AuthRoleDeleteRequest::new("role2"))
-        .await?;
+    client.role_delete("role1").await?;
+    client.role_delete("role2").await?;
 
     Ok(())
 }

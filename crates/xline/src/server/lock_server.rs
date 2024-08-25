@@ -107,7 +107,7 @@ impl LockServer {
                 ..Default::default()
             })),
         };
-        let range_end = KeyRange::get_prefix(prefix.as_bytes());
+        let range_end = KeyRange::get_prefix(prefix);
         #[allow(clippy::as_conversions)] // this cast is always safe
         let get_owner = RequestOp {
             request: Some(Request::RequestRange(RangeRequest {
@@ -137,7 +137,7 @@ impl LockServer {
         let mut watch_client =
             WatchClient::new(Channel::balance_list(self.addrs.clone().into_iter()));
         loop {
-            let range_end = KeyRange::get_prefix(pfx.as_bytes());
+            let range_end = KeyRange::get_prefix(&pfx);
             #[allow(clippy::as_conversions)] // this cast is always safe
             let get_req = RangeRequest {
                 key: pfx.as_bytes().to_vec(),

@@ -3,11 +3,11 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use futures::channel::mpsc::Sender;
-use xlineapi::{command::KeyRange, RequestUnion, WatchCancelRequest, WatchProgressRequest};
-pub use xlineapi::{Event, EventType, KeyValue, WatchResponse};
-
+use super::range_end::RangeOption;
 use crate::error::{Result, XlineClientError};
+use futures::channel::mpsc::Sender;
+pub use xlineapi::{Event, EventType, KeyValue, WatchResponse};
+use xlineapi::{RequestUnion, WatchCancelRequest, WatchProgressRequest};
 
 /// The watching handle.
 #[derive(Debug)]
@@ -39,7 +39,7 @@ impl Watcher {
     ///
     /// If sender fails to send to channel
     #[inline]
-    pub fn watch(&mut self, request: WatchRequest) -> Result<()> {
+    pub fn watch(&mut self, request: WatchOptions) -> Result<()> {
         let request = xlineapi::WatchRequest {
             request_union: Some(RequestUnion::CreateRequest(request.into())),
         };
@@ -102,37 +102,28 @@ impl Watcher {
 }
 
 /// Watch Request
-#[derive(Clone, Debug, PartialEq)]
-pub struct WatchRequest {
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct WatchOptions {
     /// Inner watch create request
     inner: xlineapi::WatchCreateRequest,
+    /// Watch range end options
+    range_end_options: RangeOption,
 }
 
-impl WatchRequest {
-    /// Creates a New `WatchRequest`
-    ///
+impl WatchOptions {
     /// `key` is the key to register for watching.
     #[inline]
     #[must_use]
-    pub fn new(key: impl Into<Vec<u8>>) -> Self {
-        Self {
-            inner: xlineapi::WatchCreateRequest {
-                key: key.into(),
-                ..Default::default()
-            },
-        }
+    pub fn with_key(mut self, key: impl Into<Vec<u8>>) -> Self {
+        self.inner.key = key.into();
+        self
     }
 
     /// If set, Xline will watch all keys with the matching prefix
     #[inline]
     #[must_use]
     pub fn with_prefix(mut self) -> Self {
-        if self.inner.key.is_empty() {
-            self.inner.key = vec![0];
-            self.inner.range_end = vec![0];
-        } else {
-            self.inner.range_end = KeyRange::get_prefix(&self.inner.key);
-        }
+        self.range_end_options = RangeOption::Prefix;
         self
     }
 
@@ -140,10 +131,7 @@ impl WatchRequest {
     #[inline]
     #[must_use]
     pub fn with_from_key(mut self) -> Self {
-        if self.inner.key.is_empty() {
-            self.inner.key = vec![0];
-        }
-        self.inner.range_end = vec![0];
+        self.range_end_options = RangeOption::FromKey;
         self
     }
 
@@ -155,7 +143,7 @@ impl WatchRequest {
     #[inline]
     #[must_use]
     pub fn with_range_end(mut self, range_end: impl Into<Vec<u8>>) -> Self {
-        self.inner.range_end = range_end.into();
+        self.range_end_options = RangeOption::RangeEnd(range_end.into());
         self
     }
 
@@ -212,9 +200,12 @@ impl WatchRequest {
     }
 }
 
-impl From<WatchRequest> for xlineapi::WatchCreateRequest {
+impl From<WatchOptions> for xlineapi::WatchCreateRequest {
     #[inline]
-    fn from(request: WatchRequest) -> Self {
+    fn from(mut request: WatchOptions) -> Self {
+        request.inner.range_end = request
+            .range_end_options
+            .get_range_end(&mut request.inner.key);
         request.inner
     }
 }
@@ -276,5 +267,24 @@ impl DerefMut for WatchStreaming {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use xlineapi::command::KeyRange;
+
+    use super::*;
+
+    #[test]
+    fn test_watch_request_build_from_watch_options() {
+        let options = WatchOptions::default().with_prev_kv().with_key("key");
+        let request = xlineapi::WatchCreateRequest::from(options.clone());
+        assert!(request.prev_kv);
+        assert!(request.range_end.is_empty());
+
+        let options2 = options.clone().with_prefix();
+        let request = xlineapi::WatchCreateRequest::from(options2.clone());
+        assert_eq!(request.range_end, KeyRange::get_prefix("key"));
     }
 }

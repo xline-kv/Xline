@@ -1,5 +1,5 @@
 use clap::{arg, ArgMatches, Command};
-use xline_client::{error::Result, types::auth::AuthRoleAddRequest, Client};
+use xline_client::{error::Result, Client};
 
 use crate::utils::printer::Printer;
 
@@ -11,17 +11,20 @@ pub(super) fn command() -> Command {
 }
 
 /// Build request from matches
-pub(super) fn build_request(matches: &ArgMatches) -> AuthRoleAddRequest {
+///
+/// # Returns
+///
+/// name of the role
+pub(super) fn build_request(matches: &ArgMatches) -> String {
     let name = matches.get_one::<String>("name").expect("required");
-    AuthRoleAddRequest::new(name)
+    name.into()
 }
 
 /// Execute the command
 pub(super) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
-    let req = build_request(matches);
-    let resp = client.auth_client().role_add(req).await?;
+    let name = build_request(matches);
+    let resp = client.auth_client().role_add(name).await?;
     resp.print();
-
     Ok(())
 }
 
@@ -30,14 +33,11 @@ mod tests {
     use super::*;
     use crate::test_case_struct;
 
-    test_case_struct!(AuthRoleAddRequest);
+    test_case_struct!(String);
 
     #[test]
     fn command_parse_should_be_valid() {
-        let test_cases = vec![TestCase::new(
-            vec!["add", "Admin"],
-            Some(AuthRoleAddRequest::new("Admin")),
-        )];
+        let test_cases = vec![TestCase::new(vec!["add", "Admin"], Some("Admin".into()))];
 
         for case in test_cases {
             case.run_test();

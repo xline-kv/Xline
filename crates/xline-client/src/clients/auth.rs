@@ -13,11 +13,9 @@ use xlineapi::{
 
 use crate::{
     error::{Result, XlineClientError},
-    types::auth::{
-        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
-        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, AuthUserAddRequest,
-        AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGetRequest,
-        AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest, AuthenticateRequest,
+    types::{
+        auth::{AuthRoleRevokePermissionRequest, Permission, PermissionType},
+        range_end::RangeOption,
     },
     AuthService, CurpClient,
 };
@@ -170,7 +168,7 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::auth::AuthenticateRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -182,7 +180,7 @@ impl AuthClient {
     ///         .auth_client();
     ///
     ///     let resp = client
-    ///         .authenticate(AuthenticateRequest::new("root", "root pass word"))
+    ///         .authenticate("root", "root pass word")
     ///         .await?;
     ///
     ///     println!("auth token: {}", resp.token);
@@ -193,25 +191,33 @@ impl AuthClient {
     #[inline]
     pub async fn authenticate(
         &mut self,
-        request: AuthenticateRequest,
+        name: impl Into<String>,
+        password: impl Into<String>,
     ) -> Result<AuthenticateResponse> {
         Ok(self
             .auth_client
-            .authenticate(xlineapi::AuthenticateRequest::from(request))
+            .authenticate(xlineapi::AuthenticateRequest {
+                name: name.into(),
+                password: password.into(),
+            })
             .await?
             .into_inner())
     }
 
     /// Add an user.
+    /// Set password to empty String if you want to create a user without password.
     ///
     /// # Errors
     ///
-    /// This function will return an error if the inner CURP client encountered a propose failure
+    /// This function will return an error if the inner CURP client encountered a propose failure;
+    ///
+    /// Returns `XlineClientError::InvalidArgs` if the user name is empty,
+    /// or the password is empty when `allow_no_password` is false.
     ///
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::auth::AuthUserAddRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -222,33 +228,43 @@ impl AuthClient {
     ///         .await?
     ///         .auth_client();
     ///
-    ///     client.user_add(AuthUserAddRequest::new("user1")).await?;
+    ///     client.user_add("user1", "", true).await?;
     ///     Ok(())
     /// }
     ///```
     #[inline]
-    pub async fn user_add(&self, mut request: AuthUserAddRequest) -> Result<AuthUserAddResponse> {
-        if request.inner.name.is_empty() {
+    pub async fn user_add(
+        &self,
+        name: impl Into<String>,
+        password: impl AsRef<str>,
+        allow_no_password: bool,
+    ) -> Result<AuthUserAddResponse> {
+        let name = name.into();
+        let password: &str = password.as_ref();
+        if name.is_empty() {
             return Err(XlineClientError::InvalidArgs(String::from(
                 "user name is empty",
             )));
         }
-        let need_password = request
-            .inner
-            .options
-            .as_ref()
-            .map_or(true, |o| !o.no_password);
-        if need_password && request.inner.password.is_empty() {
+        if !allow_no_password && password.is_empty() {
             return Err(XlineClientError::InvalidArgs(String::from(
                 "password is required but not provided",
             )));
         }
-        let hashed_password = hash_password(request.inner.password.as_bytes()).map_err(|err| {
+        let hashed_password = hash_password(password.as_bytes()).map_err(|err| {
             XlineClientError::InternalError(format!("Failed to hash password: {err}"))
         })?;
-        request.inner.hashed_password = hashed_password;
-        request.inner.password = String::new();
-        self.handle_req(request.inner, false).await
+        let options = allow_no_password.then_some(xlineapi::UserAddOptions { no_password: true });
+        self.handle_req(
+            xlineapi::AuthUserAddRequest {
+                name,
+                password: String::new(),
+                hashed_password,
+                options,
+            },
+            false,
+        )
+        .await
     }
 
     /// Gets the user info by the user name.
@@ -260,7 +276,7 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::auth::AuthUserGetRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -271,7 +287,7 @@ impl AuthClient {
     ///         .await?
     ///         .auth_client();
     ///
-    ///     let resp = client.user_get(AuthUserGetRequest::new("user")).await?;
+    ///     let resp = client.user_get("user").await?;
     ///
     ///     for role in resp.roles {
     ///         print!("{} ", role);
@@ -281,8 +297,9 @@ impl AuthClient {
     /// }
     ///```
     #[inline]
-    pub async fn user_get(&self, request: AuthUserGetRequest) -> Result<AuthUserGetResponse> {
-        self.handle_req(request.inner, true).await
+    pub async fn user_get(&self, name: impl Into<String>) -> Result<AuthUserGetResponse> {
+        self.handle_req(xlineapi::AuthUserGetRequest { name: name.into() }, true)
+            .await
     }
 
     /// Lists all users.
@@ -340,23 +357,15 @@ impl AuthClient {
     ///         .await?
     ///         .auth_client();
     ///
-    ///     // add the user
-    ///
-    ///     let resp = client.user_list().await?;
-    ///
-    ///     for user in resp.users {
-    ///         println!("user: {}", user);
-    ///     }
+    ///     let resp = client.user_delete("user").await?;
     ///
     ///     Ok(())
     /// }
     ///```
     #[inline]
-    pub async fn user_delete(
-        &self,
-        request: AuthUserDeleteRequest,
-    ) -> Result<AuthUserDeleteResponse> {
-        self.handle_req(request.inner, false).await
+    pub async fn user_delete(&self, name: impl Into<String>) -> Result<AuthUserDeleteResponse> {
+        self.handle_req(xlineapi::AuthUserDeleteRequest { name: name.into() }, false)
+            .await
     }
 
     /// Change password for an user.
@@ -368,9 +377,7 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{
-    ///     types::auth::AuthUserChangePasswordRequest, Client, ClientOptions,
-    /// };
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -384,7 +391,7 @@ impl AuthClient {
     ///     // add the user
     ///
     ///     client
-    ///         .user_change_password(AuthUserChangePasswordRequest::new("user", "123"))
+    ///         .user_change_password("user", "123")
     ///         .await?;
     ///
     ///     Ok(())
@@ -393,19 +400,27 @@ impl AuthClient {
     #[inline]
     pub async fn user_change_password(
         &self,
-        mut request: AuthUserChangePasswordRequest,
+        name: impl Into<String>,
+        password: impl AsRef<str>,
     ) -> Result<AuthUserChangePasswordResponse> {
-        if request.inner.password.is_empty() {
+        let password: &str = password.as_ref();
+        if password.is_empty() {
             return Err(XlineClientError::InvalidArgs(String::from(
                 "role name is empty",
             )));
         }
-        let hashed_password = hash_password(request.inner.password.as_bytes()).map_err(|err| {
+        let hashed_password = hash_password(password.as_bytes()).map_err(|err| {
             XlineClientError::InternalError(format!("Failed to hash password: {err}"))
         })?;
-        request.inner.hashed_password = hashed_password;
-        request.inner.password = String::new();
-        self.handle_req(request.inner, false).await
+        self.handle_req(
+            xlineapi::AuthUserChangePasswordRequest {
+                name: name.into(),
+                hashed_password,
+                password: String::new(),
+            },
+            false,
+        )
+        .await
     }
 
     /// Grant role for an user.
@@ -417,7 +432,7 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::auth::AuthUserGrantRoleRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -430,9 +445,7 @@ impl AuthClient {
     ///
     ///     // add user and role
     ///
-    ///     client
-    ///         .user_grant_role(AuthUserGrantRoleRequest::new("user", "role"))
-    ///         .await?;
+    ///     client.user_grant_role("user", "role").await?;
     ///
     ///     Ok(())
     /// }
@@ -440,9 +453,17 @@ impl AuthClient {
     #[inline]
     pub async fn user_grant_role(
         &self,
-        request: AuthUserGrantRoleRequest,
+        name: impl Into<String>,
+        role: impl Into<String>,
     ) -> Result<AuthUserGrantRoleResponse> {
-        self.handle_req(request.inner, false).await
+        self.handle_req(
+            xlineapi::AuthUserGrantRoleRequest {
+                user: name.into(),
+                role: role.into(),
+            },
+            false,
+        )
+        .await
     }
 
     /// Revoke role for an user.
@@ -454,7 +475,7 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::auth::AuthUserRevokeRoleRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -467,9 +488,7 @@ impl AuthClient {
     ///
     ///     // grant role
     ///
-    ///     client
-    ///         .user_revoke_role(AuthUserRevokeRoleRequest::new("user", "role"))
-    ///         .await?;
+    ///     client.user_revoke_role("user", "role").await?;
     ///
     ///     Ok(())
     /// }
@@ -477,9 +496,17 @@ impl AuthClient {
     #[inline]
     pub async fn user_revoke_role(
         &self,
-        request: AuthUserRevokeRoleRequest,
+        name: impl Into<String>,
+        role: impl Into<String>,
     ) -> Result<AuthUserRevokeRoleResponse> {
-        self.handle_req(request.inner, false).await
+        self.handle_req(
+            xlineapi::AuthUserRevokeRoleRequest {
+                name: name.into(),
+                role: role.into(),
+            },
+            false,
+        )
+        .await
     }
 
     /// Adds role.
@@ -491,7 +518,6 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::types::auth::AuthRoleAddRequest;
     /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
@@ -503,19 +529,21 @@ impl AuthClient {
     ///         .await?
     ///         .auth_client();
     ///
-    ///     client.role_add(AuthRoleAddRequest::new("role")).await?;
+    ///     client.role_add("role").await?;
     ///
     ///     Ok(())
     /// }
     ///```
     #[inline]
-    pub async fn role_add(&self, request: AuthRoleAddRequest) -> Result<AuthRoleAddResponse> {
-        if request.inner.name.is_empty() {
+    pub async fn role_add(&self, name: impl Into<String>) -> Result<AuthRoleAddResponse> {
+        let name = name.into();
+        if name.is_empty() {
             return Err(XlineClientError::InvalidArgs(String::from(
                 "role name is empty",
             )));
         }
-        self.handle_req(request.inner, false).await
+        self.handle_req(xlineapi::AuthRoleAddRequest { name }, false)
+            .await
     }
 
     /// Gets role.
@@ -527,7 +555,6 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::types::auth::AuthRoleGetRequest;
     /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
@@ -539,7 +566,7 @@ impl AuthClient {
     ///         .await?
     ///         .auth_client();
     ///
-    ///     let resp = client.role_get(AuthRoleGetRequest::new("role")).await?;
+    ///     let resp = client.role_get("role").await?;
     ///
     ///     println!("permissions:");
     ///     for perm in resp.perm {
@@ -550,8 +577,9 @@ impl AuthClient {
     /// }
     ///```
     #[inline]
-    pub async fn role_get(&self, request: AuthRoleGetRequest) -> Result<AuthRoleGetResponse> {
-        self.handle_req(request.inner, true).await
+    pub async fn role_get(&self, name: impl Into<String>) -> Result<AuthRoleGetResponse> {
+        self.handle_req(xlineapi::AuthRoleGetRequest { role: name.into() }, true)
+            .await
     }
 
     /// Lists role.
@@ -599,7 +627,7 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::auth::AuthRoleDeleteRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -613,18 +641,16 @@ impl AuthClient {
     ///     // add the role
     ///
     ///     client
-    ///         .role_delete(AuthRoleDeleteRequest::new("role"))
+    ///         .role_delete("role")
     ///         .await?;
     ///
     ///     Ok(())
     /// }
     ///```
     #[inline]
-    pub async fn role_delete(
-        &self,
-        request: AuthRoleDeleteRequest,
-    ) -> Result<AuthRoleDeleteResponse> {
-        self.handle_req(request.inner, false).await
+    pub async fn role_delete(&self, name: impl Into<String>) -> Result<AuthRoleDeleteResponse> {
+        self.handle_req(xlineapi::AuthRoleDeleteRequest { role: name.into() }, false)
+            .await
     }
 
     /// Grants role permission.
@@ -637,7 +663,7 @@ impl AuthClient {
     ///
     /// ```no_run
     /// use xline_client::{
-    ///     types::auth::{AuthRoleGrantPermissionRequest, Permission, PermissionType},
+    ///     types::auth::{Permission, PermissionType},
     ///     Client, ClientOptions,
     /// };
     /// use anyhow::Result;
@@ -653,10 +679,12 @@ impl AuthClient {
     ///     // add the role and key
     ///
     ///     client
-    ///         .role_grant_permission(AuthRoleGrantPermissionRequest::new(
+    ///         .role_grant_permission(
     ///             "role",
-    ///             Permission::new(PermissionType::Read, "key"),
-    ///         ))
+    ///             PermissionType::Read,
+    ///             "key",
+    ///             None
+    ///         )
     ///         .await?;
     ///
     ///     Ok(())
@@ -665,14 +693,19 @@ impl AuthClient {
     #[inline]
     pub async fn role_grant_permission(
         &self,
-        request: AuthRoleGrantPermissionRequest,
+        name: impl Into<String>,
+        perm_type: PermissionType,
+        perm_key: impl Into<Vec<u8>>,
+        range_option: Option<RangeOption>,
     ) -> Result<AuthRoleGrantPermissionResponse> {
-        if request.inner.perm.is_none() {
-            return Err(XlineClientError::InvalidArgs(String::from(
-                "Permission not given",
-            )));
-        }
-        self.handle_req(request.inner, false).await
+        self.handle_req(
+            xlineapi::AuthRoleGrantPermissionRequest {
+                name: name.into(),
+                perm: Some(Permission::new(perm_type, perm_key.into(), range_option).into()),
+            },
+            false,
+        )
+        .await
     }
 
     /// Revokes role permission.

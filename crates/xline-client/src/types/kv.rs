@@ -4,27 +4,24 @@ pub use xlineapi::{
     RangeResponse, Response, ResponseOp, SortOrder, SortTarget, TargetUnion, TxnResponse,
 };
 
-/// Request type for `Put`
-#[derive(Debug, PartialEq)]
-pub struct PutRequest {
+use super::range_end::RangeOption;
+
+/// Options for `Put`, as same as the `PutRequest` for `Put`.
+#[derive(Debug, PartialEq, Default)]
+pub struct PutOptions {
     /// Inner request
     inner: xlineapi::PutRequest,
 }
 
-impl PutRequest {
-    /// Creates a new `PutRequest`
-    ///
+impl PutOptions {
+    #[inline]
+    #[must_use]
     /// `key` is the key, in bytes, to put into the key-value store.
     /// `value` is the value, in bytes, to associate with the key in the key-value store.
-    #[inline]
-    pub fn new(key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> Self {
-        Self {
-            inner: xlineapi::PutRequest {
-                key: key.into(),
-                value: value.into(),
-                ..Default::default()
-            },
-        }
+    pub fn with_kv(mut self, key: Vec<u8>, value: Vec<u8>) -> Self {
+        self.inner.key = key;
+        self.inner.value = value;
+        self
     }
 
     /// lease is the lease ID to associate with the key in the key-value store.
@@ -106,44 +103,36 @@ impl PutRequest {
     }
 }
 
-impl From<PutRequest> for xlineapi::PutRequest {
+impl From<PutOptions> for xlineapi::PutRequest {
     #[inline]
-    fn from(req: PutRequest) -> Self {
+    fn from(req: PutOptions) -> Self {
         req.inner
     }
 }
 
-/// Request type for `Range`
-#[derive(Debug, PartialEq)]
-pub struct RangeRequest {
-    /// Inner request
+/// Options for `range` function.
+#[derive(Debug, PartialEq, Default)]
+pub struct RangeOptions {
+    /// Inner request, RangeRequest = inner + key + range_end
     inner: xlineapi::RangeRequest,
+    /// Range end options, indicates how to generate `range_end` from key.
+    range_end_options: RangeOption,
 }
 
-impl RangeRequest {
-    /// Creates a new `RangeRequest`
-    ///
+impl RangeOptions {
     /// `key` is the first key for the range. If `range_end` is not given, the request only looks up key.
     #[inline]
-    pub fn new(key: impl Into<Vec<u8>>) -> Self {
-        Self {
-            inner: xlineapi::RangeRequest {
-                key: key.into(),
-                ..Default::default()
-            },
-        }
+    #[must_use]
+    pub fn with_key(mut self, key: impl Into<Vec<u8>>) -> Self {
+        self.inner.key = key.into();
+        self
     }
 
     /// If set, Xline will return all keys with the matching prefix
     #[inline]
     #[must_use]
     pub fn with_prefix(mut self) -> Self {
-        if self.inner.key.is_empty() {
-            self.inner.key = vec![0];
-            self.inner.range_end = vec![0];
-        } else {
-            self.inner.range_end = KeyRange::get_prefix(&self.inner.key);
-        }
+        self.range_end_options = RangeOption::Prefix;
         self
     }
 
@@ -151,10 +140,7 @@ impl RangeRequest {
     #[inline]
     #[must_use]
     pub fn with_from_key(mut self) -> Self {
-        if self.inner.key.is_empty() {
-            self.inner.key = vec![0];
-        }
-        self.inner.range_end = vec![0];
+        self.range_end_options = RangeOption::FromKey;
         self
     }
 
@@ -163,7 +149,7 @@ impl RangeRequest {
     #[inline]
     #[must_use]
     pub fn with_range_end(mut self, range_end: impl Into<Vec<u8>>) -> Self {
-        self.inner.range_end = range_end.into();
+        self.range_end_options = RangeOption::RangeEnd(range_end.into());
         self
     }
 
@@ -268,18 +254,11 @@ impl RangeRequest {
         self
     }
 
-    /// Get `key`
+    /// Get `range_end_options`
     #[inline]
     #[must_use]
-    pub fn key(&self) -> &[u8] {
-        &self.inner.key
-    }
-
-    /// Get `range_end`
-    #[inline]
-    #[must_use]
-    pub fn range_end(&self) -> &[u8] {
-        &self.inner.range_end
+    pub fn range_end_options(&self) -> &RangeOption {
+        &self.range_end_options
     }
 
     /// Get `limit`
@@ -360,44 +339,37 @@ impl RangeRequest {
     }
 }
 
-impl From<RangeRequest> for xlineapi::RangeRequest {
+impl From<RangeOptions> for xlineapi::RangeRequest {
     #[inline]
-    fn from(req: RangeRequest) -> Self {
+    fn from(mut req: RangeOptions) -> Self {
+        req.inner.range_end = req.range_end_options.get_range_end(&mut req.inner.key);
         req.inner
     }
 }
 
 /// Request type for `DeleteRange`
-#[derive(Debug, PartialEq)]
-pub struct DeleteRangeRequest {
+#[derive(Debug, PartialEq, Default)]
+pub struct DeleteRangeOptions {
     /// Inner request
     inner: xlineapi::DeleteRangeRequest,
+    /// Range end options
+    range_end_options: RangeOption,
 }
 
-impl DeleteRangeRequest {
-    /// Creates a new `DeleteRangeRequest`
-    ///
-    /// `key` is the first key to delete in the range.
+impl DeleteRangeOptions {
+    /// `key` is the first key for the range. If `range_end` is not given, the request only looks up key.
     #[inline]
-    pub fn new(key: impl Into<Vec<u8>>) -> Self {
-        Self {
-            inner: xlineapi::DeleteRangeRequest {
-                key: key.into(),
-                ..Default::default()
-            },
-        }
+    #[must_use]
+    pub fn with_key(mut self, key: impl Into<Vec<u8>>) -> Self {
+        self.inner.key = key.into();
+        self
     }
 
     /// If set, Xline will delete all keys with the matching prefix
     #[inline]
     #[must_use]
     pub fn with_prefix(mut self) -> Self {
-        if self.inner.key.is_empty() {
-            self.inner.key = vec![0];
-            self.inner.range_end = vec![0];
-        } else {
-            self.inner.range_end = KeyRange::get_prefix(&self.inner.key);
-        }
+        self.range_end_options = RangeOption::Prefix;
         self
     }
 
@@ -405,22 +377,15 @@ impl DeleteRangeRequest {
     #[inline]
     #[must_use]
     pub fn with_from_key(mut self) -> Self {
-        if self.inner.key.is_empty() {
-            self.inner.key = vec![0];
-        }
-        self.inner.range_end = vec![0];
+        self.range_end_options = RangeOption::FromKey;
         self
     }
 
-    /// `range_end` is the key following the last key to delete for the range \[key,` range_en`d).
-    /// If `range_end` is not given, the range is defined to contain only the key argument.
-    /// If `range_end` is one bit larger than the given key, then the range is all the keys
-    /// with the prefix (the given key).
-    /// If `range_end` is '\0', the range is all keys greater than or equal to the key argument.
+    /// If set, Xline will delete all keys in range `[key, range_end)`.
     #[inline]
     #[must_use]
     pub fn with_range_end(mut self, range_end: impl Into<Vec<u8>>) -> Self {
-        self.inner.range_end = range_end.into();
+        self.range_end_options = RangeOption::RangeEnd(range_end.into());
         self
     }
 
@@ -433,18 +398,11 @@ impl DeleteRangeRequest {
         self
     }
 
-    /// Get `key`
+    /// Get `range_end_options`
     #[inline]
     #[must_use]
-    pub fn key(&self) -> &[u8] {
-        &self.inner.key
-    }
-
-    /// Get `range_end`
-    #[inline]
-    #[must_use]
-    pub fn range_end(&self) -> &[u8] {
-        &self.inner.range_end
+    pub fn range_end_options(&self) -> &RangeOption {
+        &self.range_end_options
     }
 
     /// Get `prev_kv`
@@ -455,9 +413,10 @@ impl DeleteRangeRequest {
     }
 }
 
-impl From<DeleteRangeRequest> for xlineapi::DeleteRangeRequest {
+impl From<DeleteRangeOptions> for xlineapi::DeleteRangeRequest {
     #[inline]
-    fn from(req: DeleteRangeRequest) -> Self {
+    fn from(mut req: DeleteRangeOptions) -> Self {
+        req.inner.range_end = req.range_end_options.get_range_end(&mut req.inner.key);
         req.inner
     }
 }
@@ -567,27 +526,38 @@ impl TxnOp {
     /// Creates a `Put` operation.
     #[inline]
     #[must_use]
-    pub fn put(request: PutRequest) -> Self {
+    pub fn put(
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+        option: Option<PutOptions>,
+    ) -> Self {
         TxnOp {
-            inner: xlineapi::Request::RequestPut(request.into()),
+            inner: xlineapi::Request::RequestPut(
+                option
+                    .unwrap_or_default()
+                    .with_kv(key.into(), value.into())
+                    .into(),
+            ),
         }
     }
 
     /// Creates a `Range` operation.
     #[inline]
     #[must_use]
-    pub fn range(request: RangeRequest) -> Self {
+    pub fn range(key: impl Into<Vec<u8>>, option: Option<RangeOptions>) -> Self {
         TxnOp {
-            inner: xlineapi::Request::RequestRange(request.into()),
+            inner: xlineapi::Request::RequestRange(option.unwrap_or_default().with_key(key).into()),
         }
     }
 
     /// Creates a `DeleteRange` operation.
     #[inline]
     #[must_use]
-    pub fn delete(request: DeleteRangeRequest) -> Self {
+    pub fn delete(key: impl Into<Vec<u8>>, option: Option<DeleteRangeOptions>) -> Self {
         TxnOp {
-            inner: xlineapi::Request::RequestDeleteRange(request.into()),
+            inner: xlineapi::Request::RequestDeleteRange(
+                option.unwrap_or_default().with_key(key).into(),
+            ),
         }
     }
 
@@ -708,57 +678,5 @@ impl From<TxnRequest> for xlineapi::TxnRequest {
     #[inline]
     fn from(txn: TxnRequest) -> Self {
         txn.inner
-    }
-}
-
-/// Compaction Request compacts the key-value store up to a given revision.
-/// All keys with revisions less than the given revision will be compacted.
-/// The compaction process will remove all historical versions of these keys, except for the most recent one.
-/// For example, here is a revision list: [(A, 1), (A, 2), (A, 3), (A, 4), (A, 5)].
-/// We compact at revision 3. After the compaction, the revision list will become [(A, 3), (A, 4), (A, 5)].
-/// All revisions less than 3 are deleted. The latest revision, 3, will be kept.
-#[derive(Debug, PartialEq)]
-pub struct CompactionRequest {
-    /// The inner request
-    inner: xlineapi::CompactionRequest,
-}
-
-impl CompactionRequest {
-    /// Creates a new `CompactionRequest`
-    ///
-    /// `Revision` is the key-value store revision for the compaction operation.
-    #[inline]
-    #[must_use]
-    pub fn new(revision: i64) -> Self {
-        Self {
-            inner: xlineapi::CompactionRequest {
-                revision,
-                ..Default::default()
-            },
-        }
-    }
-
-    /// Physical is set so the RPC will wait until the compaction is physically
-    /// applied to the local database such that compacted entries are totally
-    /// removed from the backend database.
-    #[inline]
-    #[must_use]
-    pub fn with_physical(mut self) -> Self {
-        self.inner.physical = true;
-        self
-    }
-
-    /// Get `physical`
-    #[inline]
-    #[must_use]
-    pub fn physical(&self) -> bool {
-        self.inner.physical
-    }
-}
-
-impl From<CompactionRequest> for xlineapi::CompactionRequest {
-    #[inline]
-    fn from(req: CompactionRequest) -> Self {
-        req.inner
     }
 }

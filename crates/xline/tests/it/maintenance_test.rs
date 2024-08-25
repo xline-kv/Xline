@@ -5,11 +5,8 @@ use tokio::io::AsyncWriteExt;
 #[cfg(test)]
 use xline::restore::restore;
 use xline_client::error::XlineClientError;
-use xline_test_utils::{
-    types::kv::{PutRequest, RangeRequest},
-    Client, ClientOptions, Cluster,
-};
-use xlineapi::{execute_error::ExecuteError, AlarmAction, AlarmRequest, AlarmType};
+use xline_test_utils::{Client, ClientOptions, Cluster};
+use xlineapi::{execute_error::ExecuteError, AlarmAction, AlarmType};
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
@@ -27,7 +24,7 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
         let mut cluster = Cluster::new_rocks(3).await;
         cluster.start().await;
         let client = cluster.client().await.kv_client();
-        let _ignore = client.put(PutRequest::new("key", "value")).await?;
+        let _ignore = client.put("key", "value", None).await?;
         tokio::time::sleep(Duration::from_millis(100)).await; // TODO: use `propose_index` and remove this sleep after we finished our client.
         let mut maintenance_client =
             Client::connect(vec![cluster.get_client_url(0)], ClientOptions::default())
@@ -45,7 +42,7 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
     let mut new_cluster = Cluster::new_with_configs(restore_cluster_configs).await;
     new_cluster.start().await;
     let client = new_cluster.client().await.kv_client();
-    let res = client.range(RangeRequest::new("key")).await?;
+    let res = client.range("key", None).await?;
     assert_eq!(res.kvs.len(), 1);
     assert_eq!(res.kvs[0].key, b"key");
     assert_eq!(res.kvs[0].value, b"value");
@@ -85,8 +82,7 @@ async fn test_alarm(idx: usize) {
     for i in 1..100u8 {
         let key: Vec<u8> = vec![i];
         let value: Vec<u8> = vec![i];
-        let req = PutRequest::new(key, value);
-        if let Err(err) = k_client.put(req).await {
+        if let Err(err) = k_client.put(key, value, None).await {
             assert!(matches!(
                 err,
                 XlineClientError::ExecuteError(ExecuteError::Nospace)
@@ -96,7 +92,7 @@ async fn test_alarm(idx: usize) {
     }
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let res = m_client
-        .alarm(AlarmRequest::new(AlarmAction::Get, 0, AlarmType::None))
+        .alarm(AlarmAction::Get, 0, AlarmType::None)
         .await
         .unwrap();
     assert!(!res.alarms.is_empty());

@@ -10,10 +10,7 @@ use xlineapi::{
 use crate::{
     error::{Result, XlineClientError},
     lease_gen::LeaseIdGenerator,
-    types::lease::{
-        LeaseGrantRequest, LeaseKeepAliveRequest, LeaseKeeper, LeaseRevokeRequest,
-        LeaseTimeToLiveRequest,
-    },
+    types::lease::LeaseKeeper,
     AuthService, CurpClient,
 };
 
@@ -70,6 +67,9 @@ impl LeaseClient {
     /// within a given time to live period. All keys attached to the lease will be expired and
     /// deleted if the lease expires. Each expired key generates a delete event in the event history.
     ///
+    /// `ttl` is the advisory time-to-live in seconds. Expired lease will return -1.
+    /// `id` is the requested ID for the lease. If ID is set to `None` or 0, the lessor chooses an ID.
+    ///
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
@@ -77,7 +77,7 @@ impl LeaseClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::lease::LeaseGrantRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -88,19 +88,22 @@ impl LeaseClient {
     ///         .await?
     ///         .lease_client();
     ///
-    ///     let resp = client.grant(LeaseGrantRequest::new(60)).await?;
+    ///     let resp = client.grant(60, None).await?;
     ///     println!("lease id: {}", resp.id);
     ///
     ///     Ok(())
     /// }
     /// ```
     #[inline]
-    pub async fn grant(&self, mut request: LeaseGrantRequest) -> Result<LeaseGrantResponse> {
-        if request.inner.id == 0 {
-            request.inner.id = self.id_gen.next();
+    pub async fn grant(&self, ttl: i64, id: Option<i64>) -> Result<LeaseGrantResponse> {
+        let mut id = id.unwrap_or_default();
+        if id == 0 {
+            id = self.id_gen.next();
         }
-        let request = RequestWrapper::from(xlineapi::LeaseGrantRequest::from(request));
-        let cmd = Command::new(request);
+        let cmd = Command::new(RequestWrapper::from(xlineapi::LeaseGrantRequest {
+            ttl,
+            id,
+        }));
         let (cmd_res, _sync_res) = self
             .curp_client
             .propose(&cmd, self.token.as_ref(), true)
@@ -110,6 +113,8 @@ impl LeaseClient {
 
     /// Revokes a lease. All keys attached to the lease will expire and be deleted.
     ///
+    /// `id` is the lease ID to revoke. When the ID is revoked, all associated keys will be deleted.
+    ///
     /// # Errors
     ///
     /// This function will return an error if the inner RPC client encountered a propose failure
@@ -117,7 +122,7 @@ impl LeaseClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::lease::LeaseRevokeRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -130,20 +135,25 @@ impl LeaseClient {
     ///
     ///     // granted a lease id 1
     ///
-    ///     let _resp = client.revoke(LeaseRevokeRequest::new(1)).await?;
+    ///     let _resp = client.revoke(1).await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     #[inline]
-    pub async fn revoke(&mut self, request: LeaseRevokeRequest) -> Result<LeaseRevokeResponse> {
-        let res = self.lease_client.lease_revoke(request.inner).await?;
+    pub async fn revoke(&mut self, id: i64) -> Result<LeaseRevokeResponse> {
+        let res = self
+            .lease_client
+            .lease_revoke(xlineapi::LeaseRevokeRequest { id })
+            .await?;
         Ok(res.into_inner())
     }
 
     /// Keeps the lease alive by streaming keep alive requests from the client
     /// to the server and streaming keep alive responses from the server to the client.
     ///
+    /// `id` is the lease ID for the lease to keep alive.
+    ///
     /// # Errors
     ///
     /// This function will return an error if the inner RPC client encountered a propose failure
@@ -151,7 +161,7 @@ impl LeaseClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::lease::LeaseKeepAliveRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -164,7 +174,7 @@ impl LeaseClient {
     ///
     ///     // granted a lease id 1
     ///
-    ///     let (mut keeper, mut stream) = client.keep_alive(LeaseKeepAliveRequest::new(1)).await?;
+    ///     let (mut keeper, mut stream) = client.keep_alive(1).await?;
     ///
     ///     if let Some(resp) = stream.message().await? {
     ///         println!("new ttl: {}", resp.ttl);
@@ -178,12 +188,12 @@ impl LeaseClient {
     #[inline]
     pub async fn keep_alive(
         &mut self,
-        request: LeaseKeepAliveRequest,
+        id: i64,
     ) -> Result<(LeaseKeeper, Streaming<LeaseKeepAliveResponse>)> {
         let (mut sender, receiver) = channel::<xlineapi::LeaseKeepAliveRequest>(100);
 
         sender
-            .try_send(request.into())
+            .try_send(xlineapi::LeaseKeepAliveRequest { id })
             .map_err(|e| XlineClientError::LeaseError(e.to_string()))?;
 
         let mut stream = self
@@ -192,7 +202,7 @@ impl LeaseClient {
             .await?
             .into_inner();
 
-        let id = match stream.message().await? {
+        let resp_id = match stream.message().await? {
             Some(resp) => resp.id,
             None => {
                 return Err(XlineClientError::LeaseError(String::from(
@@ -201,10 +211,13 @@ impl LeaseClient {
             }
         };
 
-        Ok((LeaseKeeper::new(id, sender), stream))
+        Ok((LeaseKeeper::new(resp_id, sender), stream))
     }
 
     /// Retrieves lease information.
+    ///
+    /// `id` is the lease ID for the lease,
+    /// `keys` is true to query all the keys attached to this lease.
     ///
     /// # Errors
     ///
@@ -213,7 +226,7 @@ impl LeaseClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::lease::LeaseTimeToLiveRequest, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -226,7 +239,7 @@ impl LeaseClient {
     ///
     ///     // granted a lease id 1
     ///
-    ///     let resp = client.time_to_live(LeaseTimeToLiveRequest::new(1)).await?;
+    ///     let resp = client.time_to_live(1, false).await?;
     ///
     ///     println!("remaining ttl: {}", resp.ttl);
     ///
@@ -234,13 +247,10 @@ impl LeaseClient {
     /// }
     /// ```
     #[inline]
-    pub async fn time_to_live(
-        &mut self,
-        request: LeaseTimeToLiveRequest,
-    ) -> Result<LeaseTimeToLiveResponse> {
+    pub async fn time_to_live(&mut self, id: i64, keys: bool) -> Result<LeaseTimeToLiveResponse> {
         Ok(self
             .lease_client
-            .lease_time_to_live(xlineapi::LeaseTimeToLiveRequest::from(request))
+            .lease_time_to_live(xlineapi::LeaseTimeToLiveRequest { id, keys })
             .await?
             .into_inner())
     }

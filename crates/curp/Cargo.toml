@@ -19,20 +19,20 @@ bytes = "1.4.0"
 clippy-utilities = "0.2.0"
 curp-external-api = { path = "../curp-external-api" }
 curp-test-utils = { path = "../curp-test-utils" }
-dashmap = "5.5.0"
+dashmap = "6.0.1"
 derive_builder = "0.20.0"
 engine = { path = "../engine" }
-event-listener = "5.3.0"
+event-listener = "5.3.1"
 flume = "0.11.0"
 fs2 = "0.4.3"
 futures = "0.3.21"
 indexmap = "2.2.6"
 itertools = "0.13"
 madsim = { version = "0.2.27", features = ["rpc", "macros"] }
-opentelemetry = { version = "0.21.0", features = ["metrics"] }
+opentelemetry = { version = "0.24.0", features = ["metrics"] }
 parking_lot = "0.12.3"
 priority-queue = "2.0.2"
-prost = "0.12.3"
+prost = "0.13"
 rand = "0.8.5"
 serde = { version = "1.0.204", features = ["derive", "rc"] }
 sha2 = "0.10.8"
@@ -44,9 +44,9 @@ tokio-stream = { git = "https://github.com/madsim-rs/tokio.git", rev = "ab251ad"
   "net",
 ] }
 tokio-util = "0.7.11"
-tonic = { version = "0.4.2", package = "madsim-tonic", features = ["tls"] }
+tonic = { version = "0.5.0", package = "madsim-tonic", features = ["tls"] }
 tower = { version = "0.4.13", features = ["filter"] }
-tracing = { version = "0.1.34", features = ["std", "log", "attributes"] }
+tracing = { version = "0.1.37", features = ["std", "log", "attributes"] }
 utils = { path = "../utils", version = "0.1.0", features = ["parking_lot"] }
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
@@ -62,8 +62,8 @@ tracing-subscriber = { version = "0.3.16", features = ["env-filter", "time"] }
 tracing-test = "0.2.4"
 
 [build-dependencies]
-prost-build = "0.12.6"
-tonic-build = { version = "0.4.3", package = "madsim-tonic-build" }
+prost-build = "0.13.0"
+tonic-build = { version = "0.5.0", package = "madsim-tonic-build" }
 
 [features]
 client-metrics = []

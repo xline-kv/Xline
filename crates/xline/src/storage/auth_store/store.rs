@@ -193,13 +193,13 @@ impl AuthStore {
     ) -> Result<CommandResponse, ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
         let res = match *request {
-            RequestWrapper::AuthEnableRequest(ref req) => {
+            RequestWrapper::AuthEnableRequest(req) => {
                 self.handle_auth_enable_request(req).map(Into::into)
             }
-            RequestWrapper::AuthDisableRequest(ref req) => {
+            RequestWrapper::AuthDisableRequest(req) => {
                 Ok(self.handle_auth_disable_request(req).into())
             }
-            RequestWrapper::AuthStatusRequest(ref req) => {
+            RequestWrapper::AuthStatusRequest(req) => {
                 Ok(self.handle_auth_status_request(req).into())
             }
             RequestWrapper::AuthUserAddRequest(ref req) => {
@@ -208,7 +208,7 @@ impl AuthStore {
             RequestWrapper::AuthUserGetRequest(ref req) => {
                 self.handle_user_get_request(req).map(Into::into)
             }
-            RequestWrapper::AuthUserListRequest(ref req) => {
+            RequestWrapper::AuthUserListRequest(req) => {
                 self.handle_user_list_request(req).map(Into::into)
             }
             RequestWrapper::AuthUserGrantRoleRequest(ref req) => {
@@ -238,7 +238,7 @@ impl AuthStore {
             RequestWrapper::AuthRoleDeleteRequest(ref req) => {
                 self.handle_role_delete_request(req).map(Into::into)
             }
-            RequestWrapper::AuthRoleListRequest(ref req) => {
+            RequestWrapper::AuthRoleListRequest(req) => {
                 self.handle_role_list_request(req).map(Into::into)
             }
             RequestWrapper::AuthenticateRequest(ref req) => {
@@ -254,7 +254,7 @@ impl AuthStore {
     /// Handle `AuthEnableRequest`
     fn handle_auth_enable_request(
         &self,
-        _req: &AuthEnableRequest,
+        _req: AuthEnableRequest,
     ) -> Result<AuthEnableResponse, ExecuteError> {
         debug!("handle_auth_enable");
         let res = Ok(AuthEnableResponse {
@@ -272,7 +272,7 @@ impl AuthStore {
     }
 
     /// Handle `AuthDisableRequest`
-    fn handle_auth_disable_request(&self, _req: &AuthDisableRequest) -> AuthDisableResponse {
+    fn handle_auth_disable_request(&self, _req: AuthDisableRequest) -> AuthDisableResponse {
         debug!("handle_auth_disable");
         if !self.is_enabled() {
             debug!("auth is already disabled");
@@ -283,7 +283,7 @@ impl AuthStore {
     }
 
     /// Handle `AuthStatusRequest`
-    fn handle_auth_status_request(&self, _req: &AuthStatusRequest) -> AuthStatusResponse {
+    fn handle_auth_status_request(&self, _req: AuthStatusRequest) -> AuthStatusResponse {
         debug!("handle_auth_status");
         AuthStatusResponse {
             header: Some(self.header_gen.gen_auth_header()),
@@ -339,7 +339,7 @@ impl AuthStore {
     /// Handle `AuthUserListRequest`
     fn handle_user_list_request(
         &self,
-        _req: &AuthUserListRequest,
+        _req: AuthUserListRequest,
     ) -> Result<AuthUserListResponse, ExecuteError> {
         debug!("handle_user_list_request");
         let users = self
@@ -458,7 +458,7 @@ impl AuthStore {
     /// Handle `AuthRoleListRequest`
     fn handle_role_list_request(
         &self,
-        _req: &AuthRoleListRequest,
+        _req: AuthRoleListRequest,
     ) -> Result<AuthRoleListResponse, ExecuteError> {
         debug!("handle_role_list_request");
         let roles = self
@@ -641,7 +641,7 @@ impl AuthStore {
         let user = User {
             name: req.name.as_str().into(),
             password: req.hashed_password.as_str().into(),
-            options: req.options.clone(),
+            options: req.options,
             roles: Vec::new(),
         };
         ops.push(WriteOp::PutAuthRevision(revision));
@@ -969,7 +969,7 @@ impl AuthStore {
                     self.check_txn_permission(username, txn_req)?;
                 }
                 RequestWrapper::LeaseRevokeRequest(ref lease_revoke_req) => {
-                    self.check_lease_revoke_permission(username, lease_revoke_req)?;
+                    self.check_lease_revoke_permission(username, *lease_revoke_req)?;
                 }
                 RequestWrapper::AuthUserGetRequest(ref user_get_req) => {
                     self.check_admin_permission(username).map_or_else(
@@ -1073,7 +1073,7 @@ impl AuthStore {
     fn check_lease_revoke_permission(
         &self,
         username: &str,
-        req: &LeaseRevokeRequest,
+        req: LeaseRevokeRequest,
     ) -> Result<(), ExecuteError> {
         self.check_lease(username, req.id)
     }

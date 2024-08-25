@@ -1,9 +1,12 @@
 use anyhow::{Ok, Result};
+use opentelemetry::global;
+use opentelemetry::trace::TracerProvider;
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
 use opentelemetry_sdk::runtime::Tokio;
 use tracing::warn;
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{fmt::format, layer::SubscriberExt, util::SubscriberInitExt, Layer};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::{fmt::format, util::SubscriberInitExt, Layer};
 use utils::config::{file_appender, LogConfig, RotationConfig, TraceConfig};
 
 /// Return a Box trait from the config
@@ -36,6 +39,10 @@ pub fn init_subscriber(
                 .tracing()
                 .with_exporter(otlp_exporter)
                 .install_batch(Tokio)
+                .map(|provider| {
+                    let _prev = global::set_tracer_provider(provider.clone());
+                    provider.tracer("xline")
+                })
                 .ok()
         })
         .flatten()

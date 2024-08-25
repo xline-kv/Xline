@@ -20,7 +20,7 @@ use tokio::{
 };
 use tracing::debug;
 use utils::config::ClientConfig;
-use xline_client::{types::kv::PutRequest, ClientOptions};
+use xline_client::ClientOptions;
 
 use crate::{args::Commands, bench_client::BenchClient, Benchmark};
 
@@ -229,9 +229,7 @@ impl CommandRunner {
                         );
                     }
                     let start = Instant::now();
-                    let result = client
-                        .put(PutRequest::new(key.as_slice(), val_clone.as_slice()))
-                        .await;
+                    let result = client.put(key.as_slice(), val_clone.as_slice(), None).await;
                     let cmd_result = CmdResult {
                         elapsed: start.elapsed(),
                         error: result.err().map(|e| format!("{e:?}")),

@@ -14,8 +14,15 @@ jobs:
       run:
         shell: bash
     env:
-      SCCACHE_GHA_ENABLED: "on"
-    container: ghcr.io/xline-kv/build-env:latest
+      SCCACHE_GHA_ENABLED: "true"
+      CARGO_INCREMENTAL: 0 # CI will compile all crates from beginning. So disable incremental compile may reduce compile target size.
+    container:
+      image: ghcr.io/xline-kv/build-env:latest
+      volumes:
+        - /usr/local/lib/android/:/tmp/android/
+        - /usr/share/dotnet:/tmp/dotnet
+        - /opt/ghc:/tmp/ghc
+        - /usr/lib/firefox:/tmp/firefox
     strategy:
       fail-fast: true
       matrix:
@@ -24,26 +31,35 @@ jobs:
               name: "Normal",
               args: "",
               rustflags: "",
-              test: "llvm-cov nextest --all-features --workspace --codecov --output-path codecov.info",
+              test: "llvm-cov nextest --all-features --workspace --codecov --output-path codecov.info && cargo test --doc",
             }
           - {
               name: "Madsim",
               args: "--package=simulation",
               rustflags: "--cfg madsim",
-              test: "nextest run --package=simulation",
+              test: "nextest run --package=simulation && cargo test -p simulation --doc",
             }
     name: Tests ${{ matrix.config.name }}
     steps:
+      - name: View free disk space
+        run: df -h /
+
+      - name: Setup sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.5
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Configure sccache
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+      - name: Free Disk Space
+        run: |
+          rm -rf /tmp/android/* || true
+          rm -rf /tmp/dotnet/* || true
+          rm -rf /tmp/ghc/* || true
+          rm -rf /tmp/firefox/* || true
+
+      - name: View free disk space
+        run: df -h /
 
       - name: Trailing spaces check
         run: ci/scripts/check-trailing-spaces.sh
@@ -63,7 +79,7 @@ jobs:
       - name: Workspace hack check
         run: cargo hakari generate --diff && cargo hakari manage-deps --dry-run && cargo hakari verify
 
-      - run: sccache --zero-stats > /dev/null
+      - run: ${SCCACHE_PATH} --zero-stats > /dev/null
 
       - name: Clippy ${{ matrix.config.name }}
         env:
@@ -71,7 +87,7 @@ jobs:
         run: cargo clippy ${{ matrix.config.args }} --all-targets --all-features -- -D warnings
 
       - name: Sccache stats ${{ matrix.config.name }}
-        run: sccache --show-stats && sccache --zero-stats > /dev/null
+        run: ${SCCACHE_PATH} --show-stats && ${SCCACHE_PATH} --zero-stats > /dev/null
 
       - name: Test ${{ matrix.config.name }}
         env:
@@ -79,7 +95,7 @@ jobs:
         run: cargo ${{ matrix.config.test }}
 
       - name: Sccache stats ${{ matrix.config.name }}
-        run: sccache --show-stats
+        run: ${SCCACHE_PATH} --show-stats
 
       - name: Upload coverage to Codecov
         if: matrix.config.name == 'Normal'
@@ -112,7 +128,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check Spelling
-        uses: crate-ci/typos@v1.23.2
+        uses: crate-ci/typos@v1.23.6
 
   build:
     name: Build
@@ -122,12 +138,8 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Configure sccache
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+      - name: Setup sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.5
 
       - name: Build xline image
         run: |

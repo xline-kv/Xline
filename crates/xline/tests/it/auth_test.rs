@@ -6,12 +6,7 @@ use utils::config::{
     TraceConfig, XlineServerConfig,
 };
 use xline_test_utils::{
-    enable_auth, set_user,
-    types::{
-        auth::{AuthRoleDeleteRequest, AuthUserAddRequest, AuthUserGetRequest},
-        kv::{PutRequest, RangeRequest},
-    },
-    Client, ClientOptions, Cluster,
+    enable_auth, set_user, types::kv::RangeOptions, Client, ClientOptions, Cluster,
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -22,7 +17,7 @@ async fn test_auth_empty_user_get() -> Result<(), Box<dyn Error>> {
     let client = cluster.client().await;
 
     enable_auth(client).await?;
-    let res = client.kv_client().range(RangeRequest::new("foo")).await;
+    let res = client.kv_client().range("foo", None).await;
     assert!(res.is_err());
 
     Ok(())
@@ -36,7 +31,7 @@ async fn test_auth_empty_user_put() -> Result<(), Box<dyn Error>> {
     let client = cluster.client().await;
 
     enable_auth(client).await?;
-    let res = client.kv_client().put(PutRequest::new("foo", "bar")).await;
+    let res = client.kv_client().put("foo", "bar", None).await;
     assert!(res.is_err());
 
     Ok(())
@@ -56,9 +51,9 @@ async fn test_auth_token_with_disable() -> Result<(), Box<dyn Error>> {
     )
     .await?;
     let kv_client = authed_client.kv_client();
-    kv_client.put(PutRequest::new("foo", "bar")).await?;
+    kv_client.put("foo", "bar", None).await?;
     authed_client.auth_client().auth_disable().await?;
-    kv_client.put(PutRequest::new("foo", "bar")).await?;
+    kv_client.put("foo", "bar", None).await?;
 
     Ok(())
 }
@@ -71,14 +66,9 @@ async fn test_auth_revision() -> Result<(), Box<dyn Error>> {
     let client = cluster.client().await;
     let auth_client = client.auth_client();
 
-    client
-        .kv_client()
-        .put(PutRequest::new("foo", "bar"))
-        .await?;
+    client.kv_client().put("foo", "bar", None).await?;
 
-    let user_add_resp = auth_client
-        .user_add(AuthUserAddRequest::new("root").with_pwd("123"))
-        .await?;
+    let user_add_resp = auth_client.user_add("root", "123", false).await?;
     let auth_rev = user_add_resp.header.unwrap().revision;
     assert_eq!(auth_rev, 2);
 
@@ -93,10 +83,10 @@ async fn test_auth_non_authorized_rpcs() -> Result<(), Box<dyn Error>> {
     let client = cluster.client().await;
     let kv_client = client.kv_client();
 
-    let result = kv_client.put(PutRequest::new("foo", "bar")).await;
+    let result = kv_client.put("foo", "bar", None).await;
     assert!(result.is_ok());
     enable_auth(client).await?;
-    let result = kv_client.put(PutRequest::new("foo", "bar")).await;
+    let result = kv_client.put("foo", "bar", None).await;
     assert!(result.is_err());
 
     Ok(())
@@ -126,17 +116,17 @@ async fn test_kv_authorization() -> Result<(), Box<dyn Error>> {
     .await?
     .kv_client();
 
-    let result = u1_client.put(PutRequest::new("foo", "bar")).await;
+    let result = u1_client.put("foo", "bar", None).await;
     assert!(result.is_ok());
-    let result = u1_client.put(PutRequest::new("fop", "bar")).await;
+    let result = u1_client.put("fop", "bar", None).await;
     assert!(result.is_err());
 
     let result = u2_client
-        .range(RangeRequest::new("foo").with_range_end("fox"))
+        .range("foo", Some(RangeOptions::default().with_range_end("fox")))
         .await;
     assert!(result.is_ok());
     let result = u2_client
-        .range(RangeRequest::new("foo").with_range_end("foz"))
+        .range("foo", Some(RangeOptions::default().with_range_end("foz")))
         .await;
     assert!(result.is_err());
 
@@ -151,12 +141,10 @@ async fn test_role_delete() -> Result<(), Box<dyn Error>> {
     let client = cluster.client().await;
     let auth_client = client.auth_client();
     set_user(client, "u", "123", "r", b"foo", &[]).await?;
-    let user = auth_client.user_get(AuthUserGetRequest::new("u")).await?;
+    let user = auth_client.user_get("u").await?;
     assert_eq!(user.roles.len(), 1);
-    auth_client
-        .role_delete(AuthRoleDeleteRequest::new("r"))
-        .await?;
-    let user = auth_client.user_get(AuthUserGetRequest::new("u")).await?;
+    auth_client.role_delete("r").await?;
+    let user = auth_client.user_get("u").await?;
     assert_eq!(user.roles.len(), 0);
 
     Ok(())
@@ -184,16 +172,12 @@ async fn test_no_root_user_do_admin_ops() -> Result<(), Box<dyn Error>> {
     .await?
     .auth_client();
 
-    let result = user_client
-        .user_add(AuthUserAddRequest::new("u2").with_pwd("123"))
-        .await;
+    let result = user_client.user_add("u2", "123", false).await;
     assert!(
         result.is_err(),
         "normal user should not allow to add user when auth is enabled: {result:?}"
     );
-    let result = root_client
-        .user_add(AuthUserAddRequest::new("u2").with_pwd("123"))
-        .await;
+    let result = root_client.user_add("u2", "123", false).await;
     assert!(result.is_ok(), "root user failed to add user: {result:?}");
 
     Ok(())

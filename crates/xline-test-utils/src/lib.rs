@@ -14,10 +14,7 @@ use utils::config::{
     LogConfig, MetricsConfig, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
 };
 use xline::server::XlineServer;
-use xline_client::types::auth::{
-    AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest,
-    AuthUserGrantRoleRequest, Permission, PermissionType,
-};
+use xline_client::types::{auth::PermissionType, range_end::RangeOption};
 pub use xline_client::{clients, types, Client, ClientOptions};
 
 /// Cluster
@@ -348,19 +345,17 @@ pub async fn set_user(
     range_end: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = client.auth_client();
-    client
-        .user_add(AuthUserAddRequest::new(name).with_pwd(password))
-        .await?;
-    client.role_add(AuthRoleAddRequest::new(role)).await?;
-    client
-        .user_grant_role(AuthUserGrantRoleRequest::new(name, role))
-        .await?;
+    client.user_add(name, password, false).await?;
+    client.role_add(role).await?;
+    client.user_grant_role(name, role).await?;
     if !key.is_empty() {
         client
-            .role_grant_permission(AuthRoleGrantPermissionRequest::new(
+            .role_grant_permission(
                 role,
-                Permission::new(PermissionType::Readwrite, key).with_range_end(range_end),
-            ))
+                PermissionType::Readwrite,
+                key,
+                Some(RangeOption::RangeEnd(range_end.to_vec())),
+            )
             .await?;
     }
     Ok(())

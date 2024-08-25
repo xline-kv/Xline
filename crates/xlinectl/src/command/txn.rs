@@ -140,17 +140,17 @@ fn parse_op_line(line: &str) -> Result<TxnOp> {
         "put" => {
             let matches = put_cmd.try_get_matches_from(args.clone())?;
             let req = put::build_request(&matches);
-            Ok(TxnOp::put(req))
+            Ok(TxnOp::put(req.0, req.1, Some(req.2)))
         }
         "get" => {
             let matches = get_cmd.try_get_matches_from(args.clone())?;
             let req = get::build_request(&matches);
-            Ok(TxnOp::range(req))
+            Ok(TxnOp::range(req.0, Some(req.1)))
         }
         "delete" => {
             let matches = delete_cmd.try_get_matches_from(args.clone())?;
             let req = delete::build_request(&matches);
-            Ok(TxnOp::delete(req))
+            Ok(TxnOp::delete(req.0, Some(req.1)))
         }
         _ => Err(anyhow!(format!("parse op failed in: `{line}`"))),
     }
@@ -167,7 +167,7 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 
 #[cfg(test)]
 mod tests {
-    use xline_client::types::kv::{PutRequest, RangeRequest};
+    use xline_client::types::kv::RangeOptions;
 
     use super::*;
 
@@ -187,15 +187,18 @@ mod tests {
     fn parse_op() {
         assert_eq!(
             parse_op_line(r#"put key1 "created-key1""#).unwrap(),
-            TxnOp::put(PutRequest::new("key1", "created-key1"))
+            TxnOp::put("key1", "created-key1", None)
         );
         assert_eq!(
             parse_op_line(r"get key1 key11").unwrap(),
-            TxnOp::range(RangeRequest::new("key1").with_range_end("key11"))
+            TxnOp::range(
+                "key1",
+                Some(RangeOptions::default().with_range_end("key11"))
+            )
         );
         assert_eq!(
             parse_op_line(r"get key1 --from_key").unwrap(),
-            TxnOp::range(RangeRequest::new("key1").with_from_key())
+            TxnOp::range("key1", Some(RangeOptions::default().with_from_key()))
         );
     }
 }

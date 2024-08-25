@@ -16,11 +16,7 @@ use crate::{
     clients::{lease::LeaseClient, watch::WatchClient, DEFAULT_SESSION_TTL},
     error::{Result, XlineClientError},
     lease_gen::LeaseIdGenerator,
-    types::{
-        kv::TxnRequest as KvTxnRequest,
-        lease::{LeaseGrantRequest, LeaseKeepAliveRequest},
-        watch::WatchRequest,
-    },
+    types::kv::TxnRequest as KvTxnRequest,
     CurpClient,
 };
 
@@ -130,19 +126,14 @@ impl Xutex {
         let lease_id = if let Some(id) = lease_id {
             id
         } else {
-            let lease_response = client
-                .lease_client
-                .grant(LeaseGrantRequest::new(ttl))
-                .await?;
+            let lease_response = client.lease_client.grant(ttl, None).await?;
             lease_response.id
         };
         let mut lease_client = client.lease_client.clone();
         let keep_alive = Some(tokio::spawn(async move {
             /// The renew interval factor of which value equals 60% of one second.
             const RENEW_INTERVAL_FACTOR: u64 = 600;
-            let (mut keeper, mut stream) = lease_client
-                .keep_alive(LeaseKeepAliveRequest::new(lease_id))
-                .await?;
+            let (mut keeper, mut stream) = lease_client.keep_alive(lease_id).await?;
             loop {
                 keeper.keep_alive()?;
                 if let Some(resp) = stream.message().await? {
@@ -201,7 +192,7 @@ impl Xutex {
                 ..Default::default()
             })),
         };
-        let range_end = KeyRange::get_prefix(prefix.as_bytes());
+        let range_end = KeyRange::get_prefix(prefix);
         #[allow(clippy::as_conversions)] // this cast is always safe
         let get_owner = RequestOp {
             request: Some(Request::RequestRange(RangeRequest {
@@ -263,7 +254,7 @@ impl Xutex {
     /// use anyhow::Result;
     /// use xline_client::{
     ///     clients::Xutex,
-    ///     types::kv::{Compare, CompareResult, PutRequest, TxnOp},
+    ///     types::kv::{Compare, CompareResult, PutOptions, TxnOp},
     ///     Client, ClientOptions,
     /// };
     ///
@@ -283,9 +274,7 @@ impl Xutex {
     ///     let txn_req = xutex_guard
     ///         .txn_check_locked_key()
     ///         .when([Compare::value("key2", CompareResult::Equal, "value2")])
-    ///         .and_then([TxnOp::put(
-    ///             PutRequest::new("key2", "value3").with_prev_kv(true),
-    ///         )])
+    ///         .and_then([TxnOp::put("key2", "value3", Some(PutOptions::default().with_prev_kv(true)))])
     ///         .or_else(&[]);
     ///
     ///     let _resp = kv_client.txn(txn_req).await?;
@@ -417,7 +406,7 @@ impl LockClient {
         let rev = my_rev.overflow_sub(1);
         let mut watch_client = self.watch_client.clone();
         loop {
-            let range_end = KeyRange::get_prefix(pfx.as_bytes());
+            let range_end = KeyRange::get_prefix(&pfx);
             #[allow(clippy::as_conversions)] // this cast is always safe
             let get_req = RangeRequest {
                 key: pfx.as_bytes().to_vec(),
@@ -435,7 +424,7 @@ impl LockClient {
                 Some(kv) => kv.key.clone(),
                 None => return Ok(()),
             };
-            let (_, mut response_stream) = watch_client.watch(WatchRequest::new(last_key)).await?;
+            let (_, mut response_stream) = watch_client.watch(last_key, None).await?;
             while let Some(watch_res) = response_stream.message().await? {
                 #[allow(clippy::as_conversions)] // this cast is always safe
                 if watch_res

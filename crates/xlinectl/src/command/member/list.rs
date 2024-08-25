@@ -1,5 +1,5 @@
 use clap::{arg, ArgMatches, Command};
-use xline_client::{error::Result, types::cluster::MemberListRequest, Client};
+use xline_client::{error::Result, Client};
 
 use crate::utils::printer::Printer;
 
@@ -11,10 +11,8 @@ pub(super) fn command() -> Command {
 }
 
 /// Build request from matches
-pub(super) fn build_request(matches: &ArgMatches) -> MemberListRequest {
-    let linearizable = matches.get_flag("linearizable");
-
-    MemberListRequest::new(linearizable)
+pub(super) fn build_request(matches: &ArgMatches) -> bool {
+    matches.get_flag("linearizable")
 }
 
 /// Execute the command
@@ -31,14 +29,14 @@ mod tests {
     use super::*;
     use crate::test_case_struct;
 
-    test_case_struct!(MemberListRequest);
+    test_case_struct!(bool);
 
     #[test]
     fn command_parse_should_be_valid() {
-        let test_cases = vec![TestCase::new(
-            vec!["list", "--linearizable"],
-            Some(MemberListRequest::new(true)),
-        )];
+        let test_cases = vec![
+            TestCase::new(vec!["list", "--linearizable"], Some(true)),
+            TestCase::new(vec!["list"], Some(false)),
+        ];
 
         for case in test_cases {
             case.run_test();

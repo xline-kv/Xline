@@ -2,14 +2,10 @@ use std::sync::Arc;
 
 use tonic::transport::Channel;
 
-use crate::{
-    error::Result,
-    types::cluster::{
-        MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse,
-        MemberPromoteRequest, MemberPromoteResponse, MemberRemoveRequest, MemberRemoveResponse,
-        MemberUpdateRequest, MemberUpdateResponse,
-    },
-    AuthService,
+use crate::{error::Result, AuthService};
+use xlineapi::{
+    MemberAddResponse, MemberListResponse, MemberPromoteResponse, MemberRemoveResponse,
+    MemberUpdateResponse,
 };
 
 /// Client for Cluster operations.
@@ -47,7 +43,6 @@ impl ClusterClient {
     ///
     /// ```no_run
     /// use xline_client::{Client, ClientOptions};
-    /// use xline_client::types::cluster::*;
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -58,7 +53,7 @@ impl ClusterClient {
     ///         .await?
     ///         .cluster_client();
     ///
-    ///     let resp = client.member_add(MemberAddRequest::new(vec!["127.0.0.1:2380".to_owned()], true)).await?;
+    ///     let resp = client.member_add(["127.0.0.1:2380"], true).await?;
     ///
     ///     println!(
     ///         "members: {:?}, added: {:?}",
@@ -69,10 +64,17 @@ impl ClusterClient {
     /// }
     /// ```
     #[inline]
-    pub async fn member_add(&mut self, request: MemberAddRequest) -> Result<MemberAddResponse> {
+    pub async fn member_add<I: Into<String>>(
+        &mut self,
+        peer_urls: impl Into<Vec<I>>,
+        is_learner: bool,
+    ) -> Result<MemberAddResponse> {
         Ok(self
             .inner
-            .member_add(xlineapi::MemberAddRequest::from(request))
+            .member_add(xlineapi::MemberAddRequest {
+                peer_ur_ls: peer_urls.into().into_iter().map(Into::into).collect(),
+                is_learner,
+            })
             .await?
             .into_inner())
     }
@@ -87,7 +89,6 @@ impl ClusterClient {
     ///
     /// ```no_run
     /// use xline_client::{Client, ClientOptions};
-    /// use xline_client::types::cluster::*;
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -97,7 +98,7 @@ impl ClusterClient {
     ///     let mut client = Client::connect(curp_members, ClientOptions::default())
     ///         .await?
     ///         .cluster_client();
-    ///     let resp = client.member_remove(MemberRemoveRequest::new(1)).await?;
+    ///     let resp = client.member_remove(1).await?;
     ///
     ///     println!("members: {:?}", resp.members);
     ///
@@ -105,13 +106,10 @@ impl ClusterClient {
     ///  }
     ///
     #[inline]
-    pub async fn member_remove(
-        &mut self,
-        request: MemberRemoveRequest,
-    ) -> Result<MemberRemoveResponse> {
+    pub async fn member_remove(&mut self, id: u64) -> Result<MemberRemoveResponse> {
         Ok(self
             .inner
-            .member_remove(xlineapi::MemberRemoveRequest::from(request))
+            .member_remove(xlineapi::MemberRemoveRequest { id })
             .await?
             .into_inner())
     }
@@ -126,7 +124,6 @@ impl ClusterClient {
     ///
     /// ```no_run
     /// use xline_client::{Client, ClientOptions};
-    /// use xline_client::types::cluster::*;
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -136,7 +133,7 @@ impl ClusterClient {
     ///     let mut client = Client::connect(curp_members, ClientOptions::default())
     ///         .await?
     ///         .cluster_client();
-    ///     let resp = client.member_promote(MemberPromoteRequest::new(1)).await?;
+    ///     let resp = client.member_promote(1).await?;
     ///
     ///     println!("members: {:?}", resp.members);
     ///
@@ -144,13 +141,10 @@ impl ClusterClient {
     /// }
     ///
     #[inline]
-    pub async fn member_promote(
-        &mut self,
-        request: MemberPromoteRequest,
-    ) -> Result<MemberPromoteResponse> {
+    pub async fn member_promote(&mut self, id: u64) -> Result<MemberPromoteResponse> {
         Ok(self
             .inner
-            .member_promote(xlineapi::MemberPromoteRequest::from(request))
+            .member_promote(xlineapi::MemberPromoteRequest { id })
             .await?
             .into_inner())
     }
@@ -165,7 +159,6 @@ impl ClusterClient {
     ///
     /// ```no_run
     /// use xline_client::{Client, ClientOptions};
-    /// use xline_client::types::cluster::*;
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -175,7 +168,7 @@ impl ClusterClient {
     ///     let mut client = Client::connect(curp_members, ClientOptions::default())
     ///         .await?
     ///         .cluster_client();
-    ///     let resp = client.member_update(MemberUpdateRequest::new(1, vec!["127.0.0.1:2379".to_owned()])).await?;
+    ///     let resp = client.member_update(1, ["127.0.0.1:2379"]).await?;
     ///
     ///     println!("members: {:?}", resp.members);
     ///
@@ -183,13 +176,17 @@ impl ClusterClient {
     ///  }
     ///
     #[inline]
-    pub async fn member_update(
+    pub async fn member_update<I: Into<String>>(
         &mut self,
-        request: MemberUpdateRequest,
+        id: u64,
+        peer_urls: impl Into<Vec<I>>,
     ) -> Result<MemberUpdateResponse> {
         Ok(self
             .inner
-            .member_update(xlineapi::MemberUpdateRequest::from(request))
+            .member_update(xlineapi::MemberUpdateRequest {
+                id,
+                peer_ur_ls: peer_urls.into().into_iter().map(Into::into).collect(),
+            })
             .await?
             .into_inner())
     }
@@ -204,7 +201,6 @@ impl ClusterClient {
     ///
     /// ```no_run
     /// use xline_client::{Client, ClientOptions};
-    /// use xline_client::types::cluster::*;
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -214,17 +210,17 @@ impl ClusterClient {
     ///     let mut client = Client::connect(curp_members, ClientOptions::default())
     ///         .await?
     ///         .cluster_client();
-    ///     let resp = client.member_list(MemberListRequest::new(false)).await?;
+    ///     let resp = client.member_list(false).await?;
     ///
     ///     println!("members: {:?}", resp.members);
     ///
     ///     Ok(())
     /// }
     #[inline]
-    pub async fn member_list(&mut self, request: MemberListRequest) -> Result<MemberListResponse> {
+    pub async fn member_list(&mut self, linearizable: bool) -> Result<MemberListResponse> {
         Ok(self
             .inner
-            .member_list(xlineapi::MemberListRequest::from(request))
+            .member_list(xlineapi::MemberListRequest { linearizable })
             .await?
             .into_inner())
     }
