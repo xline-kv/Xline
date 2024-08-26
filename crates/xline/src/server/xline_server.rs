@@ -228,7 +228,7 @@ impl XlineServer {
         self.task_manager.spawn(TaskName::CompactBg, |n| {
             compact_bg_task(
                 Arc::clone(&kv_storage),
-                Arc::clone(&index),
+                index,
                 *self.compact_config.compact_batch_size(),
                 *self.compact_config.compact_sleep_interval(),
                 compact_task_rx,
@@ -239,7 +239,6 @@ impl XlineServer {
             Arc::clone(&lease_collection),
             Arc::clone(&header_gen),
             Arc::clone(&db),
-            index,
             kv_update_tx,
             *self.cluster_config.is_leader(),
         ));
