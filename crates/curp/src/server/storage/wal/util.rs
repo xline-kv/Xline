@@ -1,5 +1,4 @@
 use std::{
-    fs::{File as StdFile, OpenOptions},
     io,
     path::{Path, PathBuf},
 };
@@ -7,6 +6,8 @@ use std::{
 use fs2::FileExt;
 use sha2::{digest::Output, Digest, Sha256};
 use tokio::fs::File as TokioFile;
+
+use super::fs::{self, File as StdFile, OpenOptions};
 
 /// File that is exclusively locked
 #[derive(Debug)]
@@ -53,7 +54,7 @@ impl LockedFile {
     pub(super) fn rename(mut self, new_name: impl AsRef<Path>) -> io::Result<Self> {
         let mut new_path = parent_dir(&self.path);
         new_path.push(new_name.as_ref());
-        std::fs::rename(&self.path, &new_path)?;
+        fs::rename(&self.path, &new_path)?;
         sync_parent_dir(&new_path)?;
 
         Ok(Self {
@@ -81,7 +82,7 @@ impl LockedFile {
 impl Drop for LockedFile {
     fn drop(&mut self) {
         if self.file.is_some() && is_exist(self.path()) {
-            let _ignore = std::fs::remove_file(self.path());
+            let _ignore = fs::remove_file(self.path());
         }
     }
 }
@@ -92,7 +93,7 @@ pub(super) fn get_file_paths_with_ext(
     ext: &str,
 ) -> io::Result<Vec<PathBuf>> {
     let mut files = vec![];
-    for result in std::fs::read_dir(dir)? {
+    for result in fs::read_dir(dir)? {
         let file = result?;
         if let Some(filename) = file.file_name().to_str() {
             if filename.ends_with(ext) {
@@ -113,7 +114,7 @@ pub(super) fn parent_dir(dir: impl AsRef<Path>) -> PathBuf {
 /// Fsyncs the parent directory
 pub(super) fn sync_parent_dir(dir: impl AsRef<Path>) -> io::Result<()> {
     let parent_dir = parent_dir(&dir);
-    let parent = std::fs::File::open(parent_dir)?;
+    let parent = StdFile::open(parent_dir)?;
     parent.sync_all()?;
 
     Ok(())
@@ -133,7 +134,7 @@ pub(super) fn validate_data(data: &[u8], checksum: &[u8]) -> bool {
 
 /// Checks whether the file exist
 pub(super) fn is_exist(path: impl AsRef<Path>) -> bool {
-    std::fs::metadata(path).is_ok()
+    fs::metadata(path).is_ok()
 }
 
 /// Parses a u64 from u8 slice
@@ -147,6 +148,14 @@ pub(super) fn parse_u64(bytes_le: &[u8]) -> u64 {
 }
 
 #[cfg(test)]
+pub(super) fn tempdir() -> tempfile::TempDir {
+    use super::fs::create_dir_all;
+    let dir = tempfile::tempdir().unwrap();
+    create_dir_all(dir.path());
+    dir
+}
+
+#[cfg(test)]
 mod tests {
     use std::{io::Read, process::Command};
 
@@ -154,7 +163,7 @@ mod tests {
 
     #[test]
     fn file_rename_is_ok() {
-        let mut tempdir = tempfile::tempdir().unwrap();
+        let mut tempdir = tempdir();
         let mut path = PathBuf::from(tempdir.path());
         path.push("file.test");
         let lfile = LockedFile::open_rw(&path).unwrap();
@@ -169,7 +178,7 @@ mod tests {
     #[test]
     #[allow(clippy::verbose_file_reads)] // false positive
     fn file_open_is_exclusive() {
-        let mut tempdir = tempfile::tempdir().unwrap();
+        let mut tempdir = tempdir();
         let mut path = PathBuf::from(tempdir.path());
         path.push("file.test");
         let mut lfile = LockedFile::open_rw(&path).unwrap();
@@ -181,13 +190,13 @@ mod tests {
 
     #[test]
     fn get_file_paths_with_ext_is_ok() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempdir();
         let num_paths = 10;
         let paths_create: Vec<_> = (0..num_paths)
             .map(|i| {
                 let mut path = PathBuf::from(dir.path());
                 path.push(format!("{i}.test"));
-                std::fs::File::create(&path).unwrap();
+                fs::File::create(&path).unwrap();
                 path
             })
             .collect();
