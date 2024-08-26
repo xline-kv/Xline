@@ -36,7 +36,7 @@ where
 
     /// Wait for a collection of ids.
     #[inline]
-    pub fn wait_all(&self, ids: Vec<Id>) -> impl Future<Output = ()> {
+    pub fn wait_all(&self, ids: Vec<Id>) -> impl Future<Output = ()> + Send {
         let mut barriers_l = self.barriers.lock();
         let listeners: FuturesOrdered<_> = ids
             .into_iter()

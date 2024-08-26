@@ -383,7 +383,7 @@ impl KvWatcher {
     /// Create a new `Arc<KvWatcher>`
     pub(crate) fn new_arc(
         kv_store_inner: Arc<KvStoreInner>,
-        kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
+        kv_update_rx: flume::Receiver<(i64, Vec<Event>)>,
         sync_victims_interval: Duration,
         task_manager: &TaskManager,
     ) -> Arc<Self> {
@@ -405,13 +405,13 @@ impl KvWatcher {
     #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
     async fn kv_updates_task(
         kv_watcher: Arc<KvWatcher>,
-        mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
+        kv_update_rx: flume::Receiver<(i64, Vec<Event>)>,
         shutdown_listener: Listener,
     ) {
         loop {
             tokio::select! {
-                updates = kv_update_rx.recv() => {
-                    let Some(updates) = updates else {
+                updates = kv_update_rx.recv_async() => {
+                    let Ok(updates) = updates else {
                         return;
                     };
                     kv_watcher.handle_kv_updates(updates);
@@ -592,7 +592,7 @@ mod test {
 
     use std::{collections::BTreeMap, time::Duration};
 
-    use clippy_utilities::{NumericCast, OverflowArithmetic};
+    use engine::TransactionApi;
     use test_macros::abort_on_panic;
     use tokio::time::{sleep, timeout};
     use utils::config::EngineConfig;
@@ -604,18 +604,18 @@ mod test {
         rpc::PutRequest,
         storage::{
             compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, lease_store::LeaseCollection,
-            storage_api::XlineStorageOps, KvStore,
+            KvStore,
         },
     };
 
-    fn init_empty_store(task_manager: &TaskManager) -> (Arc<KvStore>, Arc<DB>, Arc<KvWatcher>) {
-        let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
+    fn init_empty_store(task_manager: &TaskManager) -> (Arc<KvStore>, Arc<KvWatcher>) {
+        let (compact_tx, _compact_rx) = flume::bounded(COMPACT_CHANNEL_SIZE);
         let db = DB::open(&EngineConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
         let lease_collection = Arc::new(LeaseCollection::new(0));
-        let (kv_update_tx, kv_update_rx) = mpsc::channel(128);
-        let kv_store_inner = Arc::new(KvStoreInner::new(index, Arc::clone(&db)));
+        let (kv_update_tx, kv_update_rx) = flume::bounded(128);
+        let kv_store_inner = Arc::new(KvStoreInner::new(index, db));
         let store = Arc::new(KvStore::new(
             Arc::clone(&kv_store_inner),
             header_gen,
@@ -630,14 +630,14 @@ mod test {
             sync_victims_interval,
             task_manager,
         );
-        (store, db, kv_watcher)
+        (store, kv_watcher)
     }
 
     #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn watch_should_not_lost_events() {
         let task_manager = Arc::new(TaskManager::new());
-        let (store, db, kv_watcher) = init_empty_store(&task_manager);
+        let (store, kv_watcher) = init_empty_store(&task_manager);
         let mut map = BTreeMap::new();
         let (event_tx, mut event_rx) = mpsc::channel(128);
         let stop_notify = Arc::new(event_listener::Event::new());
@@ -654,14 +654,7 @@ mod test {
             let store = Arc::clone(&store);
             async move {
                 for i in 0..100_u8 {
-                    put(
-                        store.as_ref(),
-                        db.as_ref(),
-                        "foo",
-                        vec![i],
-                        i.overflow_add(2).numeric_cast(),
-                    )
-                    .await;
+                    put(store.as_ref(), "foo", vec![i]);
                 }
             }
         });
@@ -694,7 +687,7 @@ mod test {
     #[abort_on_panic]
     async fn test_victim() {
         let task_manager = Arc::new(TaskManager::new());
-        let (store, db, kv_watcher) = init_empty_store(&task_manager);
+        let (store, kv_watcher) = init_empty_store(&task_manager);
         // response channel with capacity 1, so it will be full easily, then we can trigger victim
         let (event_tx, mut event_rx) = mpsc::channel(1);
         let stop_notify = Arc::new(event_listener::Event::new());
@@ -723,14 +716,7 @@ mod test {
         });
 
         for i in 0..100_u8 {
-            put(
-                store.as_ref(),
-                db.as_ref(),
-                "foo",
-                vec![i],
-                i.numeric_cast(),
-            )
-            .await;
+            put(store.as_ref(), "foo", vec![i]);
         }
         handle.await.unwrap();
         drop(store);
@@ -741,7 +727,7 @@ mod test {
     #[abort_on_panic]
     async fn test_cancel_watcher() {
         let task_manager = Arc::new(TaskManager::new());
-        let (store, _db, kv_watcher) = init_empty_store(&task_manager);
+        let (store, kv_watcher) = init_empty_store(&task_manager);
         let (event_tx, _event_rx) = mpsc::channel(1);
         let stop_notify = Arc::new(event_listener::Event::new());
         kv_watcher.watch(
@@ -761,19 +747,22 @@ mod test {
         task_manager.shutdown(true).await;
     }
 
-    async fn put(
-        store: &KvStore,
-        db: &DB,
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        revision: i64,
-    ) {
+    fn put(store: &KvStore, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
         let req = RequestWrapper::from(PutRequest {
             key: key.into(),
             value: value.into(),
             ..Default::default()
         });
-        let (_sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
-        db.write_ops(ops).unwrap();
+        let txn = store.db().transaction();
+        let index = store.index();
+        let index_state = index.state();
+        let rev_gen = store.revision_gen();
+        let rev_gen_state = rev_gen.state();
+        store
+            .after_sync(&req, &txn, &index_state, &rev_gen_state, false)
+            .unwrap();
+        txn.commit().unwrap();
+        index_state.commit();
+        rev_gen_state.commit();
     }
 }

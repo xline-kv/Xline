@@ -1,28 +1,31 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{fmt::Debug, iter, sync::Arc};
 
 use clippy_utilities::OverflowArithmetic;
 use curp::{
-    cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor},
+    cmd::{
+        AfterSyncCmd, AfterSyncOk, Command as CurpCommand, CommandExecutor as CurpCommandExecutor,
+    },
     members::ServerId,
     InflightId, LogIndex,
 };
 use dashmap::DashMap;
-use engine::Snapshot;
+use engine::{Snapshot, TransactionApi};
 use event_listener::Event;
 use parking_lot::RwLock;
 use tracing::warn;
 use utils::{barrier::IdBarrier, table_names::META_TABLE};
 use xlineapi::{
-    command::{Command, CurpClient},
+    command::{Command, CurpClient, SyncResponse},
     execute_error::ExecuteError,
     AlarmAction, AlarmRequest, AlarmType,
 };
 
 use crate::{
-    revision_number::RevisionNumberGenerator,
+    revision_number::RevisionNumberGeneratorState,
     rpc::{RequestBackend, RequestWrapper},
     storage::{
         db::{WriteOp, DB},
+        index::IndexOperate,
         storage_api::XlineStorageOps,
         AlarmStore, AuthStore, KvStore, LeaseStore,
     },
@@ -75,10 +78,6 @@ pub(crate) struct CommandExecutor {
     db: Arc<DB>,
     /// Barrier for propose id
     id_barrier: Arc<IdBarrier<InflightId>>,
-    /// Revision Number generator for KV request and Lease request
-    general_rev: Arc<RevisionNumberGenerator>,
-    /// Revision Number generator for Auth request
-    auth_rev: Arc<RevisionNumberGenerator>,
     /// Compact events
     compact_events: Arc<DashMap<u64, Arc<Event>>>,
     /// Quota checker
@@ -224,8 +223,6 @@ impl CommandExecutor {
         alarm_storage: Arc<AlarmStore>,
         db: Arc<DB>,
         id_barrier: Arc<IdBarrier<InflightId>>,
-        general_rev: Arc<RevisionNumberGenerator>,
-        auth_rev: Arc<RevisionNumberGenerator>,
         compact_events: Arc<DashMap<u64, Arc<Event>>>,
         quota: u64,
     ) -> Self {
@@ -238,8 +235,6 @@ impl CommandExecutor {
             alarm_storage,
             db,
             id_barrier,
-            general_rev,
-            auth_rev,
             compact_events,
             quota_checker,
             alarmer,
@@ -274,83 +269,260 @@ impl CommandExecutor {
             _ => Ok(()),
         }
     }
+
+    /// After sync KV commands
+    fn after_sync_kv<T>(
+        &self,
+        wrapper: &RequestWrapper,
+        txn_db: &T,
+        index: &(dyn IndexOperate + Send + Sync),
+        revision_gen: &RevisionNumberGeneratorState<'_>,
+        to_execute: bool,
+    ) -> Result<
+        (
+            <Command as CurpCommand>::ASR,
+            Option<<Command as CurpCommand>::ER>,
+        ),
+        ExecuteError,
+    >
+    where
+        T: XlineStorageOps + TransactionApi,
+    {
+        let (asr, er) =
+            self.kv_storage
+                .after_sync(wrapper, txn_db, index, revision_gen, to_execute)?;
+        Ok((asr, er))
+    }
+
+    /// After sync other type of commands
+    fn after_sync_others<T, I>(
+        &self,
+        wrapper: &RequestWrapper,
+        txn_db: &T,
+        index: &I,
+        general_revision: &RevisionNumberGeneratorState<'_>,
+        auth_revision: &RevisionNumberGeneratorState<'_>,
+        to_execute: bool,
+    ) -> Result<
+        (
+            <Command as CurpCommand>::ASR,
+            Option<<Command as CurpCommand>::ER>,
+        ),
+        ExecuteError,
+    >
+    where
+        T: XlineStorageOps + TransactionApi,
+        I: IndexOperate,
+    {
+        let er = to_execute
+            .then(|| match wrapper.backend() {
+                RequestBackend::Auth => self.auth_storage.execute(wrapper),
+                RequestBackend::Lease => self.lease_storage.execute(wrapper),
+                RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
+                RequestBackend::Kv => unreachable!("Should not execute kv commands"),
+            })
+            .transpose()?;
+
+        let (asr, wr_ops) = match wrapper.backend() {
+            RequestBackend::Auth => self.auth_storage.after_sync(wrapper, auth_revision)?,
+            RequestBackend::Lease => {
+                self.lease_storage
+                    .after_sync(wrapper, general_revision, txn_db, index)?
+            }
+            RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, general_revision),
+            RequestBackend::Kv => unreachable!("Should not sync kv commands"),
+        };
+
+        txn_db.write_ops(wr_ops)?;
+
+        Ok((asr, er))
+    }
+}
+
+/// After Sync Result
+type AfterSyncResult = Result<AfterSyncOk<Command>, <Command as CurpCommand>::Error>;
+
+/// Collection of after sync results
+struct ASResults<'a> {
+    /// After sync cmds and there execution results
+    cmd_results: Vec<(AfterSyncCmd<'a, Command>, Option<AfterSyncResult>)>,
+}
+
+impl<'a> ASResults<'a> {
+    /// Creates a new [`ASResultStates`].
+    fn new(cmds: Vec<AfterSyncCmd<'a, Command>>) -> Self {
+        Self {
+            // Initially all commands have no results
+            cmd_results: cmds.into_iter().map(|cmd| (cmd, None)).collect(),
+        }
+    }
+
+    #[allow(clippy::pattern_type_mismatch)] // can't be fixed
+    /// Updates the results of commands that have errors by applying a given
+    /// operation.
+    fn update_err<F>(&mut self, op: F)
+    where
+        F: Fn(&AfterSyncCmd<'_, Command>) -> Result<(), ExecuteError>,
+    {
+        self.for_each_none_result(|(cmd, result_opt)| {
+            if let Err(e) = op(cmd) {
+                let _ignore = result_opt.replace(Err(e));
+            }
+        });
+    }
+
+    /// Updates the results of commands by applying a given operation.
+    #[allow(clippy::pattern_type_mismatch)] // can't be fixed
+    fn update_result<F>(&mut self, op: F)
+    where
+        F: Fn(&AfterSyncCmd<'_, Command>) -> AfterSyncResult,
+    {
+        self.for_each_none_result(|(cmd, result_opt)| {
+            let _ignore = result_opt.replace(op(cmd));
+        });
+    }
+
+    /// Applies the provided operation to each command-result pair in `cmd_results` where the result is `None`.
+    #[allow(clippy::pattern_type_mismatch)] // can't be fixed
+    fn for_each_none_result<F>(&mut self, op: F)
+    where
+        F: FnMut(&mut (AfterSyncCmd<'_, Command>, Option<AfterSyncResult>)),
+    {
+        self.cmd_results
+            .iter_mut()
+            .filter(|(_cmd, res)| res.is_none())
+            .for_each(op);
+    }
+
+    /// Converts into errors.
+    fn into_errors(self, err: <Command as CurpCommand>::Error) -> Vec<AfterSyncResult> {
+        iter::repeat(err)
+            .map(Err)
+            .take(self.cmd_results.len())
+            .collect()
+    }
+
+    /// Converts into results.
+    fn into_results(self) -> Vec<AfterSyncResult> {
+        self.cmd_results
+            .into_iter()
+            .filter_map(|(_cmd, res)| res)
+            .collect()
+    }
 }
 
 #[async_trait::async_trait]
 impl CurpCommandExecutor<Command> for CommandExecutor {
-    fn prepare(
-        &self,
-        cmd: &Command,
-    ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
-        self.check_alarm(cmd)?;
-        let wrapper = cmd.request();
-        let auth_info = cmd.auth_info();
-        self.auth_storage.check_permission(wrapper, auth_info)?;
-        let revision = match wrapper.backend() {
-            RequestBackend::Auth => {
-                if wrapper.skip_auth_revision() {
-                    self.auth_rev.get()
-                } else {
-                    self.auth_rev.next()
-                }
-            }
-            RequestBackend::Kv | RequestBackend::Lease => {
-                if wrapper.skip_general_revision() {
-                    self.general_rev.get()
-                } else {
-                    self.general_rev.next()
-                }
-            }
-            RequestBackend::Alarm => -1,
-        };
-        Ok(revision)
-    }
-
-    async fn execute(
+    fn execute(
         &self,
         cmd: &Command,
     ) -> Result<<Command as CurpCommand>::ER, <Command as CurpCommand>::Error> {
+        self.check_alarm(cmd)?;
+        let auth_info = cmd.auth_info();
         let wrapper = cmd.request();
+        self.auth_storage.check_permission(wrapper, auth_info)?;
         match wrapper.backend() {
-            RequestBackend::Kv => self.kv_storage.execute(wrapper),
+            RequestBackend::Kv => self.kv_storage.execute(wrapper, None),
             RequestBackend::Auth => self.auth_storage.execute(wrapper),
             RequestBackend::Lease => self.lease_storage.execute(wrapper),
             RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
         }
     }
 
-    async fn after_sync(
+    fn execute_ro(
         &self,
         cmd: &Command,
-        index: LogIndex,
-        revision: i64,
-    ) -> Result<<Command as CurpCommand>::ASR, <Command as CurpCommand>::Error> {
-        let quota_enough = self.quota_checker.check(cmd);
-        let mut ops = vec![WriteOp::PutAppliedIndex(index)];
+    ) -> Result<
+        (<Command as CurpCommand>::ER, <Command as CurpCommand>::ASR),
+        <Command as CurpCommand>::Error,
+    > {
+        let er = self.execute(cmd)?;
         let wrapper = cmd.request();
-        let (res, mut wr_ops) = match wrapper.backend() {
-            RequestBackend::Kv => self.kv_storage.after_sync(wrapper, revision).await?,
-            RequestBackend::Auth => self.auth_storage.after_sync(wrapper, revision)?,
-            RequestBackend::Lease => self.lease_storage.after_sync(wrapper, revision).await?,
-            RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, revision),
-        };
-        if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
-            if compact_req.physical {
-                if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
-                    let _ignore = n.notify(usize::MAX);
-                }
+        let rev = match wrapper.backend() {
+            RequestBackend::Kv | RequestBackend::Lease | RequestBackend::Alarm => {
+                self.kv_storage.revision_gen().get()
             }
+            RequestBackend::Auth => self.auth_storage.revision_gen().get(),
         };
-        if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
-            if compact_req.physical {
-                if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
-                    let _ignore = n.notify(usize::MAX);
-                }
+        Ok((er, SyncResponse::new(rev)))
+    }
+
+    fn after_sync(
+        &self,
+        cmds: Vec<AfterSyncCmd<'_, Command>>,
+        highest_index: Option<LogIndex>,
+    ) -> Vec<AfterSyncResult> {
+        if cmds.is_empty() {
+            return Vec::new();
+        }
+        let quota_enough = cmds
+            .iter()
+            .map(AfterSyncCmd::cmd)
+            .all(|c| self.quota_checker.check(c));
+
+        let mut states = ASResults::new(cmds);
+        states.update_err(|c| self.check_alarm(c.cmd()));
+        states.update_err(|c| {
+            self.auth_storage
+                .check_permission(c.cmd().request(), c.cmd().auth_info())
+        });
+
+        let index = self.kv_storage.index();
+        let index_state = index.state();
+        let general_revision_gen = self.kv_storage.revision_gen();
+        let auth_revision_gen = self.auth_storage.revision_gen();
+        let general_revision_state = general_revision_gen.state();
+        let auth_revision_state = auth_revision_gen.state();
+
+        let txn_db = self.db.transaction();
+        if let Some(i) = highest_index {
+            if let Err(e) = txn_db.write_op(WriteOp::PutAppliedIndex(i)) {
+                return states.into_errors(e);
             }
-        };
-        ops.append(&mut wr_ops);
-        self.db.write_ops(ops)?;
-        self.lease_storage.mark_lease_synced(wrapper);
+        }
+
+        states.update_result(|c| {
+            let (cmd, to_execute) = c.into_parts();
+            let wrapper = cmd.request();
+            let (asr, er) = match wrapper.backend() {
+                RequestBackend::Kv => self.after_sync_kv(
+                    wrapper,
+                    &txn_db,
+                    &index_state,
+                    &general_revision_state,
+                    to_execute,
+                ),
+                RequestBackend::Auth | RequestBackend::Lease | RequestBackend::Alarm => self
+                    .after_sync_others(
+                        wrapper,
+                        &txn_db,
+                        &index_state,
+                        &general_revision_state,
+                        &auth_revision_state,
+                        to_execute,
+                    ),
+            }?;
+
+            if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
+                if compact_req.physical {
+                    if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
+                        let _ignore = n.notify(usize::MAX);
+                    }
+                }
+            };
+
+            self.lease_storage.mark_lease_synced(wrapper);
+
+            Ok(AfterSyncOk::new(asr, er))
+        });
+
+        if let Err(e) = txn_db.commit() {
+            return states.into_errors(ExecuteError::DbError(e.to_string()));
+        }
+        index_state.commit();
+        general_revision_state.commit();
+        auth_revision_state.commit();
+
         if !quota_enough {
             if let Some(alarmer) = self.alarmer.read().clone() {
                 let _ig = tokio::spawn(async move {
@@ -363,7 +535,8 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
                 });
             }
         }
-        Ok(res)
+
+        states.into_results()
     }
 
     async fn reset(
@@ -376,7 +549,8 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         } else {
             None
         };
-        self.db.reset(s).await
+        self.db.reset(s).await?;
+        self.kv_storage.recover().await
     }
 
     async fn snapshot(&self) -> Result<Snapshot, <Command as CurpCommand>::Error> {

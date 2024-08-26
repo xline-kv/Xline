@@ -43,7 +43,7 @@ async fn test_lease_keep_alive() -> Result<(), Box<dyn Error>> {
     let non_leader_ep = cluster.get_client_url(1);
     let client = cluster.client().await;
 
-    let res = client.lease_client().grant(1, None).await?;
+    let res = client.lease_client().grant(3, None).await?;
     let lease_id = res.id;
     assert!(lease_id > 0);
 
@@ -65,7 +65,7 @@ async fn test_lease_keep_alive() -> Result<(), Box<dyn Error>> {
     let (mut keeper, mut stream) = c.keep_alive(lease_id).await?;
     let handle = tokio::spawn(async move {
         loop {
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(Duration::from_millis(1500)).await;
             let _ = keeper.keep_alive();
             if let Ok(Some(r)) = stream.message().await {
                 info!("keep alive response: {:?}", r);
@@ -79,7 +79,7 @@ async fn test_lease_keep_alive() -> Result<(), Box<dyn Error>> {
     assert_eq!(res.kvs[0].value, b"bar");
 
     handle.abort();
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_secs(6)).await;
     let res = client.kv_client().range("foo", None).await?;
     assert_eq!(res.kvs.len(), 0);
 

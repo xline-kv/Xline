@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use futures::Future;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use super::state::State;
 use crate::rpc::{connect::ConnectApi, CurpError, Redirect};
@@ -29,6 +29,9 @@ pub(super) struct Streaming {
     config: StreamingConfig,
 }
 
+/// Prevent lock contention when leader crashed or some unknown errors
+const RETRY_DELAY: Duration = Duration::from_millis(100);
+
 impl Streaming {
     /// Create a stream client
     pub(super) fn new(state: Arc<State>, config: StreamingConfig) -> Self {
@@ -43,8 +46,9 @@ impl Streaming {
     ) -> Result<R, CurpError> {
         loop {
             let Some(leader_id) = self.state.leader_id().await else {
-                debug!("cannot find the leader id in state, wait for leadership update");
-                self.state.leader_notifier().listen().await;
+                warn!("cannot find leader_id, refreshing state...");
+                let _ig = self.state.try_refresh_state().await;
+                tokio::time::sleep(RETRY_DELAY).await;
                 continue;
             };
             if let Some(local_id) = self.state.local_server_id() {
@@ -61,8 +65,6 @@ impl Streaming {
 
     /// Keep heartbeat
     pub(super) async fn keep_heartbeat(&self) {
-        /// Prevent lock contention when leader crashed or some unknown errors
-        const RETRY_DELAY: Duration = Duration::from_millis(100);
         #[allow(clippy::ignored_unit_patterns)] // tokio select internal triggered
         loop {
             let heartbeat = self.map_remote_leader::<(), _>(|conn| async move {
@@ -87,9 +89,16 @@ impl Streaming {
                             );
                             self.state.leader_notifier().listen().await;
                         }
+                        CurpError::RpcTransport(()) => {
+                            warn!(
+                                "got rpc transport error when keep heartbeat, refreshing state..."
+                            );
+                            let _ig = self.state.try_refresh_state().await;
+                            tokio::time::sleep(RETRY_DELAY).await;
+                        }
                         CurpError::ShuttingDown(()) => {
-                            debug!("shutting down stream client background task");
-                            break Err(err);
+                            info!("cluster is shutting down, exiting heartbeat task");
+                            return Ok(());
                         }
                         _ => {
                             warn!("got unexpected error {err:?} when keep heartbeat, retrying...");

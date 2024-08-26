@@ -71,14 +71,13 @@ impl LockServer {
         &self,
         request: T,
         auth_info: Option<AuthInfo>,
-        use_fast_path: bool,
     ) -> Result<(CommandResponse, Option<SyncResponse>), tonic::Status>
     where
         T: Into<RequestWrapper>,
     {
         let request = request.into();
         let cmd = Command::new_with_auth_info(request, auth_info);
-        let res = self.client.propose(&cmd, None, use_fast_path).await??;
+        let res = self.client.propose(&cmd, None, false).await??;
         Ok(res)
     }
 
@@ -148,7 +147,7 @@ impl LockServer {
                 max_create_revision: rev,
                 ..Default::default()
             };
-            let (cmd_res, _sync_res) = self.propose(get_req, auth_info.cloned(), false).await?;
+            let (cmd_res, _sync_res) = self.propose(get_req, auth_info.cloned()).await?;
             let response = Into::<RangeResponse>::into(cmd_res.into_inner());
             let last_key = match response.kvs.first() {
                 Some(kv) => kv.key.clone(),
@@ -186,7 +185,7 @@ impl LockServer {
             key: key.into(),
             ..Default::default()
         };
-        let (cmd_res, _) = self.propose(del_req, auth_info, true).await?;
+        let (cmd_res, _) = self.propose(del_req, auth_info).await?;
         let res = Into::<DeleteRangeResponse>::into(cmd_res.into_inner());
         Ok(res.header)
     }
@@ -198,7 +197,7 @@ impl LockServer {
             ttl: DEFAULT_SESSION_TTL,
             id: lease_id,
         };
-        let (cmd_res, _) = self.propose(lease_grant_req, auth_info, true).await?;
+        let (cmd_res, _) = self.propose(lease_grant_req, auth_info).await?;
         let res = Into::<LeaseGrantResponse>::into(cmd_res.into_inner());
         Ok(res.id)
     }
@@ -229,7 +228,7 @@ impl Lock for LockServer {
         let key = format!("{prefix}{lease_id:x}");
 
         let txn = Self::create_acquire_txn(&prefix, lease_id);
-        let (cmd_res, sync_res) = self.propose(txn, auth_info.clone(), false).await?;
+        let (cmd_res, sync_res) = self.propose(txn, auth_info.clone()).await?;
         let mut txn_res = Into::<TxnResponse>::into(cmd_res.into_inner());
         #[allow(clippy::unwrap_used)] // sync_res always has value when use slow path
         let my_rev = sync_res.unwrap().revision();
@@ -261,7 +260,7 @@ impl Lock for LockServer {
                 key: key.as_bytes().to_vec(),
                 ..Default::default()
             };
-            let result = self.propose(range_req, auth_info.clone(), true).await;
+            let result = self.propose(range_req, auth_info.clone()).await;
             match result {
                 Ok(res) => {
                     let res = Into::<RangeResponse>::into(res.0.into_inner());
