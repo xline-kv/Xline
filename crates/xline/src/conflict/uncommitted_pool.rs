@@ -86,7 +86,7 @@ impl UncommittedPoolOp for KvUncomPool {
     fn insert(&mut self, entry: Self::Entry) -> bool {
         let intervals = intervals(&self.lease_collection, &entry);
         let _ignore = self.intervals.insert(entry.id(), intervals.clone());
-        let conflict = intervals.iter().any(|i| self.map.overlap(i));
+        let conflict = intervals.iter().any(|i| self.map.overlaps(i));
         for interval in intervals {
             let e = self.map.entry(interval).or_insert(Commands::default());
             e.push_cmd(entry.clone());

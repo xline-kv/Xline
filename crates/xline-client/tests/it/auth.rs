@@ -2,7 +2,7 @@
 use xline_client::{
     error::Result,
     types::{
-        auth::{AuthRoleRevokePermissionRequest, Permission, PermissionType},
+        auth::{Permission, PermissionType},
         range_end::RangeOption,
     },
 };
@@ -79,24 +79,18 @@ async fn permission_operations_should_success_in_normal_path() -> Result<()> {
     }
 
     // revoke all permission
+    client.role_revoke_permission(role1, "123", None).await?;
     client
-        .role_revoke_permission(AuthRoleRevokePermissionRequest::new(role1, "123"))
+        .role_revoke_permission(role1, "abc", Some(RangeOption::FromKey))
         .await?;
     client
-        .role_revoke_permission(AuthRoleRevokePermissionRequest::new(role1, "abc").with_from_key())
+        .role_revoke_permission(role1, "hi", Some(RangeOption::RangeEnd("hjj".into())))
         .await?;
     client
-        .role_revoke_permission(
-            AuthRoleRevokePermissionRequest::new(role1, "hi").with_range_end("hjj"),
-        )
+        .role_revoke_permission(role1, "pp", Some(RangeOption::Prefix))
         .await?;
     client
-        .role_revoke_permission(AuthRoleRevokePermissionRequest::new(role1, "pp").with_prefix())
-        .await?;
-    client
-        .role_revoke_permission(
-            AuthRoleRevokePermissionRequest::new(role1, vec![0]).with_from_key(),
-        )
+        .role_revoke_permission(role1, vec![0], Some(RangeOption::FromKey))
         .await?;
 
     let role_get_resp = client.role_get(role1).await?;

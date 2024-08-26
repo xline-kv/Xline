@@ -71,7 +71,7 @@ impl ConflictPoolOp for KvSpecPool {
 impl SpeculativePoolOp for KvSpecPool {
     fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry> {
         let intervals = intervals(&self.lease_collection, &entry);
-        if intervals.iter().any(|i| self.map.overlap(i)) {
+        if intervals.iter().any(|i| self.map.overlaps(i)) {
             return Some(entry);
         }
         assert!(

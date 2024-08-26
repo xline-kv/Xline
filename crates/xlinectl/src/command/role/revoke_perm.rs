@@ -1,7 +1,10 @@
 use clap::{arg, ArgMatches, Command};
-use xline_client::{error::Result, types::auth::AuthRoleRevokePermissionRequest, Client};
+use xline_client::{error::Result, types::range_end::RangeOption, Client};
 
 use crate::utils::printer::Printer;
+
+/// Temp request type for `revoke_perm` command
+type AuthRoleRevokePermissionRequest = (String, Vec<u8>, Option<RangeOption>);
 
 /// Definition of `revoke_perm` command
 pub(super) fn command() -> Command {
@@ -18,19 +21,23 @@ pub(super) fn build_request(matches: &ArgMatches) -> AuthRoleRevokePermissionReq
     let key = matches.get_one::<String>("key").expect("required");
     let range_end = matches.get_one::<String>("range_end");
 
-    let mut request = AuthRoleRevokePermissionRequest::new(name, key.as_bytes());
+    let key = key.as_bytes().to_vec();
+    let mut option = None;
 
     if let Some(range_end) = range_end {
-        request = request.with_range_end(range_end.as_bytes());
+        option = Some(RangeOption::RangeEnd(range_end.as_bytes().to_vec()));
     };
 
-    request
+    (name.into(), key, option)
 }
 
 /// Execute the command
 pub(super) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let req = build_request(matches);
-    let resp = client.auth_client().role_revoke_permission(req).await?;
+    let resp = client
+        .auth_client()
+        .role_revoke_permission(req.0, req.1, req.2)
+        .await?;
     resp.print();
 
     Ok(())
@@ -48,11 +55,15 @@ mod tests {
         let test_cases = vec![
             TestCase::new(
                 vec!["revoke_perm", "Admin", "key1", "key2"],
-                Some(AuthRoleRevokePermissionRequest::new("Admin", "key1").with_range_end("key2")),
+                Some((
+                    "Admin".into(),
+                    "key1".into(),
+                    Some(RangeOption::RangeEnd("key2".into())),
+                )),
             ),
             TestCase::new(
                 vec!["revoke_perm", "Admin", "key3"],
-                Some(AuthRoleRevokePermissionRequest::new("Admin", "key3")),
+                Some(("Admin".into(), "key3".into(), None)),
             ),
         ];
 
