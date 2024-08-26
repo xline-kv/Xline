@@ -160,7 +160,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         resp_tx: Arc<ResponseSender>,
         bypassed: bool,
     ) -> Result<(), CurpError> {
-        if self.curp.is_shutdown() {
+        if self.curp.is_cluster_shutdown() {
             return Err(CurpError::shutting_down());
         }
         self.curp.check_leader_transfer()?;
@@ -206,7 +206,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
 
     /// Handle `Record` requests
     pub(super) fn record(&self, req: &RecordRequest) -> Result<RecordResponse, CurpError> {
-        if self.curp.is_shutdown() {
+        if self.curp.is_cluster_shutdown() {
             return Err(CurpError::shutting_down());
         }
         let id = req.propose_id();
@@ -218,7 +218,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
 
     /// Handle `Record` requests
     pub(super) fn read_index(&self) -> Result<ReadIndexResponse, CurpError> {
-        if self.curp.is_shutdown() {
+        if self.curp.is_cluster_shutdown() {
             return Err(CurpError::shutting_down());
         }
         Ok(ReadIndexResponse {
@@ -383,8 +383,11 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             // NOTE: The leader may shutdown itself in configuration change.
             // We must first check this situation.
             self.curp.check_leader_transfer()?;
-            if self.curp.is_shutdown() {
+            if self.curp.is_cluster_shutdown() {
                 return Err(CurpError::shutting_down());
+            }
+            if self.curp.is_node_shutdown() {
+                return Err(CurpError::node_not_exist());
             }
             if !self.curp.is_leader() {
                 let (leader_id, term, _) = self.curp.leader();

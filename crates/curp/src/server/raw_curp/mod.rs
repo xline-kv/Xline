@@ -1374,9 +1374,14 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         )
     }
 
-    /// Check if the cluster is shutting down
-    pub(super) fn is_shutdown(&self) -> bool {
-        self.task_manager.is_shutdown()
+    /// Check if the current node is shutting down
+    pub(super) fn is_node_shutdown(&self) -> bool {
+        self.task_manager.is_node_shutdown()
+    }
+
+    /// Check if the current node is shutting down
+    pub(super) fn is_cluster_shutdown(&self) -> bool {
+        self.task_manager.is_cluster_shutdown()
     }
 
     /// Get a cloned task manager

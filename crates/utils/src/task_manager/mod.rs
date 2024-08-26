@@ -120,6 +120,20 @@ impl TaskManager {
         self.state.load(Ordering::Acquire) != 0
     }
 
+    /// Check if the cluster is shutdown
+    #[must_use]
+    #[inline]
+    pub fn is_node_shutdown(&self) -> bool {
+        self.state.load(Ordering::Acquire) == 1
+    }
+
+    /// Check if the cluster is shutdown
+    #[must_use]
+    #[inline]
+    pub fn is_cluster_shutdown(&self) -> bool {
+        self.state.load(Ordering::Acquire) == 2
+    }
+
     /// Get shutdown listener
     ///
     /// Returns `None` if the cluster has been shutdowned
@@ -167,9 +181,8 @@ impl TaskManager {
     }
 
     /// Inner shutdown task
-    async fn inner_shutdown(tasks: Arc<DashMap<TaskName, Task>>, state: Arc<AtomicU8>) {
+    async fn inner_shutdown(tasks: Arc<DashMap<TaskName, Task>>) {
         let mut queue = Self::root_tasks_queue(&tasks);
-        state.store(1, Ordering::Release);
         while let Some(v) = queue.pop_front() {
             let Some((_name, mut task)) = tasks.remove(&v) else {
                 continue;
@@ -205,8 +218,8 @@ impl TaskManager {
     #[inline]
     pub async fn shutdown(&self, wait: bool) {
         let tasks = Arc::clone(&self.tasks);
-        let state = Arc::clone(&self.state);
-        let h = tokio::spawn(Self::inner_shutdown(tasks, state));
+        self.state.store(1, Ordering::Release);
+        let h = tokio::spawn(Self::inner_shutdown(tasks));
         if wait {
             h.await
                 .unwrap_or_else(|e| unreachable!("shutdown task should not panic: {e}"));
@@ -217,11 +230,10 @@ impl TaskManager {
     #[inline]
     pub fn cluster_shutdown(&self) {
         let tasks = Arc::clone(&self.tasks);
-        let state = Arc::clone(&self.state);
         let tracker = Arc::clone(&self.cluster_shutdown_tracker);
+        self.state.store(2, Ordering::Release);
         let _ig = tokio::spawn(async move {
             info!("cluster shutdown start");
-            state.store(2, Ordering::Release);
             _ = tasks
                 .get(&TaskName::SyncFollower)
                 .map(|n| n.notifier.notify_waiters());
@@ -232,7 +244,7 @@ impl TaskManager {
                 tracker.notify.notified().await;
             }
             info!("cluster shutdown check passed, start shutdown");
-            Self::inner_shutdown(tasks, state).await;
+            Self::inner_shutdown(tasks).await;
         });
     }
 
@@ -430,7 +442,7 @@ mod test {
         }
         drop(record_tx);
         tokio::time::sleep(Duration::from_secs(1)).await;
-        TaskManager::inner_shutdown(Arc::clone(&tm.tasks), Arc::clone(&tm.state)).await;
+        TaskManager::inner_shutdown(Arc::clone(&tm.tasks)).await;
         let mut shutdown_order = vec![];
         while let Some(name) = record_rx.recv().await {
             shutdown_order.push(name);
