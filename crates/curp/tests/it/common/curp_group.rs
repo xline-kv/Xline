@@ -373,6 +373,8 @@ impl CurpGroup {
         )
         .await
         .expect("wait for group to shutdown timeout");
+        // Sleep for some duration because the tasks may not exit immediately
+        tokio::time::sleep(Duration::from_secs(2)).await;
         assert!(self.is_finished(), "The group is not finished yet");
     }
 
@@ -381,7 +383,11 @@ impl CurpGroup {
             .flat_map(|node| {
                 BOTTOM_TASKS
                     .iter()
-                    .map(|task| node.task_manager.get_shutdown_listener(task.to_owned()))
+                    .map(|task| {
+                        node.task_manager
+                            .get_shutdown_listener(task.to_owned())
+                            .unwrap()
+                    })
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();

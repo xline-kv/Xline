@@ -52,6 +52,10 @@ pub(crate) struct LeaseServer {
     task_manager: Arc<TaskManager>,
 }
 
+/// A lease keep alive stream
+type KeepAliveStream =
+    Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>>;
+
 impl LeaseServer {
     /// New `LeaseServer`
     pub(crate) fn new(
@@ -135,10 +139,11 @@ impl LeaseServer {
     fn leader_keep_alive(
         &self,
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
-    ) -> Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>> {
+    ) -> Result<KeepAliveStream, tonic::Status> {
         let shutdown_listener = self
             .task_manager
-            .get_shutdown_listener(TaskName::LeaseKeepAlive);
+            .get_shutdown_listener(TaskName::LeaseKeepAlive)
+            .ok_or(tonic::Status::cancelled("The cluster is shutting down"))?;
         let lease_storage = Arc::clone(&self.lease_storage);
         let stream = try_stream! {
            loop {
@@ -176,7 +181,7 @@ impl LeaseServer {
                 };
             }
         };
-        Box::pin(stream)
+        Ok(Box::pin(stream))
     }
 
     /// Handle keep alive at follower
@@ -185,13 +190,11 @@ impl LeaseServer {
         &self,
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
         leader_addrs: &[String],
-    ) -> Result<
-        Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>>,
-        tonic::Status,
-    > {
+    ) -> Result<KeepAliveStream, tonic::Status> {
         let shutdown_listener = self
             .task_manager
-            .get_shutdown_listener(TaskName::LeaseKeepAlive);
+            .get_shutdown_listener(TaskName::LeaseKeepAlive)
+            .ok_or(tonic::Status::cancelled("The cluster is shutting down"))?;
         let endpoints = build_endpoints(leader_addrs, self.client_tls_config.as_ref())?;
         let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
         let mut lease_client = LeaseClient::new(channel);
@@ -302,7 +305,7 @@ impl Lease for LeaseServer {
         let request_stream = request.into_inner();
         let stream = loop {
             if self.lease_storage.is_primary() {
-                break self.leader_keep_alive(request_stream);
+                break self.leader_keep_alive(request_stream)?;
             }
             let leader_id = self.client.fetch_leader_id(false).await?;
             // Given that a candidate server may become a leader when it won the election or

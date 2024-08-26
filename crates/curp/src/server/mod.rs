@@ -331,7 +331,9 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
 
         use crate::rpc::{InnerProtocolServer, ProtocolServer};
 
-        let n = task_manager.get_shutdown_listener(TaskName::TonicServer);
+        let n = task_manager
+            .get_shutdown_listener(TaskName::TonicServer)
+            .unwrap_or_else(|| unreachable!("cluster should never shutdown before start"));
         let server = Self::new(
             cluster_info,
             is_leader,

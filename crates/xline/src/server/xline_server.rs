@@ -347,7 +347,8 @@ impl XlineServer {
     ) -> Result<tokio::task::JoinHandle<Result<(), tonic::transport::Error>>> {
         let n1 = self
             .task_manager
-            .get_shutdown_listener(TaskName::TonicServer);
+            .get_shutdown_listener(TaskName::TonicServer)
+            .unwrap_or_else(|| unreachable!("cluster should never shutdown before start"));
         let n2 = n1.clone();
         let db = DB::open(&self.storage_config.engine)?;
         let key_pair = Self::read_key_pair(&self.auth_config).await?;

@@ -121,18 +121,17 @@ impl TaskManager {
     }
 
     /// Get shutdown listener
+    ///
+    /// Returns `None` if the cluster has been shutdowned
     #[must_use]
     #[inline]
-    pub fn get_shutdown_listener(&self, name: TaskName) -> Listener {
-        let task = self
-            .tasks
-            .get(&name)
-            .unwrap_or_else(|| unreachable!("task {:?} should exist", name));
-        Listener::new(
+    pub fn get_shutdown_listener(&self, name: TaskName) -> Option<Listener> {
+        let task = self.tasks.get(&name)?;
+        Some(Listener::new(
             Arc::clone(&self.state),
             Arc::clone(&task.notifier),
             Arc::clone(&self.cluster_shutdown_tracker),
-        )
+        ))
     }
 
     /// Spawn a task

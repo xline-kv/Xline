@@ -481,7 +481,9 @@ mod test {
             .return_const(-1_i64);
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
-        let n = task_manager.get_shutdown_listener(TaskName::WatchTask);
+        let n = task_manager
+            .get_shutdown_listener(TaskName::WatchTask)
+            .unwrap();
         let handle = tokio::spawn(WatchServer::task(
             next_id,
             Arc::clone(&watcher),
@@ -733,7 +735,9 @@ mod test {
             .return_const(-1_i64);
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
-        let n = task_manager.get_shutdown_listener(TaskName::WatchTask);
+        let n = task_manager
+            .get_shutdown_listener(TaskName::WatchTask)
+            .unwrap();
         let handle = tokio::spawn(WatchServer::task(
             next_id,
             Arc::clone(&watcher),
