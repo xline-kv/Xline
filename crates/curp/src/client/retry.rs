@@ -231,7 +231,7 @@ where
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, tonic::Status> {
         self.retry::<_, _>(|client| async move {
-            let propose_id = self.inner.gen_propose_id()?;
+            let propose_id = self.inner.gen_propose_id().await?;
             RepeatableClientApi::propose(client, *propose_id, cmd, token, use_fast_path).await
         })
         .await
@@ -245,7 +245,7 @@ where
         self.retry::<_, _>(|client| {
             let changes_c = changes.clone();
             async move {
-                let propose_id = self.inner.gen_propose_id()?;
+                let propose_id = self.inner.gen_propose_id().await?;
                 RepeatableClientApi::propose_conf_change(client, *propose_id, changes_c).await
             }
         })
@@ -255,7 +255,7 @@ where
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), tonic::Status> {
         self.retry::<_, _>(|client| async move {
-            let propose_id = self.inner.gen_propose_id()?;
+            let propose_id = self.inner.gen_propose_id().await?;
             RepeatableClientApi::propose_shutdown(client, *propose_id).await
         })
         .await
@@ -272,7 +272,7 @@ where
             let name_c = node_name.clone();
             let node_client_urls_c = node_client_urls.clone();
             async move {
-                let propose_id = self.inner.gen_propose_id()?;
+                let propose_id = self.inner.gen_propose_id().await?;
                 RepeatableClientApi::propose_publish(
                     client,
                     *propose_id,

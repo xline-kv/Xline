@@ -264,7 +264,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     /// Panic if storage creation failed
     #[inline]
     #[allow(clippy::too_many_arguments)] // TODO: refactor this use builder pattern
-    pub async fn new(
+    pub fn new(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         executor: Arc<CE>,
@@ -290,9 +290,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
             client_tls_config,
             sps,
             ucps,
-        )
-        .await
-        {
+        ) {
             Ok(n) => n,
             Err(err) => {
                 panic!("failed to create curp service, {err:?}");
@@ -346,8 +344,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
             client_tls_config,
             sps,
             ucps,
-        )
-        .await;
+        );
 
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server.clone()))
