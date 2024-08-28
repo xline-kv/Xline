@@ -67,6 +67,9 @@ mod metrics;
 pub(crate) mod connect;
 pub(crate) use connect::{connect, connects, inner_connects};
 
+/// Auto reconnect connection
+mod reconnect;
+
 // Skip for generated code
 #[allow(
     clippy::all,

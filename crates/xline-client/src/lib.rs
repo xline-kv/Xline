@@ -244,8 +244,7 @@ impl Client {
                 .tls_config(options.tls_config)
                 .discover_from(addrs)
                 .await?
-                .build::<Command>()
-                .await?,
+                .build::<Command>()?,
         ) as Arc<CurpClient>;
         let id_gen = Arc::new(lease_gen::LeaseIdGenerator::new());
 

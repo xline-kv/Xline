@@ -134,7 +134,7 @@ impl<C: Command> ClientApi for Unary<C> {
         token: Option<&String>,
         use_fast_path: bool,
     ) -> Result<ProposeResponse<C>, CurpError> {
-        let propose_id = self.gen_propose_id()?;
+        let propose_id = self.gen_propose_id().await?;
         RepeatableClientApi::propose(self, *propose_id, cmd, token, use_fast_path).await
     }
 
@@ -143,13 +143,13 @@ impl<C: Command> ClientApi for Unary<C> {
         &self,
         changes: Vec<ConfChange>,
     ) -> Result<Vec<Member>, CurpError> {
-        let propose_id = self.gen_propose_id()?;
+        let propose_id = self.gen_propose_id().await?;
         RepeatableClientApi::propose_conf_change(self, *propose_id, changes).await
     }
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), CurpError> {
-        let propose_id = self.gen_propose_id()?;
+        let propose_id = self.gen_propose_id().await?;
         RepeatableClientApi::propose_shutdown(self, *propose_id).await
     }
 
@@ -160,7 +160,7 @@ impl<C: Command> ClientApi for Unary<C> {
         node_name: String,
         node_client_urls: Vec<String>,
     ) -> Result<(), Self::Error> {
-        let propose_id = self.gen_propose_id()?;
+        let propose_id = self.gen_propose_id().await?;
         RepeatableClientApi::propose_publish(
             self,
             *propose_id,
@@ -306,8 +306,11 @@ impl<C: Command> ClientApi for Unary<C> {
 #[async_trait]
 impl<C: Command> RepeatableClientApi for Unary<C> {
     /// Generate a unique propose id during the retry process.
-    fn gen_propose_id(&self) -> Result<ProposeIdGuard<'_>, Self::Error> {
-        let client_id = self.state.client_id();
+    async fn gen_propose_id(&self) -> Result<ProposeIdGuard<'_>, Self::Error> {
+        let mut client_id = self.state.client_id();
+        if client_id == 0 {
+            client_id = self.state.wait_for_client_id().await?;
+        };
         let seq_num = self.new_seq_num();
         Ok(ProposeIdGuard::new(
             &self.tracker,
