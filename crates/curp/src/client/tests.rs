@@ -751,7 +751,7 @@ async fn test_stream_client_keep_alive_works() {
         Box::pin(async move {
             client_id
                 .compare_exchange(
-                    0,
+                    1,
                     10,
                     std::sync::atomic::Ordering::Relaxed,
                     std::sync::atomic::Ordering::Relaxed,
@@ -775,7 +775,7 @@ async fn test_stream_client_keep_alive_on_redirect() {
         Box::pin(async move {
             client_id
                 .compare_exchange(
-                    0,
+                    1,
                     10,
                     std::sync::atomic::Ordering::Relaxed,
                     std::sync::atomic::Ordering::Relaxed,
