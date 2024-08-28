@@ -518,8 +518,7 @@ impl XlineServer {
             self.client_tls_config.clone(),
             XlineSpeculativePools::new(Arc::clone(&lease_collection)).into_inner(),
             XlineUncommittedPools::new(lease_collection).into_inner(),
-        )
-        .await;
+        );
 
         let client = Arc::new(
             CurpClientBuilder::new(*self.cluster_config.client_config(), false)
@@ -527,8 +526,7 @@ impl XlineServer {
                 .cluster_version(self.cluster_info.cluster_version())
                 .all_members(self.cluster_info.all_members_peer_urls())
                 .bypass(self.cluster_info.self_id(), curp_server.clone())
-                .build::<Command>()
-                .await?,
+                .build::<Command>()?,
         ) as Arc<CurpClient>;
 
         if let Some(compactor) = auto_compactor_c {
