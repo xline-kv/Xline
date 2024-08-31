@@ -54,7 +54,7 @@ use crate::{
 /// The response of propose command, deserialized from [`crate::rpc::ProposeResponse`] or
 /// [`crate::rpc::WaitSyncedResponse`].
 #[allow(type_alias_bounds)] // that's not bad
-type ProposeResponse<C: Command> = Result<(C::ER, Option<C::ASR>), C::Error>;
+pub(crate) type ProposeResponse<C: Command> = Result<(C::ER, Option<C::ASR>), C::Error>;
 
 /// `ClientApi`, a higher wrapper for `ConnectApi`, providing some methods for communicating to
 /// the whole curp cluster. Automatically discovery curp server to update it's quorum.

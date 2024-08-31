@@ -1,3 +1,6 @@
+/// Client propose implementation
+mod propose_impl;
+
 use std::{
     cmp::Ordering,
     marker::PhantomData,
@@ -7,9 +10,9 @@ use std::{
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
-use futures::{future, stream::FuturesUnordered, Future, Stream, StreamExt};
+use futures::{Future, StreamExt};
 use parking_lot::RwLock;
-use tonic::{Response, Status};
+use tonic::Response;
 use tracing::{debug, warn};
 
 use super::{
@@ -19,14 +22,11 @@ use super::{
 use crate::{
     members::ServerId,
     quorum,
-    response::ResponseReceiver,
     rpc::{
         connect::ConnectApi, ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, Member, MoveLeaderRequest, OpResponse, ProposeConfChangeRequest,
-        ProposeId, ProposeRequest, PublishRequest, ReadIndexResponse, ReadState, RecordRequest,
-        RecordResponse, ShutdownRequest,
+        FetchReadStateRequest, Member, MoveLeaderRequest, ProposeConfChangeRequest, ProposeId,
+        PublishRequest, ReadState, ShutdownRequest,
     },
-    super_quorum,
     tracker::Tracker,
 };
 
@@ -115,72 +115,6 @@ impl<C: Command> Unary<C> {
     fn new_seq_num(&self) -> u64 {
         self.last_sent_seq
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-impl<C: Command> Unary<C> {
-    /// Propose for read only commands
-    ///
-    /// For read-only commands, we only need to send propose to leader
-    async fn propose_read_only<PF, RIF>(
-        propose_fut: PF,
-        use_fast_path: bool,
-        read_index_futs: FuturesUnordered<RIF>,
-        term: u64,
-        quorum: usize,
-    ) -> Result<ProposeResponse<C>, CurpError>
-    where
-        PF: Future<
-            Output = Result<
-                Response<Box<dyn Stream<Item = Result<OpResponse, Status>> + Send>>,
-                CurpError,
-            >,
-        >,
-        RIF: Future<Output = Result<Response<ReadIndexResponse>, CurpError>>,
-    {
-        let term_count_fut = read_index_futs
-            .filter_map(|res| future::ready(res.ok()))
-            .filter(|resp| future::ready(resp.get_ref().term == term))
-            .take(quorum.wrapping_sub(1))
-            .count();
-        let (propose_res, num_valid) = tokio::join!(propose_fut, term_count_fut);
-        if num_valid < quorum.wrapping_sub(1) {
-            return Err(CurpError::WrongClusterVersion(()));
-        }
-        let resp_stream = propose_res?.into_inner();
-        let mut response_rx = ResponseReceiver::new(resp_stream);
-        response_rx.recv::<C>(!use_fast_path).await
-    }
-
-    /// Propose for mutative commands
-    async fn propose_mutative<PF, RF>(
-        propose_fut: PF,
-        record_futs: FuturesUnordered<RF>,
-        use_fast_path: bool,
-        superquorum: usize,
-    ) -> Result<ProposeResponse<C>, CurpError>
-    where
-        PF: Future<
-            Output = Result<
-                Response<Box<dyn Stream<Item = Result<OpResponse, Status>> + Send>>,
-                CurpError,
-            >,
-        >,
-        RF: Future<Output = Result<Response<RecordResponse>, CurpError>>,
-    {
-        let record_futs_filtered = record_futs
-            .filter_map(|res| future::ready(res.ok()))
-            .filter(|resp| future::ready(!resp.get_ref().conflict))
-            .take(superquorum.wrapping_sub(1))
-            .collect::<Vec<_>>();
-        let (propose_res, record_resps) = tokio::join!(propose_fut, record_futs_filtered);
-
-        let resp_stream = propose_res?.into_inner();
-        let mut response_rx = ResponseReceiver::new(resp_stream);
-        let fast_path_failed = record_resps.len() < superquorum.wrapping_sub(1);
-        response_rx
-            .recv::<C>(fast_path_failed || !use_fast_path)
-            .await
     }
 }
 
@@ -390,46 +324,12 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         token: Option<&String>,
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, Self::Error> {
-        let cmd_arc = Arc::new(cmd);
-        let term = self.state.term().await;
-        let propose_req = ProposeRequest::new::<C>(
-            propose_id,
-            cmd_arc.as_ref(),
-            self.state.cluster_version().await,
-            term,
-            !use_fast_path,
-            self.tracker.read().first_incomplete(),
-        );
-        let record_req = RecordRequest::new::<C>(propose_id, cmd_arc.as_ref());
-        let connects_len = self.state.connects_len().await;
-        let quorum = quorum(connects_len);
-        let superquorum = super_quorum(connects_len);
-        let leader_id = self.leader_id().await?;
-        let timeout = self.config.propose_timeout;
-
-        let propose_fut = self.state.map_server(leader_id, |conn| async move {
-            conn.propose_stream(propose_req, token.cloned(), timeout)
-                .await
-        });
-        let record_futs = self
-            .state
-            .for_each_follower(leader_id, |conn| {
-                let record_req_c = record_req.clone();
-                async move { conn.record(record_req_c, timeout).await }
-            })
-            .await;
-        let read_index_futs = self
-            .state
-            .for_each_follower(
-                leader_id,
-                |conn| async move { conn.read_index(timeout).await },
-            )
-            .await;
-
         if cmd.is_read_only() {
-            Self::propose_read_only(propose_fut, use_fast_path, read_index_futs, term, quorum).await
+            self.propose_read_only(cmd, propose_id, token, use_fast_path)
+                .await
         } else {
-            Self::propose_mutative(propose_fut, record_futs, use_fast_path, superquorum).await
+            self.propose_mutative(cmd, propose_id, token, use_fast_path)
+                .await
         }
     }
 
