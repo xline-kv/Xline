@@ -31,7 +31,7 @@ futures = "0.3.25"
 hyper = "1.0.0"
 itertools = "0.13"
 jsonwebtoken = "9.3.0"
-log = "0.4.21"
+log = "0.4.22"
 merged_range = "0.1.0"
 nix = "0.28.0"
 opentelemetry = { version = "0.24.0", features = ["metrics"] }
