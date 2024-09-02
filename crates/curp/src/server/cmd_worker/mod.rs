@@ -137,10 +137,8 @@ where
                 cb_w.insert_asr(id, Ok(asr));
             }
             Err(e) => {
-                let _ignore = tx_opt
-                    .as_ref()
-                    .map(|tx| tx.send_synced(SyncedResponse::new_result::<C>(&Err(e.clone()))));
-                cb_w.insert_asr(id, Err(e.clone()));
+                let _ignore = tx_opt.as_ref().map(|tx| tx.send_err::<C>(e.clone()));
+                cb_w.insert_asr(id, Err(e));
             }
         }
     }

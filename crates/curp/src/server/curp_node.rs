@@ -323,7 +323,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 Ok((er, None)) => {
                     resp_tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er), false));
                 }
-                Err(e) => resp_tx.send_synced(SyncedResponse::new_result::<C>(&Err(e))),
+                Err(e) => resp_tx.send_err::<C>(e),
             }
         }
     }

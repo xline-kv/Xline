@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use curp_external_api::cmd::Command;
 use tonic::Status;
 
 use crate::rpc::{OpResponse, ProposeResponse, ResponseOp, SyncedResponse};
@@ -50,5 +51,13 @@ impl ResponseSender {
         };
         // Ignore the result because the client might close the receiving stream
         let _ignore = self.tx.try_send(Ok(resp));
+    }
+
+    /// Sends the error result
+    pub(super) fn send_err<C: Command>(&self, err: C::Error) {
+        let er = ProposeResponse::new_result::<C>(&Err(err.clone()), false);
+        let asr = SyncedResponse::new_result::<C>(&Err(err));
+        self.send_propose(er);
+        self.send_synced(asr);
     }
 }
