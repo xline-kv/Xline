@@ -293,6 +293,7 @@ async fn test_unary_propose_fast_path_works() {
                 assert_eq!(id, 0, "followers should not receive propose");
                 let resp = async_stream::stream! {
                     yield Ok(build_propose_response(false));
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                     yield Ok(build_synced_response());
                 };
                 Ok(tonic::Response::new(Box::new(resp)))
@@ -540,6 +541,7 @@ async fn test_read_index_success() {
                 assert_eq!(id, 0, "followers should not receive propose");
                 let resp = async_stream::stream! {
                     yield Ok(build_propose_response(false));
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                     yield Ok(build_synced_response());
                 };
                 Ok(tonic::Response::new(Box::new(resp)))
