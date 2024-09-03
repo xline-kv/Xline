@@ -3,7 +3,7 @@ mod propose_impl;
 
 #[allow(unused)]
 /// State of the unary client
-mod state;
+mod cluster_state;
 
 #[allow(unused)]
 /// Config of the client
