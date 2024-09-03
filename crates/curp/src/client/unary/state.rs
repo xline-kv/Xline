@@ -79,6 +79,15 @@ impl ClusterState {
             .collect()
     }
 
+    /// Returns the quorum size based on the given quorum function
+    ///
+    /// NOTE: Do not update the cluster in between an `for_each_xxx` and an `get_quorum`, which may
+    /// lead to inconsistent quorum.
+    pub(crate) fn get_quorum<Q: FnMut(usize) -> usize>(&self, mut quorum: Q) -> usize {
+        let cluster_size = self.connects.len();
+        quorum(cluster_size)
+    }
+
     /// Updates the current leader
     fn update_leader(&mut self, leader: ServerId, term: u64) {
         self.leader = leader;
