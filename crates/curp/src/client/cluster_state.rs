@@ -10,7 +10,8 @@ use crate::{
 /// The cluster state
 ///
 /// The client must discover the cluster info before sending any propose
-struct ClusterState {
+#[derive(Default, Clone)]
+pub(crate) struct ClusterState {
     /// Leader id.
     leader: ServerId,
     /// Term, initialize to 0, calibrated by the server.
@@ -33,6 +34,21 @@ impl std::fmt::Debug for ClusterState {
 }
 
 impl ClusterState {
+    /// Creates a new `ClusterState`
+    pub(crate) fn new(
+        leader: ServerId,
+        term: u64,
+        cluster_version: u64,
+        connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
+    ) -> Self {
+        Self {
+            leader,
+            term,
+            cluster_version,
+            connects,
+        }
+    }
+
     /// Take an async function and map to the dedicated server, return None
     /// if the server can not found in local state
     pub(crate) fn map_server<R, F: Future<Output = Result<R, CurpError>>>(
