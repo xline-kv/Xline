@@ -17,6 +17,10 @@ mod retry;
 /// State for clients
 mod state;
 
+#[allow(unused)]
+/// State of the cluster
+mod cluster_state;
+
 /// Tests for client
 #[cfg(test)]
 mod tests;
