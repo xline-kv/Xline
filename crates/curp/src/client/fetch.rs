@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use curp_external_api::cmd::Command;
 use futures::{future, FutureExt, StreamExt};
+use parking_lot::RwLock;
 use tonic::Response;
 use tracing::warn;
 use utils::parking_lot_lock::RwLockMap;
@@ -11,25 +12,45 @@ use crate::{
     rpc::{self, connect::ConnectApi, CurpError, FetchClusterRequest, FetchClusterResponse},
 };
 
-use super::Unary;
+use super::cluster_state::ClusterState;
+use super::config::Config;
 
-impl<C: Command> Unary<C> {
+/// Fetch cluster implementation
+struct Fetch {
+    /// The fetch config
+    config: Config,
+}
+
+impl Fetch {
+    /// Creates a new `Fetch`
+    pub(crate) fn new(config: Config) -> Self {
+        Self { config }
+    }
+
     /// Fetch cluster and updates the current state
-    pub(super) async fn fetch_cluster1(&self) -> Result<(), CurpError> {
+    pub(crate) async fn fetch_cluster(
+        &self,
+        state: ClusterState,
+    ) -> Result<ClusterState, CurpError> {
         /// Retry interval
         const FETCH_RETRY_INTERVAL: Duration = Duration::from_secs(1);
         loop {
             let resp = self
-                .pre_fetch()
+                .pre_fetch(&state)
                 .await
                 .ok_or(CurpError::internal("cluster not available"))?;
             let new_members = self.member_addrs(&resp);
             let new_connects = self.connect_to(new_members);
-            self.cluster_state
-                .write()
-                .update_cluster(resp.cluster_version, new_connects);
-            if self.fetch_term().await {
-                return Ok(());
+            let new_state = ClusterState::new(
+                resp.leader_id
+                    .unwrap_or_else(|| unreachable!("leader id should be Some"))
+                    .into(),
+                resp.term,
+                resp.cluster_version,
+                new_connects,
+            );
+            if self.fetch_term(&new_state).await {
+                return Ok(new_state);
             }
             warn!("Fetch cluster failed, sleep for {FETCH_RETRY_INTERVAL:?}");
             tokio::time::sleep(FETCH_RETRY_INTERVAL).await;
@@ -37,33 +58,29 @@ impl<C: Command> Unary<C> {
     }
 
     /// Fetch the term of the cluster. This ensures that the current leader is the latest.
-    async fn fetch_term(&self) -> bool {
-        let timeout = self.client_config.wait_synced_timeout();
-        self.cluster_state
-            .map_read(|state| {
-                let term = state.term();
-                let quorum = state.get_quorum(quorum);
-                self.cluster_state
-                    .read()
-                    .for_each_server(|c| async move {
-                        c.fetch_cluster(FetchClusterRequest { linearizable: true }, timeout)
-                            .await
-                    })
-                    .filter_map(|r| future::ready(r.ok()))
-                    .map(Response::into_inner)
-                    .filter(move |resp| future::ready(resp.term == term))
-                    .take(quorum)
-                    .count()
-                    .map(move |t| t >= quorum)
+    async fn fetch_term(&self, state: &ClusterState) -> bool {
+        let timeout = self.config.wait_synced_timeout();
+        let term = state.term();
+        let quorum = state.get_quorum(quorum);
+        state
+            .for_each_server(|c| async move {
+                c.fetch_cluster(FetchClusterRequest { linearizable: true }, timeout)
+                    .await
             })
+            .filter_map(|r| future::ready(r.ok()))
+            .map(Response::into_inner)
+            .filter(move |resp| future::ready(resp.term == term))
+            .take(quorum)
+            .count()
+            .map(move |t| t >= quorum)
             .await
     }
 
     /// Prefetch, send fetch cluster request to the cluster and get the
     /// config with the greatest quorum.
-    async fn pre_fetch(&self) -> Option<FetchClusterResponse> {
-        let timeout = self.client_config.wait_synced_timeout();
-        let requests = self.cluster_state.read().for_each_server(|c| async move {
+    async fn pre_fetch(&self, state: &ClusterState) -> Option<FetchClusterResponse> {
+        let timeout = self.config.wait_synced_timeout();
+        let requests = state.for_each_server(|c| async move {
             c.fetch_cluster(FetchClusterRequest { linearizable: true }, timeout)
                 .await
         });
@@ -81,7 +98,7 @@ impl<C: Command> Unary<C> {
 
     /// Gets the member addresses to connect to
     fn member_addrs(&self, resp: &FetchClusterResponse) -> HashMap<u64, Vec<String>> {
-        if self.client_config.is_raw_curp() {
+        if self.config.is_raw_curp() {
             resp.clone().into_peer_urls()
         } else {
             resp.clone().into_client_urls()
@@ -96,7 +113,7 @@ impl<C: Command> Unary<C> {
         new_members
             .into_iter()
             .map(|(id, addrs)| {
-                let tls_config = self.client_config.tls_config().cloned();
+                let tls_config = self.config.tls_config().cloned();
                 (id, rpc::connect(id, addrs, tls_config))
             })
             .collect()
