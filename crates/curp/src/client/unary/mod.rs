@@ -1,10 +1,6 @@
 /// Client propose implementation
 mod propose_impl;
 
-#[allow(unused)]
-/// Config of the client
-mod config;
-
 use std::{
     cmp::Ordering,
     marker::PhantomData,
@@ -19,11 +15,9 @@ use parking_lot::RwLock;
 use tonic::Response;
 use tracing::{debug, warn};
 
-use self::config::Config;
-
 use super::{
-    cluster_state::ClusterState, state::State, ClientApi, LeaderStateUpdate, ProposeIdGuard,
-    ProposeResponse, RepeatableClientApi,
+    cluster_state::ClusterState, config::Config, state::State, ClientApi, LeaderStateUpdate,
+    ProposeIdGuard, ProposeResponse, RepeatableClientApi,
 };
 use crate::{
     members::ServerId,
