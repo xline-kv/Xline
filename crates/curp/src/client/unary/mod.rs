@@ -1,10 +1,6 @@
 /// Client propose implementation
 mod propose_impl;
 
-#[allow(unused)]
-/// Config of the client
-mod config;
-
 use std::{
     cmp::Ordering,
     marker::PhantomData,
@@ -20,8 +16,8 @@ use tonic::Response;
 use tracing::{debug, warn};
 
 use super::{
-    state::State, ClientApi, LeaderStateUpdate, ProposeIdGuard, ProposeResponse,
-    RepeatableClientApi,
+    cluster_state::ClusterState, config::Config, state::State, ClientApi, LeaderStateUpdate,
+    ProposeIdGuard, ProposeResponse, RepeatableClientApi,
 };
 use crate::{
     members::ServerId,
@@ -68,6 +64,13 @@ pub(super) struct Unary<C: Command> {
     last_sent_seq: AtomicU64,
     /// marker
     phantom: PhantomData<C>,
+
+    #[allow(dead_code)]
+    /// Cluster state
+    cluster_state: RwLock<ClusterState>,
+    #[allow(dead_code)]
+    /// Cluster state
+    client_config: Config,
 }
 
 impl<C: Command> Unary<C> {
@@ -79,6 +82,10 @@ impl<C: Command> Unary<C> {
             tracker: RwLock::new(Tracker::default()),
             last_sent_seq: AtomicU64::new(0),
             phantom: PhantomData,
+
+            // TODO: build cluster state
+            cluster_state: RwLock::default(),
+            client_config: Config::default(),
         }
     }
 
