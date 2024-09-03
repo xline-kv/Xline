@@ -2,10 +2,6 @@
 mod propose_impl;
 
 #[allow(unused)]
-/// State of the unary client
-mod cluster_state;
-
-#[allow(unused)]
 /// Config of the client
 mod config;
 
