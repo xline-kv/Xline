@@ -6,10 +6,6 @@ mod propose_impl;
 mod fetch_impl;
 
 #[allow(unused)]
-/// State of the unary client
-mod cluster_state;
-
-#[allow(unused)]
 /// Config of the client
 mod config;
 
@@ -27,11 +23,11 @@ use parking_lot::RwLock;
 use tonic::Response;
 use tracing::{debug, warn};
 
-use self::{cluster_state::ClusterState, config::Config};
+use self::config::Config;
 
 use super::{
-    state::State, ClientApi, LeaderStateUpdate, ProposeIdGuard, ProposeResponse,
-    RepeatableClientApi,
+    cluster_state::ClusterState, state::State, ClientApi, LeaderStateUpdate, ProposeIdGuard,
+    ProposeResponse, RepeatableClientApi,
 };
 use crate::{
     members::ServerId,
