@@ -5,7 +5,7 @@ use tonic::transport::ClientTlsConfig;
 use crate::members::ServerId;
 
 /// Client config
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub(crate) struct Config {
     /// Local server id, should be initialized on startup
     local_server: Option<ServerId>,
@@ -17,6 +17,8 @@ pub(crate) struct Config {
     ///
     /// The recommended the values is within (propose_timeout, 2 * propose_timeout].
     wait_synced_timeout: Duration,
+    /// is current client send request to raw curp server
+    is_raw_curp: bool,
 }
 
 impl Config {
@@ -26,12 +28,14 @@ impl Config {
         tls_config: Option<ClientTlsConfig>,
         propose_timeout: Duration,
         wait_synced_timeout: Duration,
+        is_raw_curp: bool,
     ) -> Self {
         Self {
             local_server,
             tls_config,
             propose_timeout,
             wait_synced_timeout,
+            is_raw_curp,
         }
     }
 
@@ -57,6 +61,6 @@ impl Config {
 
     /// Returns `true` if the current client is on the server
     pub(crate) fn is_raw_curp(&self) -> bool {
-        self.local_server.is_some()
+        self.is_raw_curp
     }
 }
