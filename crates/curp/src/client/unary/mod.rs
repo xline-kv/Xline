@@ -2,6 +2,10 @@
 mod propose_impl;
 
 #[allow(unused)]
+/// Client cluster fetch implementation
+mod fetch_impl;
+
+#[allow(unused)]
 /// State of the unary client
 mod cluster_state;
 
@@ -22,6 +26,8 @@ use futures::{Future, StreamExt};
 use parking_lot::RwLock;
 use tonic::Response;
 use tracing::{debug, warn};
+
+use self::{cluster_state::ClusterState, config::Config};
 
 use super::{
     state::State, ClientApi, LeaderStateUpdate, ProposeIdGuard, ProposeResponse,
@@ -72,6 +78,13 @@ pub(super) struct Unary<C: Command> {
     last_sent_seq: AtomicU64,
     /// marker
     phantom: PhantomData<C>,
+
+    #[allow(dead_code)]
+    /// Cluster state
+    cluster_state: RwLock<ClusterState>,
+    #[allow(dead_code)]
+    /// Cluster state
+    client_config: Config,
 }
 
 impl<C: Command> Unary<C> {
@@ -83,6 +96,10 @@ impl<C: Command> Unary<C> {
             tracker: RwLock::new(Tracker::default()),
             last_sent_seq: AtomicU64::new(0),
             phantom: PhantomData,
+
+            // TODO: build cluster state
+            cluster_state: RwLock::default(),
+            client_config: Config::default(),
         }
     }
 

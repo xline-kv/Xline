@@ -10,7 +10,8 @@ use crate::{
 /// The cluster state
 ///
 /// The client must discover the cluster info before sending any propose
-struct ClusterState {
+#[derive(Default)]
+pub(crate) struct ClusterState {
     /// Leader id.
     leader: ServerId,
     /// Term, initialize to 0, calibrated by the server.
@@ -88,14 +89,19 @@ impl ClusterState {
         quorum(cluster_size)
     }
 
+    /// Returns the term of the cluster
+    pub(crate) fn term(&self) -> u64 {
+        self.term
+    }
+
     /// Updates the current leader
-    fn update_leader(&mut self, leader: ServerId, term: u64) {
+    pub(crate) fn update_leader(&mut self, leader: ServerId, term: u64) {
         self.leader = leader;
         self.term = term;
     }
 
     /// Updates the cluster
-    fn update_cluster(
+    pub(crate) fn update_cluster(
         &mut self,
         cluster_version: u64,
         connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
