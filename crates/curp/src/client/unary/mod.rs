@@ -1,6 +1,14 @@
 /// Client propose implementation
 mod propose_impl;
 
+#[allow(unused)]
+/// State of the unary client
+mod state;
+
+#[allow(unused)]
+/// Config of the client
+mod config;
+
 use std::{
     cmp::Ordering,
     marker::PhantomData,
