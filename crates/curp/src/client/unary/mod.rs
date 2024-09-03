@@ -2,10 +2,6 @@
 mod propose_impl;
 
 #[allow(unused)]
-/// Client cluster fetch implementation
-mod fetch_impl;
-
-#[allow(unused)]
 /// Config of the client
 mod config;
 

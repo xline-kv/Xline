@@ -21,6 +21,10 @@ mod state;
 /// State of the cluster
 mod cluster_state;
 
+#[allow(unused)]
+/// Client cluster fetch implementation
+mod fetch;
+
 /// Tests for client
 #[cfg(test)]
 mod tests;
