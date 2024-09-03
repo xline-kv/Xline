@@ -20,6 +20,21 @@ pub(crate) struct Config {
 }
 
 impl Config {
+    /// Creates a new `Config`
+    pub(crate) fn new(
+        local_server: Option<ServerId>,
+        tls_config: Option<ClientTlsConfig>,
+        propose_timeout: Duration,
+        wait_synced_timeout: Duration,
+    ) -> Self {
+        Self {
+            local_server,
+            tls_config,
+            propose_timeout,
+            wait_synced_timeout,
+        }
+    }
+
     /// Get the local server id
     pub(crate) fn local_server(&self) -> Option<ServerId> {
         self.local_server
