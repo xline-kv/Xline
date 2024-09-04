@@ -90,19 +90,8 @@ impl ClusterState {
         quorum(cluster_size)
     }
 
-    /// Updates the current leader
-    fn update_leader(&mut self, leader: ServerId, term: u64) {
-        self.leader = leader;
-        self.term = term;
-    }
-
-    /// Updates the cluster
-    fn update_cluster(
-        &mut self,
-        cluster_version: u64,
-        connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
-    ) {
-        self.cluster_version = cluster_version;
-        self.connects = connects;
+    /// Returns the term of the cluster
+    pub(crate) fn term(&self) -> u64 {
+        self.term
     }
 }
