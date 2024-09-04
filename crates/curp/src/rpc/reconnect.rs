@@ -1,7 +1,4 @@
-use std::{
-    sync::{atomic::AtomicU64, Arc},
-    time::Duration,
-};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use event_listener::Event;
@@ -48,7 +45,6 @@ impl<C: ConnectApi> Reconnect<C> {
         // Cancel the leader keep alive loop task because it hold a read lock
         let _cancel = self.event.notify(1);
         let _ignore = self.connect.write().await.replace(new_connect);
-        // After connection is updated, notify to start the keep alive loop
         let _continue = self.event.notify(1);
     }
 
@@ -178,21 +174,15 @@ impl<C: ConnectApi> ConnectApi for Reconnect<C> {
     }
 
     /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>, interval: Duration) -> CurpError {
-        loop {
-            let connect = self.connect.read().await;
-            let connect_ref = connect.as_ref().unwrap();
-            tokio::select! {
-                err = connect_ref.lease_keep_alive(Arc::clone(&client_id), interval) => {
-                    return err;
-                }
-                _empty = self.event.listen() => {},
-            }
-            // Creates the listener before dropping the read lock.
-            // This prevents us from losting the event.
-            let listener = self.event.listen();
-            drop(connect);
-            let _connection_updated = listener.await;
-        }
+    async fn lease_keep_alive(&self, client_id: u64, interval: Duration) -> Result<u64, CurpError> {
+        let connect = self.connect.read().await;
+        let connect_ref = connect.as_ref().unwrap();
+        let result = tokio::select! {
+            result = connect_ref.lease_keep_alive(client_id, interval) => result,
+            _empty = self.event.listen() => Err(CurpError::RpcTransport(())),
+        };
+        // Wait for connection update
+        self.event.listen().await;
+        result
     }
 }

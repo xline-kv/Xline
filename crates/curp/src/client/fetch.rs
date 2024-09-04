@@ -16,7 +16,8 @@ use super::cluster_state::ClusterState;
 use super::config::Config;
 
 /// Fetch cluster implementation
-struct Fetch {
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Fetch {
     /// The fetch config
     config: Config,
 }
