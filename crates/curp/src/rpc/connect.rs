@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Formatter},
     ops::Deref,
-    sync::{atomic::AtomicU64, Arc},
+    sync::Arc,
     time::Duration,
 };
 
@@ -223,7 +223,7 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
     ) -> Result<tonic::Response<MoveLeaderResponse>, CurpError>;
 
     /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>, interval: Duration) -> CurpError;
+    async fn lease_keep_alive(&self, client_id: u64, interval: Duration) -> Result<u64, CurpError>;
 }
 
 /// Inner Connect interface among different servers
@@ -513,22 +513,18 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         with_timeout!(timeout, client.move_leader(req)).map_err(Into::into)
     }
 
-    /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>, interval: Duration) -> CurpError {
+    /// Keep send lease keep alive to server with the current client id
+    async fn lease_keep_alive(&self, client_id: u64, interval: Duration) -> Result<u64, CurpError> {
         let mut client = self.rpc_connect.clone();
-        loop {
-            let stream = heartbeat_stream(
-                client_id.load(std::sync::atomic::Ordering::Relaxed),
-                interval,
-            );
-            let new_id = match client.lease_keep_alive(stream).await {
-                Err(err) => return err.into(),
-                Ok(res) => res.into_inner().client_id,
-            };
-            // The only place to update the client id for follower
-            info!("client_id update to {new_id}");
-            client_id.store(new_id, std::sync::atomic::Ordering::Relaxed);
-        }
+        let stream = heartbeat_stream(client_id, interval);
+        let new_id = client
+            .lease_keep_alive(stream)
+            .await?
+            .into_inner()
+            .client_id;
+        // The only place to update the client id for follower
+        info!("client_id update to {new_id}");
+        Ok(new_id)
     }
 }
 
@@ -812,7 +808,11 @@ where
     }
 
     /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(&self, _client_id: Arc<AtomicU64>, _interval: Duration) -> CurpError {
+    async fn lease_keep_alive(
+        &self,
+        _client_id: u64,
+        _interval: Duration,
+    ) -> Result<u64, CurpError> {
         unreachable!("cannot invoke lease_keep_alive in bypassed connect")
     }
 }

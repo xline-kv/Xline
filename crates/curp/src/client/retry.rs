@@ -1,14 +1,19 @@
-use std::{ops::SubAssign, time::Duration};
+use std::{ops::SubAssign, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures::Future;
-use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use parking_lot::RwLock;
+use tracing::warn;
 
-use super::{ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
+use super::{
+    cluster_state::ClusterState,
+    fetch::Fetch,
+    keep_alive::{KeepAlive, KeepAliveHandle},
+    ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi,
+};
 use crate::{
     members::ServerId,
-    rpc::{ConfChange, CurpError, FetchClusterResponse, Member, ReadState, Redirect},
+    rpc::{ConfChange, CurpError, FetchClusterResponse, Member, ReadState},
 };
 
 /// Backoff config
@@ -95,6 +100,35 @@ impl Backoff {
     }
 }
 
+/// The context of a retry
+#[derive(Debug)]
+pub(crate) struct Context {
+    /// The current client id
+    client_id: u64,
+    /// The current cluster state
+    cluster_state: ClusterState,
+}
+
+impl Context {
+    /// Creates a new `Context`
+    pub(crate) fn new(client_id: u64, cluster_state: ClusterState) -> Self {
+        Self {
+            client_id,
+            cluster_state,
+        }
+    }
+
+    /// Returns the current client id
+    pub(crate) fn client_id(&self) -> u64 {
+        self.client_id
+    }
+
+    /// Returns the current client id
+    pub(crate) fn cluster_state(&self) -> ClusterState {
+        self.cluster_state.clone()
+    }
+}
+
 /// The retry client automatically retry the requests of the inner client api
 /// which raises the [`tonic::Status`] error
 #[derive(Debug)]
@@ -102,18 +136,13 @@ pub(super) struct Retry<Api> {
     /// Inner client
     inner: Api,
     /// Retry config
-    config: RetryConfig,
-    /// Background task handle
-    bg_handle: Option<JoinHandle<()>>,
-}
-
-impl<Api> Drop for Retry<Api> {
-    fn drop(&mut self) {
-        if let Some(handle) = self.bg_handle.as_ref() {
-            info!("stopping background task");
-            handle.abort();
-        }
-    }
+    retry_config: RetryConfig,
+    /// Cluster state
+    cluster_state: Arc<RwLock<ClusterState>>,
+    /// Keep alive client
+    keep_alive: KeepAliveHandle,
+    /// Fetch cluster object
+    fetch: Fetch,
 }
 
 impl<Api> Retry<Api>
@@ -121,77 +150,49 @@ where
     Api: RepeatableClientApi<Error = CurpError> + LeaderStateUpdate + Send + Sync + 'static,
 {
     /// Create a retry client
-    pub(super) fn new(inner: Api, config: RetryConfig, bg_handle: Option<JoinHandle<()>>) -> Self {
+    pub(super) fn new(
+        inner: Api,
+        retry_config: RetryConfig,
+        keep_alive: KeepAlive,
+        fetch: Fetch,
+    ) -> Self {
+        // TODO: build state from parameters
+        let cluster_state = Arc::new(RwLock::default());
+        let keep_alive_handle = keep_alive.spawn_keep_alive(Arc::clone(&cluster_state));
         Self {
             inner,
-            config,
-            bg_handle,
+            retry_config,
+            cluster_state,
+            keep_alive: keep_alive_handle,
+            fetch,
         }
     }
 
     /// Takes a function f and run retry.
-    async fn retry<'a, R, F>(&'a self, f: impl Fn(&'a Api) -> F) -> Result<R, tonic::Status>
+    async fn retry<'a, R, F>(
+        &'a self,
+        f: impl Fn(&'a Api, Context) -> F,
+    ) -> Result<R, tonic::Status>
     where
         F: Future<Output = Result<R, CurpError>>,
     {
-        let mut backoff = self.config.init_backoff();
+        let mut backoff = self.retry_config.init_backoff();
         let mut last_err = None;
+        let client_id = self.keep_alive.wait_id_update(0).await;
         while let Some(delay) = backoff.next_delay() {
-            let err = match f(&self.inner).await {
+            let cluster_state = self.cluster_state.read().clone();
+            let context = Context::new(client_id, cluster_state.clone());
+            let result = tokio::select! {
+                result = f(&self.inner, context) => result,
+                _ = self.keep_alive.wait_id_update(client_id) => {
+                    return Err(CurpError::expired_client_id().into());
+                },
+            };
+            let err = match result {
                 Ok(res) => return Ok(res),
                 Err(err) => err,
             };
-
-            match err {
-                // some errors that should not retry
-                CurpError::Duplicated(())
-                | CurpError::ShuttingDown(())
-                | CurpError::InvalidConfig(())
-                | CurpError::NodeNotExists(())
-                | CurpError::NodeAlreadyExists(())
-                | CurpError::LearnerNotCatchUp(()) => {
-                    return Err(tonic::Status::from(err));
-                }
-
-                // some errors that could have a retry
-                CurpError::ExpiredClientId(())
-                | CurpError::KeyConflict(())
-                | CurpError::Internal(_)
-                | CurpError::LeaderTransfer(_) => {}
-
-                // update leader state if we got a rpc transport error
-                CurpError::RpcTransport(()) => {
-                    if let Err(e) = self.inner.fetch_leader_id(true).await {
-                        warn!("fetch leader failed, error {e:?}");
-                    }
-                }
-
-                // update the cluster state if got WrongClusterVersion
-                CurpError::WrongClusterVersion(()) => {
-                    // the inner client should automatically update cluster state when fetch_cluster
-                    if let Err(e) = self.inner.fetch_cluster(true).await {
-                        warn!("fetch cluster failed, error {e:?}");
-                    }
-                }
-
-                // update the leader state if got Redirect
-                CurpError::Redirect(Redirect {
-                    ref leader_id,
-                    term,
-                }) => {
-                    let _ig = self
-                        .inner
-                        .update_leader(leader_id.as_ref().map(Into::into), term)
-                        .await;
-                }
-
-                // update the cluster state if got Zombie
-                CurpError::Zombie(()) => {
-                    if let Err(e) = self.inner.fetch_cluster(true).await {
-                        warn!("fetch cluster failed, error {e:?}");
-                    }
-                }
-            }
+            self.handle_err(&err, cluster_state).await?;
 
             #[cfg(feature = "client-metrics")]
             super::metrics::get().client_retry_count.add(1, &[]);
@@ -208,6 +209,43 @@ where
             "request timeout, last error: {:?}",
             last_err.unwrap_or_else(|| unreachable!("last error must be set"))
         )))
+    }
+
+    /// Handles errors before another retry
+    async fn handle_err(
+        &self,
+        err: &CurpError,
+        cluster_state: ClusterState,
+    ) -> Result<(), tonic::Status> {
+        match *err {
+            // some errors that should not retry
+            CurpError::Duplicated(())
+            | CurpError::ShuttingDown(())
+            | CurpError::InvalidConfig(())
+            | CurpError::NodeNotExists(())
+            | CurpError::NodeAlreadyExists(())
+            | CurpError::LearnerNotCatchUp(()) => {
+                return Err(tonic::Status::from(err.clone()));
+            }
+
+            // some errors that could have a retry
+            CurpError::ExpiredClientId(())
+            | CurpError::KeyConflict(())
+            | CurpError::Internal(_)
+            | CurpError::LeaderTransfer(_) => {}
+
+            // Some error that needs to update cluster state
+            CurpError::RpcTransport(())
+            | CurpError::WrongClusterVersion(())
+            | CurpError::Redirect(_) // FIXME: The redirect error needs to include full cluster state
+            | CurpError::Zombie(()) => {
+                let new_cluster_state = self.fetch.fetch_cluster(cluster_state).await?;
+                // TODO: Prevent concurrent updating cluster state
+                *self.cluster_state.write() = new_cluster_state;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -230,7 +268,7 @@ where
         token: Option<&String>,
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, tonic::Status> {
-        self.retry::<_, _>(|client| async move {
+        self.retry::<_, _>(|client, _ctx| async move {
             let propose_id = self.inner.gen_propose_id().await?;
             RepeatableClientApi::propose(client, *propose_id, cmd, token, use_fast_path).await
         })
@@ -242,7 +280,7 @@ where
         &self,
         changes: Vec<ConfChange>,
     ) -> Result<Vec<Member>, tonic::Status> {
-        self.retry::<_, _>(|client| {
+        self.retry::<_, _>(|client, _ctx| {
             let changes_c = changes.clone();
             async move {
                 let propose_id = self.inner.gen_propose_id().await?;
@@ -254,7 +292,7 @@ where
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), tonic::Status> {
-        self.retry::<_, _>(|client| async move {
+        self.retry::<_, _>(|client, _ctx| async move {
             let propose_id = self.inner.gen_propose_id().await?;
             RepeatableClientApi::propose_shutdown(client, *propose_id).await
         })
@@ -268,7 +306,7 @@ where
         node_name: String,
         node_client_urls: Vec<String>,
     ) -> Result<(), Self::Error> {
-        self.retry::<_, _>(|client| {
+        self.retry::<_, _>(|client, _ctx| {
             let name_c = node_name.clone();
             let node_client_urls_c = node_client_urls.clone();
             async move {
@@ -288,13 +326,13 @@ where
 
     /// Send move leader request
     async fn move_leader(&self, node_id: u64) -> Result<(), Self::Error> {
-        self.retry::<_, _>(|client| client.move_leader(node_id))
+        self.retry::<_, _>(|client, _ctx| client.move_leader(node_id))
             .await
     }
 
     /// Send fetch read state from leader
     async fn fetch_read_state(&self, cmd: &Self::Cmd) -> Result<ReadState, tonic::Status> {
-        self.retry::<_, _>(|client| client.fetch_read_state(cmd))
+        self.retry::<_, _>(|client, _ctx| client.fetch_read_state(cmd))
             .await
     }
 
@@ -306,7 +344,7 @@ where
         &self,
         linearizable: bool,
     ) -> Result<FetchClusterResponse, tonic::Status> {
-        self.retry::<_, _>(|client| client.fetch_cluster(linearizable))
+        self.retry::<_, _>(|client, _ctx| client.fetch_cluster(linearizable))
             .await
     }
 }
