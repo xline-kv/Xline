@@ -67,11 +67,13 @@ impl ClusterState {
     pub(crate) fn map_leader<R, F: Future<Output = Result<R, CurpError>>>(
         &self,
         f: impl FnOnce(Arc<dyn ConnectApi>) -> F,
-    ) -> Option<F> {
+    ) -> F {
         // If the leader id cannot be found in connects, it indicates that there is
         // an inconsistency between the client's local leader state and the cluster
         // state, then mock a `WrongClusterVersion` return to the outside.
-        self.connects.get(&self.leader).map(Arc::clone).map(f)
+        f(Arc::clone(self.connects.get(&self.leader).unwrap_or_else(
+            || unreachable!("leader connect should always exists"),
+        )))
     }
 
     /// Take an async function and map to all server, returning `FuturesUnordered<F>`
