@@ -108,20 +108,4 @@ impl ClusterState {
     pub(crate) fn term(&self) -> u64 {
         self.term
     }
-
-    /// Updates the current leader
-    pub(crate) fn update_leader(&mut self, leader: ServerId, term: u64) {
-        self.leader = leader;
-        self.term = term;
-    }
-
-    /// Updates the cluster
-    pub(crate) fn update_cluster(
-        &mut self,
-        cluster_version: u64,
-        connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
-    ) {
-        self.cluster_version = cluster_version;
-        self.connects = connects;
-    }
 }
