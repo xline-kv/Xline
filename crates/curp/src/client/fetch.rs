@@ -12,7 +12,7 @@ use crate::{
     rpc::{self, connect::ConnectApi, CurpError, FetchClusterRequest, FetchClusterResponse},
 };
 
-use super::cluster_state::ClusterState;
+use super::cluster_state::{ClusterState, ClusterStateSuper, ForEachServer};
 use super::config::Config;
 
 /// An override connect
@@ -45,7 +45,7 @@ impl Fetch {
     /// Fetch cluster and updates the current state
     pub(crate) async fn fetch_cluster(
         &self,
-        state: ClusterState,
+        state: impl ForEachServer,
     ) -> Result<(ClusterState, FetchClusterResponse), CurpError> {
         /// Retry interval
         const FETCH_RETRY_INTERVAL: Duration = Duration::from_secs(1);
@@ -94,7 +94,7 @@ impl Fetch {
 
     /// Prefetch, send fetch cluster request to the cluster and get the
     /// config with the greatest quorum.
-    async fn pre_fetch(&self, state: &ClusterState) -> Option<FetchClusterResponse> {
+    async fn pre_fetch(&self, state: &impl ForEachServer) -> Option<FetchClusterResponse> {
         let timeout = self.config.wait_synced_timeout();
         let requests = state.for_each_server(|c| async move {
             c.fetch_cluster(FetchClusterRequest { linearizable: true }, timeout)

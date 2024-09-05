@@ -7,12 +7,19 @@ use std::{
 };
 
 use event_listener::Event;
-use futures::Future;
+use futures::{
+    future::{self, OptionFuture},
+    Future, FutureExt,
+};
 use parking_lot::RwLock;
 use tokio::{sync::broadcast, task::JoinHandle};
 use tracing::{debug, info, warn};
 
-use super::cluster_state::ClusterState;
+use super::{
+    cluster_state::{ClusterState, ClusterStateSuper},
+    fetch::Fetch,
+    retry::ClusterStateShared,
+};
 use crate::rpc::{connect::ConnectApi, CurpError, Redirect};
 
 /// Keep alive
@@ -55,7 +62,7 @@ impl KeepAlive {
     /// Streaming keep alive
     pub(crate) fn spawn_keep_alive(
         self,
-        cluster_state: Arc<RwLock<ClusterState>>,
+        cluster_state: Arc<ClusterStateShared>,
     ) -> KeepAliveHandle {
         /// Sleep duration when keep alive failed
         const FAIL_SLEEP_DURATION: Duration = Duration::from_secs(1);
@@ -65,9 +72,19 @@ impl KeepAlive {
         let update_event_c = Arc::clone(&update_event);
         let handle = tokio::spawn(async move {
             loop {
-                let current_state = cluster_state.read().clone();
+                let fetch_result = cluster_state.ready_or_fetch().await;
+                let current_state = match fetch_result {
+                    Ok(ready) => ready,
+                    Err(e) => {
+                        warn!("fetch cluster failed: {e:?}");
+                        // Sleep for some time, the cluster state should be updated in a while
+                        tokio::time::sleep(FAIL_SLEEP_DURATION).await;
+                        continue;
+                    }
+                };
                 let current_id = client_id.load(Ordering::Relaxed);
-                match self.keep_alive_with(current_id, current_state).await {
+                let result = self.keep_alive_with(current_id, current_state).await;
+                match result {
                     Ok(new_id) => {
                         client_id.store(new_id, Ordering::Relaxed);
                         let _ignore = update_event.notify(usize::MAX);

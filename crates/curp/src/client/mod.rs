@@ -57,6 +57,7 @@ use utils::ClientTlsConfig;
 use utils::{build_endpoint, config::ClientConfig};
 
 use self::{
+    cluster_state::ClusterStateInit,
     config::Config,
     fetch::Fetch,
     keep_alive::KeepAlive,
@@ -66,6 +67,7 @@ use self::{
 use crate::{
     members::ServerId,
     rpc::{
+        self,
         connect::{BypassedConnect, ConnectApi},
         protocol_client::ProtocolClient,
         ConfChange, FetchClusterRequest, FetchClusterResponse, Member, ProposeId, Protocol,
@@ -426,6 +428,19 @@ impl ClientBuilder {
         )
     }
 
+    /// Connect to members
+    fn connect_members(&self, tls_config: Option<&ClientTlsConfig>) -> ClusterStateInit {
+        let all_members = self
+            .all_members
+            .clone()
+            .unwrap_or_else(|| unreachable!("requires members"));
+        let connects = rpc::connects(all_members, tls_config)
+            .map(|(_id, conn)| conn)
+            .collect();
+
+        ClusterStateInit::new(connects)
+    }
+
     /// Build the client
     ///
     /// # Errors
@@ -439,11 +454,13 @@ impl ClientBuilder {
         let config = self.init_config(None);
         let keep_alive = KeepAlive::new(*self.config.keep_alive_interval());
         let fetch = Fetch::new(config.clone());
+        let cluster_state_init = self.connect_members(self.tls_config.as_ref());
         let client = Retry::new(
             Unary::new(config),
             self.init_retry_config(),
             keep_alive,
             fetch,
+            cluster_state_init,
         );
 
         Ok(client)
@@ -500,11 +517,13 @@ impl<P: Protocol> ClientBuilderWithBypass<P> {
         let config = self.inner.init_config(Some(self.local_server_id));
         let keep_alive = KeepAlive::new(*self.inner.config.keep_alive_interval());
         let fetch = Fetch::new(config.clone()).with_override(bypassed);
+        let cluster_state_init = self.inner.connect_members(self.inner.tls_config.as_ref());
         let client = Retry::new(
             Unary::new(config),
             self.inner.init_retry_config(),
             keep_alive,
             fetch,
+            cluster_state_init,
         );
 
         Ok(client)
