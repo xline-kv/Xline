@@ -16,7 +16,7 @@ use tokio::{sync::broadcast, task::JoinHandle};
 use tracing::{debug, info, warn};
 
 use super::{
-    cluster_state::{ClusterState, ClusterStateSuper},
+    cluster_state::{ClusterState, ClusterStateReady},
     fetch::Fetch,
     retry::ClusterStateShared,
 };
@@ -109,7 +109,7 @@ impl KeepAlive {
     pub(crate) async fn keep_alive_with(
         &self,
         client_id: u64,
-        cluster_state: ClusterState,
+        cluster_state: ClusterStateReady,
     ) -> Result<u64, CurpError> {
         cluster_state
             .map_leader(|conn| async move {

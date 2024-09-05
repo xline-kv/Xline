@@ -12,7 +12,7 @@ use crate::{
     rpc::{self, connect::ConnectApi, CurpError, FetchClusterRequest, FetchClusterResponse},
 };
 
-use super::cluster_state::{ClusterState, ClusterStateSuper, ForEachServer};
+use super::cluster_state::{ClusterState, ClusterStateReady, ForEachServer};
 use super::config::Config;
 
 /// An override connect
@@ -46,7 +46,7 @@ impl Fetch {
     pub(crate) async fn fetch_cluster(
         &self,
         state: impl ForEachServer,
-    ) -> Result<(ClusterState, FetchClusterResponse), CurpError> {
+    ) -> Result<(ClusterStateReady, FetchClusterResponse), CurpError> {
         /// Retry interval
         const FETCH_RETRY_INTERVAL: Duration = Duration::from_secs(1);
         loop {
@@ -57,7 +57,7 @@ impl Fetch {
             let new_members = self.member_addrs(&resp);
             let new_connects = self.connect_to(new_members);
             let new_connects = self.override_connects(new_connects);
-            let new_state = ClusterState::new(
+            let new_state = ClusterStateReady::new(
                 resp.leader_id
                     .unwrap_or_else(|| unreachable!("leader id should be Some"))
                     .into(),
@@ -74,7 +74,7 @@ impl Fetch {
     }
 
     /// Fetch the term of the cluster. This ensures that the current leader is the latest.
-    async fn fetch_term(&self, state: &ClusterState) -> bool {
+    async fn fetch_term(&self, state: &ClusterStateReady) -> bool {
         let timeout = self.config.wait_synced_timeout();
         let term = state.term();
         let quorum = state.get_quorum(quorum);

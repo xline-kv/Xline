@@ -10,7 +10,7 @@ use parking_lot::RwLock;
 use tracing::{debug, warn};
 
 use super::{
-    cluster_state::{ClusterState, ClusterStateInit, ClusterStateSuper},
+    cluster_state::{ClusterState, ClusterStateInit, ClusterStateReady},
     config::Config,
     fetch::Fetch,
     keep_alive::{KeepAlive, KeepAliveHandle},
@@ -114,7 +114,7 @@ pub(crate) struct Context {
     /// First incomplete seqence
     first_incomplete: u64,
     /// The current cluster state
-    cluster_state: ClusterState,
+    cluster_state: ClusterStateReady,
 }
 
 impl Context {
@@ -122,7 +122,7 @@ impl Context {
     pub(crate) fn new(
         propose_id: ProposeId,
         first_incomplete: u64,
-        cluster_state: ClusterState,
+        cluster_state: ClusterStateReady,
     ) -> Self {
         Self {
             propose_id,
@@ -142,7 +142,7 @@ impl Context {
     }
 
     /// Returns the current client id
-    pub(crate) fn cluster_state(&self) -> ClusterState {
+    pub(crate) fn cluster_state(&self) -> ClusterStateReady {
         self.cluster_state.clone()
     }
 }
@@ -179,14 +179,14 @@ impl CmdTracker {
 #[derive(Debug)]
 pub(crate) struct ClusterStateShared {
     /// Inner state
-    inner: RwLock<ClusterStateSuper>,
+    inner: RwLock<ClusterState>,
     /// Fetch cluster object
     fetch: Fetch,
 }
 
 impl ClusterStateShared {
     /// Creates a new `ClusterStateShared`
-    fn new(inner: ClusterStateSuper, fetch: Fetch) -> Self {
+    fn new(inner: ClusterState, fetch: Fetch) -> Self {
         Self {
             inner: RwLock::new(inner),
             fetch,
@@ -196,21 +196,21 @@ impl ClusterStateShared {
     /// Fetch and updates current state
     ///
     /// Returns the fetched cluster state
-    pub(crate) async fn fetch_and_update(&self) -> Result<ClusterState, CurpError> {
+    pub(crate) async fn fetch_and_update(&self) -> Result<ClusterStateReady, CurpError> {
         let current = self.inner.read().clone();
         let (new_state, _) = self.fetch.fetch_cluster(current).await?;
-        *self.inner.write() = ClusterStateSuper::Ready(new_state.clone());
+        *self.inner.write() = ClusterState::Ready(new_state.clone());
         debug!("cluster state updates to: {new_state:?}");
 
         Ok(new_state)
     }
 
     /// Retrieves the cluster state if it's ready, or fetches and updates it if not.
-    pub(crate) async fn ready_or_fetch(&self) -> Result<ClusterState, CurpError> {
+    pub(crate) async fn ready_or_fetch(&self) -> Result<ClusterStateReady, CurpError> {
         let current = self.inner.read().clone();
         match current {
-            ClusterStateSuper::Init(init) => self.fetch_and_update().await,
-            ClusterStateSuper::Ready(ready) => Ok(ready),
+            ClusterState::Init(init) => self.fetch_and_update().await,
+            ClusterState::Ready(ready) => Ok(ready),
         }
     }
 }
@@ -246,7 +246,7 @@ where
         cluster_state_init: ClusterStateInit,
     ) -> Self {
         let cluster_state = Arc::new(ClusterStateShared::new(
-            ClusterStateSuper::Init(cluster_state_init),
+            ClusterState::Init(cluster_state_init),
             fetch.clone(),
         ));
         let keep_alive_handle = keep_alive.spawn_keep_alive(Arc::clone(&cluster_state));
@@ -309,7 +309,7 @@ where
     async fn handle_err(
         &self,
         err: &CurpError,
-        cluster_state: ClusterState,
+        cluster_state: ClusterStateReady,
     ) -> Result<(), tonic::Status> {
         match *err {
             // some errors that should not retry
