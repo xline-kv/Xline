@@ -4,10 +4,9 @@ use curp_external_api::cmd::Command;
 use futures::{future, stream, FutureExt, Stream, StreamExt};
 
 use crate::{
-    client::ProposeResponse,
-    members::ServerId,
+    client::{retry::Context, ProposeResponse},
     quorum,
-    rpc::{CurpError, OpResponse, ProposeId, ProposeRequest, RecordRequest, ResponseOp},
+    rpc::{CurpError, OpResponse, ProposeRequest, RecordRequest, ResponseOp},
     super_quorum,
 };
 
@@ -42,13 +41,12 @@ impl<C: Command> Unary<C> {
     pub(super) async fn propose_mutative(
         &self,
         cmd: &C,
-        propose_id: ProposeId,
         token: Option<&String>,
-        first_incomplete: u64,
         use_fast_path: bool,
+        ctx: &Context,
     ) -> Result<ProposeResponse<C>, CurpError> {
         let stream = self
-            .send_propose_mutative(cmd, propose_id, use_fast_path, first_incomplete, token)
+            .send_propose_mutative(cmd, use_fast_path, token, ctx)
             .await?;
         let mut stream = Box::into_pin(stream);
         let first_two_events = (
@@ -82,24 +80,15 @@ impl<C: Command> Unary<C> {
     pub(super) async fn propose_read_only(
         &self,
         cmd: &C,
-        propose_id: ProposeId,
         token: Option<&String>,
         use_fast_path: bool,
-        first_incomplete: u64,
+        ctx: &Context,
     ) -> Result<ProposeResponse<C>, CurpError> {
-        let leader_id = self.leader_id().await?;
         let stream = self
-            .send_leader_propose(
-                cmd,
-                leader_id,
-                propose_id,
-                use_fast_path,
-                first_incomplete,
-                token,
-            )
+            .send_leader_propose(cmd, use_fast_path, token, ctx)
             .await?;
         let mut stream_pinned = Box::into_pin(stream);
-        if !self.send_read_index(leader_id).await {
+        if !self.send_read_index(ctx).await {
             return Err(CurpError::WrongClusterVersion(()));
         }
         if use_fast_path {
@@ -132,23 +121,14 @@ impl<C: Command> Unary<C> {
     async fn send_propose_mutative(
         &self,
         cmd: &C,
-        propose_id: ProposeId,
         use_fast_path: bool,
-        first_incomplete: u64,
         token: Option<&String>,
+        ctx: &Context,
     ) -> Result<EventStream<'_, C>, CurpError> {
-        let leader_id = self.leader_id().await?;
         let leader_stream = self
-            .send_leader_propose(
-                cmd,
-                leader_id,
-                propose_id,
-                use_fast_path,
-                first_incomplete,
-                token,
-            )
+            .send_leader_propose(cmd, use_fast_path, token, ctx)
             .await?;
-        let follower_stream = self.send_record(cmd, leader_id, propose_id).await;
+        let follower_stream = self.send_record(cmd, ctx).await;
         let select = stream::select(Box::into_pin(leader_stream), Box::into_pin(follower_stream));
 
         Ok(Box::new(select))
@@ -158,26 +138,24 @@ impl<C: Command> Unary<C> {
     async fn send_leader_propose(
         &self,
         cmd: &C,
-        leader_id: ServerId,
-        propose_id: ProposeId,
         use_fast_path: bool,
-        first_incomplete: u64,
         token: Option<&String>,
+        ctx: &Context,
     ) -> Result<EventStream<'_, C>, CurpError> {
         let term = self.state.term().await;
         let propose_req = ProposeRequest::new::<C>(
-            propose_id,
+            ctx.propose_id(),
             cmd,
             self.state.cluster_version().await,
             term,
             !use_fast_path,
-            first_incomplete,
+            ctx.first_incomplete(),
         );
         let timeout = self.config.propose_timeout;
         let token = token.cloned();
-        let stream = self
-            .state
-            .map_server(leader_id, move |conn| async move {
+        let stream = ctx
+            .cluster_state()
+            .map_leader(move |conn| async move {
                 conn.propose_stream(propose_req, token, timeout).await
             })
             .map(Self::flatten_propose_stream_result)
@@ -190,19 +168,15 @@ impl<C: Command> Unary<C> {
     /// Send read index requests to the cluster
     ///
     /// Returns `true` if the read index is successful
-    async fn send_read_index(&self, leader_id: ServerId) -> bool {
+    async fn send_read_index(&self, ctx: &Context) -> bool {
         let term = self.state.term().await;
         let connects_len = self.state.connects_len().await;
         let quorum = quorum(connects_len);
         let expect = quorum.wrapping_sub(1);
         let timeout = self.config.propose_timeout;
 
-        self.state
-            .for_each_follower(
-                leader_id,
-                |conn| async move { conn.read_index(timeout).await },
-            )
-            .await
+        ctx.cluster_state()
+            .for_each_follower(|conn| async move { conn.read_index(timeout).await })
             .filter_map(|res| future::ready(res.ok()))
             .filter(|resp| future::ready(resp.get_ref().term == term))
             .take(expect)
@@ -214,24 +188,18 @@ impl<C: Command> Unary<C> {
     /// Send record requests to the cluster
     ///
     /// Returns a stream that yield a single event
-    async fn send_record(
-        &self,
-        cmd: &C,
-        leader_id: ServerId,
-        propose_id: ProposeId,
-    ) -> EventStream<'_, C> {
+    async fn send_record(&self, cmd: &C, ctx: &Context) -> EventStream<'_, C> {
         let connects_len = self.state.connects_len().await;
         let superquorum = super_quorum(connects_len);
         let timeout = self.config.propose_timeout;
-        let record_req = RecordRequest::new::<C>(propose_id, cmd);
+        let record_req = RecordRequest::new::<C>(ctx.propose_id(), cmd);
         let expect = superquorum.wrapping_sub(1);
-        let stream = self
-            .state
-            .for_each_follower(leader_id, |conn| {
+        let stream = ctx
+            .cluster_state()
+            .for_each_follower(|conn| {
                 let record_req_c = record_req.clone();
                 async move { conn.record(record_req_c, timeout).await }
             })
-            .await
             .filter_map(|res| future::ready(res.ok()))
             .filter(|resp| future::ready(!resp.get_ref().conflict))
             .take(expect)

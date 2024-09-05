@@ -80,14 +80,11 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         use_fast_path: bool,
         ctx: Context,
     ) -> Result<ProposeResponse<Self::Cmd>, Self::Error> {
-        let propose_id = ctx.propose_id();
-        let first_incomplete = ctx.first_incomplete();
         if cmd.is_read_only() {
-            self.propose_read_only(cmd, propose_id, token, use_fast_path, first_incomplete)
+            self.propose_read_only(cmd, token, use_fast_path, &ctx)
                 .await
         } else {
-            self.propose_mutative(cmd, propose_id, token, first_incomplete, use_fast_path)
-                .await
+            self.propose_mutative(cmd, token, use_fast_path, &ctx).await
         }
     }
 
