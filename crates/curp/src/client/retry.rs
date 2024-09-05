@@ -370,13 +370,13 @@ where
 
     /// Send move leader request
     async fn move_leader(&self, node_id: u64) -> Result<(), Self::Error> {
-        self.retry::<_, _>(|client, _ctx| client.move_leader(node_id))
+        self.retry::<_, _>(|client, ctx| client.move_leader(node_id, ctx))
             .await
     }
 
     /// Send fetch read state from leader
     async fn fetch_read_state(&self, cmd: &Self::Cmd) -> Result<ReadState, tonic::Status> {
-        self.retry::<_, _>(|client, _ctx| client.fetch_read_state(cmd))
+        self.retry::<_, _>(|client, ctx| client.fetch_read_state(cmd, ctx))
             .await
     }
 
@@ -388,7 +388,7 @@ where
         &self,
         linearizable: bool,
     ) -> Result<FetchClusterResponse, tonic::Status> {
-        self.retry::<_, _>(|client, _ctx| client.fetch_cluster(linearizable))
+        self.retry::<_, _>(|client, ctx| client.fetch_cluster(linearizable, ctx))
             .await
     }
 }

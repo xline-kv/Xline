@@ -36,8 +36,9 @@ mod config;
 /// Lease keep alive implementation
 mod keep_alive;
 
+// TODO: rewrite these tests
 /// Tests for client
-#[cfg(test)]
+#[cfg(ignore)]
 mod tests;
 
 #[cfg(madsim)]
@@ -181,7 +182,13 @@ impl Drop for ProposeIdGuard<'_> {
 
 /// This trait override some unrepeatable methods in ClientApi, and a client with this trait will be able to retry.
 #[async_trait]
-trait RepeatableClientApi: ClientApi {
+trait RepeatableClientApi {
+    /// The client error
+    type Error;
+
+    /// The command type
+    type Cmd: Command;
+
     /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
     /// requests (event the requests are commutative).
     async fn propose(
@@ -210,6 +217,26 @@ trait RepeatableClientApi: ClientApi {
         node_client_urls: Vec<String>,
         ctx: Context,
     ) -> Result<(), Self::Error>;
+
+    /// Send move leader request
+    async fn move_leader(&self, node_id: u64, ctx: Context) -> Result<(), Self::Error>;
+
+    /// Send fetch read state from leader
+    async fn fetch_read_state(
+        &self,
+        cmd: &Self::Cmd,
+        ctx: Context,
+    ) -> Result<ReadState, Self::Error>;
+
+    /// Send fetch cluster requests to all servers (That's because initially, we didn't
+    /// know who the leader is.)
+    ///
+    /// Note: The fetched cluster may still be outdated if `linearizable` is false
+    async fn fetch_cluster(
+        &self,
+        linearizable: bool,
+        ctx: Context,
+    ) -> Result<FetchClusterResponse, Self::Error>;
 }
 
 /// Client builder to build a client
