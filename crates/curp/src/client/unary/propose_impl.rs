@@ -45,9 +45,7 @@ impl<C: Command> Unary<C> {
         use_fast_path: bool,
         ctx: &Context,
     ) -> Result<ProposeResponse<C>, CurpError> {
-        let stream = self
-            .send_propose_mutative(cmd, use_fast_path, token, ctx)
-            .await?;
+        let stream = self.send_propose_mutative(cmd, use_fast_path, token, ctx);
         let mut stream = Box::into_pin(stream);
         let first_two_events = (
             Self::next_event(&mut stream).await?,
@@ -84,9 +82,7 @@ impl<C: Command> Unary<C> {
         use_fast_path: bool,
         ctx: &Context,
     ) -> Result<ProposeResponse<C>, CurpError> {
-        let stream = self
-            .send_leader_propose(cmd, use_fast_path, token, ctx)
-            .await?;
+        let stream = self.send_leader_propose(cmd, use_fast_path, token, ctx);
         let mut stream_pinned = Box::into_pin(stream);
         if !self.send_read_index(ctx).await {
             return Err(CurpError::WrongClusterVersion(()));
@@ -118,30 +114,28 @@ impl<C: Command> Unary<C> {
     /// Send propose to the cluster
     ///
     /// Returns a stream that combines the propose stream and record request
-    async fn send_propose_mutative(
+    fn send_propose_mutative(
         &self,
         cmd: &C,
         use_fast_path: bool,
         token: Option<&String>,
         ctx: &Context,
-    ) -> Result<EventStream<'_, C>, CurpError> {
-        let leader_stream = self
-            .send_leader_propose(cmd, use_fast_path, token, ctx)
-            .await?;
-        let follower_stream = self.send_record(cmd, ctx).await;
+    ) -> EventStream<'_, C> {
+        let leader_stream = self.send_leader_propose(cmd, use_fast_path, token, ctx);
+        let follower_stream = self.send_record(cmd, ctx);
         let select = stream::select(Box::into_pin(leader_stream), Box::into_pin(follower_stream));
 
-        Ok(Box::new(select))
+        Box::new(select)
     }
 
     /// Send propose request to the leader
-    async fn send_leader_propose(
+    fn send_leader_propose(
         &self,
         cmd: &C,
         use_fast_path: bool,
         token: Option<&String>,
         ctx: &Context,
-    ) -> Result<EventStream<'_, C>, CurpError> {
+    ) -> EventStream<'_, C> {
         let term = ctx.cluster_state().term();
         let propose_req = ProposeRequest::new::<C>(
             ctx.propose_id(),
@@ -162,7 +156,7 @@ impl<C: Command> Unary<C> {
             .map(Box::into_pin)
             .flatten_stream();
 
-        Ok(Box::new(stream))
+        Box::new(stream)
     }
 
     /// Send read index requests to the cluster
@@ -187,7 +181,7 @@ impl<C: Command> Unary<C> {
     /// Send record requests to the cluster
     ///
     /// Returns a stream that yield a single event
-    async fn send_record(&self, cmd: &C, ctx: &Context) -> EventStream<'_, C> {
+    fn send_record(&self, cmd: &C, ctx: &Context) -> EventStream<'_, C> {
         let superquorum = ctx.cluster_state().get_quorum(super_quorum);
         let timeout = self.config.propose_timeout();
         let record_req = RecordRequest::new::<C>(ctx.propose_id(), cmd);
