@@ -5,18 +5,18 @@ use std::{cmp::Ordering, marker::PhantomData, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
-use futures::{Future, StreamExt};
+use futures::StreamExt;
 use tonic::Response;
 use tracing::{debug, warn};
 
-use super::{retry::Context, state::State, ClientApi, ProposeResponse, RepeatableClientApi};
+use super::{retry::Context, state::State, ProposeResponse, RepeatableClientApi};
 use crate::{
     members::ServerId,
     quorum,
     rpc::{
-        connect::ConnectApi, ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, Member, MoveLeaderRequest, ProposeConfChangeRequest, PublishRequest,
-        ReadState, ShutdownRequest,
+        ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
+        Member, MoveLeaderRequest, ProposeConfChangeRequest, PublishRequest, ReadState,
+        ShutdownRequest,
     },
 };
 
@@ -61,38 +61,6 @@ impl<C: Command> Unary<C> {
             phantom: PhantomData,
         }
     }
-
-    /// Get a handle `f` and apply to the leader
-    ///
-    /// NOTICE:
-    ///
-    /// The leader might be outdate if the local state is stale.
-    ///
-    /// `map_leader` should never be invoked in [`ClientApi::fetch_cluster`]
-    ///
-    /// `map_leader` might call `fetch_leader_id`, `fetch_cluster`, finally
-    /// result in stack overflow.
-    async fn map_leader<R, F: Future<Output = Result<R, CurpError>>>(
-        &self,
-        f: impl FnOnce(Arc<dyn ConnectApi>) -> F,
-    ) -> Result<R, CurpError> {
-        let cached_leader = self.state.leader_id().await;
-        let leader_id = match cached_leader {
-            Some(id) => id,
-            None => <Unary<C> as ClientApi>::fetch_leader_id(self, false).await?,
-        };
-
-        self.state.map_server(leader_id, f).await
-    }
-
-    /// Gets the leader id
-    async fn leader_id(&self) -> Result<u64, CurpError> {
-        let cached_leader = self.state.leader_id().await;
-        match cached_leader {
-            Some(id) => Ok(id),
-            None => <Unary<C> as ClientApi>::fetch_leader_id(self, false).await,
-        }
-    }
 }
 
 #[async_trait]
@@ -135,11 +103,13 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
             self.state.cluster_version().await,
         );
         let timeout = self.config.wait_synced_timeout;
-        let members = self
+        let members = ctx
+            .cluster_state()
             .map_leader(|conn| async move { conn.propose_conf_change(req, timeout).await })
             .await?
             .into_inner()
             .members;
+
         Ok(members)
     }
 
@@ -147,9 +117,11 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
     async fn propose_shutdown(&self, ctx: Context) -> Result<(), Self::Error> {
         let req = ShutdownRequest::new(ctx.propose_id(), self.state.cluster_version().await);
         let timeout = self.config.wait_synced_timeout;
-        let _ig = self
+        let _resp = ctx
+            .cluster_state()
             .map_leader(|conn| async move { conn.shutdown(req, timeout).await })
             .await?;
+
         Ok(())
     }
 
@@ -163,9 +135,11 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
     ) -> Result<(), Self::Error> {
         let req = PublishRequest::new(ctx.propose_id(), node_id, node_name, node_client_urls);
         let timeout = self.config.wait_synced_timeout;
-        let _ig = self
+        let _resp = ctx
+            .cluster_state()
             .map_leader(|conn| async move { conn.publish(req, timeout).await })
             .await?;
+
         Ok(())
     }
 
@@ -173,9 +147,11 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
     async fn move_leader(&self, node_id: u64, ctx: Context) -> Result<(), Self::Error> {
         let req = MoveLeaderRequest::new(node_id, self.state.cluster_version().await);
         let timeout = self.config.wait_synced_timeout;
-        let _ig = self
+        let _resp = ctx
+            .cluster_state()
             .map_leader(|conn| async move { conn.move_leader(req, timeout).await })
             .await?;
+
         Ok(())
     }
 
@@ -194,12 +170,14 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
             },
         )?;
         let timeout = self.config.wait_synced_timeout;
-        let state = self
+        let state = ctx
+            .cluster_state()
             .map_leader(|conn| async move { conn.fetch_read_state(req, timeout).await })
             .await?
             .into_inner()
             .read_state
             .unwrap_or_else(|| unreachable!("read_state must be set in fetch read state response"));
+
         Ok(state)
     }
 
@@ -210,7 +188,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
     async fn fetch_cluster(
         &self,
         linearizable: bool,
-        ctx: Context,
+        _ctx: Context,
     ) -> Result<FetchClusterResponse, Self::Error> {
         let timeout = self.config.wait_synced_timeout;
         if !linearizable {
