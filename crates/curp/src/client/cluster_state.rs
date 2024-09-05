@@ -115,4 +115,9 @@ impl ClusterState {
     pub(crate) fn cluster_version(&self) -> u64 {
         self.cluster_version
     }
+
+    /// Returns the leader id
+    pub(crate) fn leader_id(&self) -> u64 {
+        self.leader
+    }
 }

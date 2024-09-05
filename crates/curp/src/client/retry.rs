@@ -289,7 +289,7 @@ where
             | CurpError::WrongClusterVersion(())
             | CurpError::Redirect(_) // FIXME: The redirect error needs to include full cluster state
             | CurpError::Zombie(()) => {
-                let new_cluster_state = self.fetch.fetch_cluster(cluster_state).await?;
+                let (new_cluster_state, _) = self.fetch.fetch_cluster(cluster_state).await?;
                 // TODO: Prevent concurrent updating cluster state
                 *self.cluster_state.write() = new_cluster_state;
             }
@@ -388,8 +388,11 @@ where
         &self,
         linearizable: bool,
     ) -> Result<FetchClusterResponse, tonic::Status> {
-        self.retry::<_, _>(|client, ctx| client.fetch_cluster(linearizable, ctx))
-            .await
+        self.retry::<_, _>(|client, ctx| async move {
+            let (_, resp) = self.fetch.fetch_cluster(ctx.cluster_state()).await?;
+            Ok(resp)
+        })
+        .await
     }
 }
 

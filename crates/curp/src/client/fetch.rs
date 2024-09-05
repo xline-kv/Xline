@@ -32,7 +32,7 @@ impl Fetch {
     pub(crate) async fn fetch_cluster(
         &self,
         state: ClusterState,
-    ) -> Result<ClusterState, CurpError> {
+    ) -> Result<(ClusterState, FetchClusterResponse), CurpError> {
         /// Retry interval
         const FETCH_RETRY_INTERVAL: Duration = Duration::from_secs(1);
         loop {
@@ -51,7 +51,7 @@ impl Fetch {
                 new_connects,
             );
             if self.fetch_term(&new_state).await {
-                return Ok(new_state);
+                return Ok((new_state, resp));
             }
             warn!("Fetch cluster failed, sleep for {FETCH_RETRY_INTERVAL:?}");
             tokio::time::sleep(FETCH_RETRY_INTERVAL).await;

@@ -228,16 +228,6 @@ trait RepeatableClientApi {
         cmd: &Self::Cmd,
         ctx: Context,
     ) -> Result<ReadState, Self::Error>;
-
-    /// Send fetch cluster requests to all servers (That's because initially, we didn't
-    /// know who the leader is.)
-    ///
-    /// Note: The fetched cluster may still be outdated if `linearizable` is false
-    async fn fetch_cluster(
-        &self,
-        linearizable: bool,
-        ctx: Context,
-    ) -> Result<FetchClusterResponse, Self::Error>;
 }
 
 /// Client builder to build a client
