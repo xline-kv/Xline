@@ -12,7 +12,7 @@ use parking_lot::RwLock;
 use tokio::{sync::broadcast, task::JoinHandle};
 use tracing::{debug, info, warn};
 
-use super::{cluster_state::ClusterState, state::State};
+use super::cluster_state::ClusterState;
 use crate::rpc::{connect::ConnectApi, CurpError, Redirect};
 
 /// Keep alive

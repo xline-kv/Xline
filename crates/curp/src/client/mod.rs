@@ -43,7 +43,7 @@ mod tests;
 
 #[cfg(madsim)]
 use std::sync::atomic::AtomicU64;
-use std::{collections::HashMap, fmt::Debug, ops::Deref, time::Duration};
+use std::{collections::HashMap, fmt::Debug, ops::Deref, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
@@ -61,14 +61,15 @@ use self::{
     fetch::Fetch,
     keep_alive::KeepAlive,
     retry::{Context, Retry, RetryConfig},
-    state::StateBuilder,
     unary::Unary,
 };
 use crate::{
     members::ServerId,
     rpc::{
-        protocol_client::ProtocolClient, ConfChange, FetchClusterRequest, FetchClusterResponse,
-        Member, ProposeId, Protocol, ReadState,
+        connect::{BypassedConnect, ConnectApi},
+        protocol_client::ProtocolClient,
+        ConfChange, FetchClusterRequest, FetchClusterResponse, Member, ProposeId, Protocol,
+        ReadState,
     },
     tracker::Tracker,
 };
@@ -398,24 +399,6 @@ impl ClientBuilder {
             .ok_or(tonic::Status::unavailable("cluster not published"))
     }
 
-    /// Init state builder
-    fn init_state_builder(&self) -> StateBuilder {
-        let mut builder = StateBuilder::new(
-            self.all_members.clone().unwrap_or_else(|| {
-                unreachable!("must set the initial members or discover from some endpoints")
-            }),
-            self.tls_config.clone(),
-        );
-        if let Some(version) = self.cluster_version {
-            builder.set_cluster_version(version);
-        }
-        if let Some((id, term)) = self.leader_state {
-            builder.set_leader_state(id, term);
-        }
-        builder.set_is_raw_curp(self.is_raw_curp);
-        builder
-    }
-
     /// Init retry config
     fn init_retry_config(&self) -> RetryConfig {
         if *self.config.fixed_backoff() {
@@ -433,9 +416,9 @@ impl ClientBuilder {
     }
 
     /// Init unary config
-    fn init_unary_config(&self) -> Config {
+    fn init_config(&self, local_server_id: Option<ServerId>) -> Config {
         Config::new(
-            None,
+            local_server_id,
             self.tls_config.clone(),
             *self.config.propose_timeout(),
             *self.config.wait_synced_timeout(),
@@ -453,11 +436,11 @@ impl ClientBuilder {
         &self,
     ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static, tonic::Status>
     {
+        let config = self.init_config(None);
         let keep_alive = KeepAlive::new(*self.config.keep_alive_interval());
-        // TODO: build the fetch object
-        let fetch = Fetch::default();
+        let fetch = Fetch::new(config.clone());
         let client = Retry::new(
-            Unary::new(self.init_unary_config()),
+            Unary::new(config),
             self.init_retry_config(),
             keep_alive,
             fetch,
@@ -494,6 +477,16 @@ impl ClientBuilder {
 }
 
 impl<P: Protocol> ClientBuilderWithBypass<P> {
+    /// Build the state with local server
+    pub(super) fn bypassed_connect(
+        local_server_id: ServerId,
+        local_server: P,
+    ) -> (u64, Arc<dyn ConnectApi>) {
+        debug!("client bypassed server({local_server_id})");
+        let connect = BypassedConnect::new(local_server_id, local_server);
+        (local_server_id, Arc::new(connect))
+    }
+
     /// Build the client with local server
     ///
     /// # Errors
@@ -503,11 +496,12 @@ impl<P: Protocol> ClientBuilderWithBypass<P> {
     pub fn build<C: Command>(
         self,
     ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C>, tonic::Status> {
+        let bypassed = Self::bypassed_connect(self.local_server_id, self.local_server);
+        let config = self.inner.init_config(Some(self.local_server_id));
         let keep_alive = KeepAlive::new(*self.inner.config.keep_alive_interval());
-        // TODO: build the fetch object
-        let fetch = Fetch::default();
+        let fetch = Fetch::new(config.clone()).with_override(bypassed);
         let client = Retry::new(
-            Unary::new(self.inner.init_unary_config()),
+            Unary::new(config),
             self.inner.init_retry_config(),
             keep_alive,
             fetch,
