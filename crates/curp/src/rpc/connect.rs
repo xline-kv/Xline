@@ -81,9 +81,13 @@ fn connect_to<Client: FromTonicChannel>(
     for addr in &addrs {
         let endpoint = build_endpoint(addr, tls_config.as_ref())
             .unwrap_or_else(|_| unreachable!("address is ill-formatted"));
-        change_tx
+        if change_tx
             .try_send(tower::discover::Change::Insert(addr.clone(), endpoint))
-            .unwrap_or_else(|_| unreachable!("unknown channel tx send error"));
+            .is_err()
+        {
+            // It seems that tonic would close the channel asynchronously
+            debug!("failed to update channel due to runtime closed");
+        }
     }
     let client = Client::from_channel(channel);
     Connect {
