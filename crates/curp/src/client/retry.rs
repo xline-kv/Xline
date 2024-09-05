@@ -1,4 +1,8 @@
-use std::{ops::SubAssign, sync::Arc, time::Duration};
+use std::{
+    ops::SubAssign,
+    sync::{atomic::AtomicU64, Arc},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use futures::Future;
@@ -9,11 +13,12 @@ use super::{
     cluster_state::ClusterState,
     fetch::Fetch,
     keep_alive::{KeepAlive, KeepAliveHandle},
-    ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi,
+    ClientApi, LeaderStateUpdate, ProposeIdGuard, ProposeResponse, RepeatableClientApi,
 };
 use crate::{
     members::ServerId,
-    rpc::{ConfChange, CurpError, FetchClusterResponse, Member, ReadState},
+    rpc::{ConfChange, CurpError, FetchClusterResponse, Member, ProposeId, ReadState},
+    tracker::Tracker,
 };
 
 /// Backoff config
@@ -103,29 +108,69 @@ impl Backoff {
 /// The context of a retry
 #[derive(Debug)]
 pub(crate) struct Context {
-    /// The current client id
-    client_id: u64,
+    /// The propose id
+    propose_id: ProposeId,
+    /// First incomplete seqence
+    first_incomplete: u64,
     /// The current cluster state
     cluster_state: ClusterState,
 }
 
 impl Context {
     /// Creates a new `Context`
-    pub(crate) fn new(client_id: u64, cluster_state: ClusterState) -> Self {
+    pub(crate) fn new(
+        propose_id: ProposeId,
+        first_incomplete: u64,
+        cluster_state: ClusterState,
+    ) -> Self {
         Self {
-            client_id,
+            propose_id,
+            first_incomplete,
             cluster_state,
         }
     }
 
-    /// Returns the current client id
-    pub(crate) fn client_id(&self) -> u64 {
-        self.client_id
+    /// Returns the current propose id
+    pub(crate) fn propose_id(&self) -> ProposeId {
+        self.propose_id
+    }
+
+    /// Returns the first incomplete sequence number
+    pub(crate) fn first_incomplete(&self) -> u64 {
+        self.first_incomplete
     }
 
     /// Returns the current client id
     pub(crate) fn cluster_state(&self) -> ClusterState {
         self.cluster_state.clone()
+    }
+}
+
+/// Command tracker
+#[derive(Debug, Default)]
+struct CmdTracker {
+    /// Last sent sequence number
+    last_sent_seq: AtomicU64,
+    /// Request tracker
+    tracker: RwLock<Tracker>,
+}
+
+impl CmdTracker {
+    /// New a seq num and record it
+    fn new_seq_num(&self) -> u64 {
+        self.last_sent_seq
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Generate a unique propose id during the retry process.
+    fn gen_propose_id(&self, client_id: u64) -> ProposeIdGuard<'_> {
+        let seq_num = self.new_seq_num();
+        ProposeIdGuard::new(&self.tracker, ProposeId(client_id, seq_num))
+    }
+
+    /// Generate a unique propose id during the retry process.
+    fn first_incomplete(&self) -> u64 {
+        self.tracker.read().first_incomplete()
     }
 }
 
@@ -143,6 +188,8 @@ pub(super) struct Retry<Api> {
     keep_alive: KeepAliveHandle,
     /// Fetch cluster object
     fetch: Fetch,
+    /// Command tracker
+    tracker: CmdTracker,
 }
 
 impl<Api> Retry<Api>
@@ -165,6 +212,7 @@ where
             cluster_state,
             keep_alive: keep_alive_handle,
             fetch,
+            tracker: CmdTracker::default(),
         }
     }
 
@@ -179,9 +227,11 @@ where
         let mut backoff = self.retry_config.init_backoff();
         let mut last_err = None;
         let client_id = self.keep_alive.wait_id_update(0).await;
+        let propose_id_guard = self.tracker.gen_propose_id(client_id);
+        let first_incomplete = self.tracker.first_incomplete();
         while let Some(delay) = backoff.next_delay() {
             let cluster_state = self.cluster_state.read().clone();
-            let context = Context::new(client_id, cluster_state.clone());
+            let context = Context::new(*propose_id_guard, first_incomplete, cluster_state.clone());
             let result = tokio::select! {
                 result = f(&self.inner, context) => result,
                 _ = self.keep_alive.wait_id_update(client_id) => {
@@ -268,9 +318,8 @@ where
         token: Option<&String>,
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, tonic::Status> {
-        self.retry::<_, _>(|client, _ctx| async move {
-            let propose_id = self.inner.gen_propose_id().await?;
-            RepeatableClientApi::propose(client, *propose_id, cmd, token, use_fast_path).await
+        self.retry::<_, _>(|client, ctx| async move {
+            RepeatableClientApi::propose(client, cmd, token, use_fast_path, ctx).await
         })
         .await
     }
@@ -280,21 +329,17 @@ where
         &self,
         changes: Vec<ConfChange>,
     ) -> Result<Vec<Member>, tonic::Status> {
-        self.retry::<_, _>(|client, _ctx| {
+        self.retry::<_, _>(|client, ctx| {
             let changes_c = changes.clone();
-            async move {
-                let propose_id = self.inner.gen_propose_id().await?;
-                RepeatableClientApi::propose_conf_change(client, *propose_id, changes_c).await
-            }
+            async move { RepeatableClientApi::propose_conf_change(client, changes_c, ctx).await }
         })
         .await
     }
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), tonic::Status> {
-        self.retry::<_, _>(|client, _ctx| async move {
-            let propose_id = self.inner.gen_propose_id().await?;
-            RepeatableClientApi::propose_shutdown(client, *propose_id).await
+        self.retry::<_, _>(|client, ctx| async move {
+            RepeatableClientApi::propose_shutdown(client, ctx).await
         })
         .await
     }
@@ -306,17 +351,16 @@ where
         node_name: String,
         node_client_urls: Vec<String>,
     ) -> Result<(), Self::Error> {
-        self.retry::<_, _>(|client, _ctx| {
+        self.retry::<_, _>(|client, ctx| {
             let name_c = node_name.clone();
             let node_client_urls_c = node_client_urls.clone();
             async move {
-                let propose_id = self.inner.gen_propose_id().await?;
                 RepeatableClientApi::propose_publish(
                     client,
-                    *propose_id,
                     node_id,
                     name_c,
                     node_client_urls_c,
+                    ctx,
                 )
                 .await
             }

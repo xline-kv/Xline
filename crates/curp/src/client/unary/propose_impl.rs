@@ -44,10 +44,11 @@ impl<C: Command> Unary<C> {
         cmd: &C,
         propose_id: ProposeId,
         token: Option<&String>,
+        first_incomplete: u64,
         use_fast_path: bool,
     ) -> Result<ProposeResponse<C>, CurpError> {
         let stream = self
-            .send_propose_mutative(cmd, propose_id, use_fast_path, token)
+            .send_propose_mutative(cmd, propose_id, use_fast_path, first_incomplete, token)
             .await?;
         let mut stream = Box::into_pin(stream);
         let first_two_events = (
@@ -84,10 +85,18 @@ impl<C: Command> Unary<C> {
         propose_id: ProposeId,
         token: Option<&String>,
         use_fast_path: bool,
+        first_incomplete: u64,
     ) -> Result<ProposeResponse<C>, CurpError> {
         let leader_id = self.leader_id().await?;
         let stream = self
-            .send_leader_propose(cmd, leader_id, propose_id, use_fast_path, token)
+            .send_leader_propose(
+                cmd,
+                leader_id,
+                propose_id,
+                use_fast_path,
+                first_incomplete,
+                token,
+            )
             .await?;
         let mut stream_pinned = Box::into_pin(stream);
         if !self.send_read_index(leader_id).await {
@@ -125,11 +134,19 @@ impl<C: Command> Unary<C> {
         cmd: &C,
         propose_id: ProposeId,
         use_fast_path: bool,
+        first_incomplete: u64,
         token: Option<&String>,
     ) -> Result<EventStream<'_, C>, CurpError> {
         let leader_id = self.leader_id().await?;
         let leader_stream = self
-            .send_leader_propose(cmd, leader_id, propose_id, use_fast_path, token)
+            .send_leader_propose(
+                cmd,
+                leader_id,
+                propose_id,
+                use_fast_path,
+                first_incomplete,
+                token,
+            )
             .await?;
         let follower_stream = self.send_record(cmd, leader_id, propose_id).await;
         let select = stream::select(Box::into_pin(leader_stream), Box::into_pin(follower_stream));
@@ -144,6 +161,7 @@ impl<C: Command> Unary<C> {
         leader_id: ServerId,
         propose_id: ProposeId,
         use_fast_path: bool,
+        first_incomplete: u64,
         token: Option<&String>,
     ) -> Result<EventStream<'_, C>, CurpError> {
         let term = self.state.term().await;
@@ -153,7 +171,7 @@ impl<C: Command> Unary<C> {
             self.state.cluster_version().await,
             term,
             !use_fast_path,
-            self.tracker.read().first_incomplete(),
+            first_incomplete,
         );
         let timeout = self.config.propose_timeout;
         let token = token.cloned();

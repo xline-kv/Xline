@@ -1,33 +1,26 @@
 /// Client propose implementation
 mod propose_impl;
 
-use std::{
-    cmp::Ordering,
-    marker::PhantomData,
-    sync::{atomic::AtomicU64, Arc},
-    time::Duration,
-};
+use std::{cmp::Ordering, marker::PhantomData, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{Future, StreamExt};
-use parking_lot::RwLock;
 use tonic::Response;
 use tracing::{debug, warn};
 
 use super::{
-    cluster_state::ClusterState, config::Config, state::State, ClientApi, LeaderStateUpdate,
-    ProposeIdGuard, ProposeResponse, RepeatableClientApi,
+    retry::Context, state::State, ClientApi, LeaderStateUpdate, ProposeResponse,
+    RepeatableClientApi,
 };
 use crate::{
     members::ServerId,
     quorum,
     rpc::{
         connect::ConnectApi, ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, Member, MoveLeaderRequest, ProposeConfChangeRequest, ProposeId,
-        PublishRequest, ReadState, ShutdownRequest,
+        FetchReadStateRequest, Member, MoveLeaderRequest, ProposeConfChangeRequest, PublishRequest,
+        ReadState, ShutdownRequest,
     },
-    tracker::Tracker,
 };
 
 /// The unary client config
@@ -58,19 +51,8 @@ pub(super) struct Unary<C: Command> {
     state: Arc<State>,
     /// Unary config
     config: UnaryConfig,
-    /// Request tracker
-    tracker: RwLock<Tracker>,
-    /// Last sent sequence number
-    last_sent_seq: AtomicU64,
     /// marker
     phantom: PhantomData<C>,
-
-    #[allow(dead_code)]
-    /// Cluster state
-    cluster_state: RwLock<ClusterState>,
-    #[allow(dead_code)]
-    /// Cluster state
-    client_config: Config,
 }
 
 impl<C: Command> Unary<C> {
@@ -79,13 +61,7 @@ impl<C: Command> Unary<C> {
         Self {
             state,
             config,
-            tracker: RwLock::new(Tracker::default()),
-            last_sent_seq: AtomicU64::new(0),
             phantom: PhantomData,
-
-            // TODO: build cluster state
-            cluster_state: RwLock::default(),
-            client_config: Config::default(),
         }
     }
 
@@ -120,13 +96,6 @@ impl<C: Command> Unary<C> {
             None => <Unary<C> as ClientApi>::fetch_leader_id(self, false).await,
         }
     }
-
-    /// New a seq num and record it
-    #[allow(clippy::unused_self)] // TODO: implement request tracker
-    fn new_seq_num(&self) -> u64 {
-        self.last_sent_seq
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    }
 }
 
 #[async_trait]
@@ -141,45 +110,34 @@ impl<C: Command> ClientApi for Unary<C> {
     /// requests (event the requests are commutative).
     async fn propose(
         &self,
-        cmd: &C,
-        token: Option<&String>,
-        use_fast_path: bool,
+        _cmd: &C,
+        _token: Option<&String>,
+        _use_fast_path: bool,
     ) -> Result<ProposeResponse<C>, CurpError> {
-        let propose_id = self.gen_propose_id().await?;
-        RepeatableClientApi::propose(self, *propose_id, cmd, token, use_fast_path).await
+        unimplemented!("please use `Retry<Unary<C>>`");
     }
 
     /// Send propose configuration changes to the cluster
     async fn propose_conf_change(
         &self,
-        changes: Vec<ConfChange>,
+        _changes: Vec<ConfChange>,
     ) -> Result<Vec<Member>, CurpError> {
-        let propose_id = self.gen_propose_id().await?;
-        RepeatableClientApi::propose_conf_change(self, *propose_id, changes).await
+        unimplemented!("please use `Retry<Unary<C>>`");
     }
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), CurpError> {
-        let propose_id = self.gen_propose_id().await?;
-        RepeatableClientApi::propose_shutdown(self, *propose_id).await
+        unimplemented!("please use `Retry<Unary<C>>`");
     }
 
     /// Send propose to publish a node id and name
     async fn propose_publish(
         &self,
-        node_id: ServerId,
-        node_name: String,
-        node_client_urls: Vec<String>,
+        _node_id: ServerId,
+        _node_name: String,
+        _node_client_urls: Vec<String>,
     ) -> Result<(), Self::Error> {
-        let propose_id = self.gen_propose_id().await?;
-        RepeatableClientApi::propose_publish(
-            self,
-            *propose_id,
-            node_id,
-            node_name,
-            node_client_urls,
-        )
-        .await
+        unimplemented!("please use `Retry<Unary<C>>`");
     }
 
     /// Send move leader request
@@ -316,33 +274,22 @@ impl<C: Command> ClientApi for Unary<C> {
 
 #[async_trait]
 impl<C: Command> RepeatableClientApi for Unary<C> {
-    /// Generate a unique propose id during the retry process.
-    async fn gen_propose_id(&self) -> Result<ProposeIdGuard<'_>, Self::Error> {
-        let mut client_id = self.state.client_id();
-        if client_id == 0 {
-            client_id = self.state.wait_for_client_id().await?;
-        };
-        let seq_num = self.new_seq_num();
-        Ok(ProposeIdGuard::new(
-            &self.tracker,
-            ProposeId(client_id, seq_num),
-        ))
-    }
-
     /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
     /// requests (event the requests are commutative).
     async fn propose(
         &self,
-        propose_id: ProposeId,
         cmd: &Self::Cmd,
         token: Option<&String>,
         use_fast_path: bool,
+        ctx: Context,
     ) -> Result<ProposeResponse<Self::Cmd>, Self::Error> {
+        let propose_id = ctx.propose_id();
+        let first_incomplete = ctx.first_incomplete();
         if cmd.is_read_only() {
-            self.propose_read_only(cmd, propose_id, token, use_fast_path)
+            self.propose_read_only(cmd, propose_id, token, use_fast_path, first_incomplete)
                 .await
         } else {
-            self.propose_mutative(cmd, propose_id, token, use_fast_path)
+            self.propose_mutative(cmd, propose_id, token, first_incomplete, use_fast_path)
                 .await
         }
     }
@@ -350,11 +297,14 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
     /// Send propose configuration changes to the cluster
     async fn propose_conf_change(
         &self,
-        propose_id: ProposeId,
         changes: Vec<ConfChange>,
+        ctx: Context,
     ) -> Result<Vec<Member>, Self::Error> {
-        let req =
-            ProposeConfChangeRequest::new(propose_id, changes, self.state.cluster_version().await);
+        let req = ProposeConfChangeRequest::new(
+            ctx.propose_id(),
+            changes,
+            self.state.cluster_version().await,
+        );
         let timeout = self.config.wait_synced_timeout;
         let members = self
             .map_leader(|conn| async move { conn.propose_conf_change(req, timeout).await })
@@ -365,8 +315,8 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
     }
 
     /// Send propose to shutdown cluster
-    async fn propose_shutdown(&self, propose_id: ProposeId) -> Result<(), Self::Error> {
-        let req = ShutdownRequest::new(propose_id, self.state.cluster_version().await);
+    async fn propose_shutdown(&self, ctx: Context) -> Result<(), Self::Error> {
+        let req = ShutdownRequest::new(ctx.propose_id(), self.state.cluster_version().await);
         let timeout = self.config.wait_synced_timeout;
         let _ig = self
             .map_leader(|conn| async move { conn.shutdown(req, timeout).await })
@@ -377,12 +327,12 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
     /// Send propose to publish a node id and name
     async fn propose_publish(
         &self,
-        propose_id: ProposeId,
         node_id: ServerId,
         node_name: String,
         node_client_urls: Vec<String>,
+        ctx: Context,
     ) -> Result<(), Self::Error> {
-        let req = PublishRequest::new(propose_id, node_id, node_name, node_client_urls);
+        let req = PublishRequest::new(ctx.propose_id(), node_id, node_name, node_client_urls);
         let timeout = self.config.wait_synced_timeout;
         let _ig = self
             .map_leader(|conn| async move { conn.publish(req, timeout).await })
