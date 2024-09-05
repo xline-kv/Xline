@@ -1,7 +1,7 @@
 /// Client propose implementation
 mod propose_impl;
 
-use std::{marker::PhantomData, time::Duration};
+use std::marker::PhantomData;
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
@@ -15,27 +15,6 @@ use crate::{
         ProposeConfChangeRequest, PublishRequest, ReadState, ShutdownRequest,
     },
 };
-
-/// The unary client config
-#[derive(Debug)]
-pub(super) struct UnaryConfig {
-    /// The rpc timeout of a propose request
-    propose_timeout: Duration,
-    /// The rpc timeout of a 2-RTT request, usually takes longer than propose timeout
-    ///
-    /// The recommended the values is within (propose_timeout, 2 * propose_timeout].
-    wait_synced_timeout: Duration,
-}
-
-impl UnaryConfig {
-    /// Create a unary config
-    pub(super) fn new(propose_timeout: Duration, wait_synced_timeout: Duration) -> Self {
-        Self {
-            propose_timeout,
-            wait_synced_timeout,
-        }
-    }
-}
 
 /// The unary client
 #[derive(Debug)]
