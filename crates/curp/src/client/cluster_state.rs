@@ -110,4 +110,9 @@ impl ClusterState {
     pub(crate) fn term(&self) -> u64 {
         self.term
     }
+
+    /// Returns the cluster version
+    pub(crate) fn cluster_version(&self) -> u64 {
+        self.cluster_version
+    }
 }
