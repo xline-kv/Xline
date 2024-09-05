@@ -15,17 +15,31 @@ use crate::{
 use super::cluster_state::ClusterState;
 use super::config::Config;
 
+/// An override connect
+type OverrideConnect = (u64, Arc<dyn ConnectApi>);
+
 /// Fetch cluster implementation
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub(crate) struct Fetch {
     /// The fetch config
     config: Config,
+    /// Override connect
+    override_connects: Vec<OverrideConnect>,
 }
 
 impl Fetch {
     /// Creates a new `Fetch`
     pub(crate) fn new(config: Config) -> Self {
-        Self { config }
+        Self {
+            config,
+            override_connects: Vec::new(),
+        }
+    }
+
+    /// Add an override connect to fetch cluster response
+    pub(crate) fn with_override(mut self, connect: OverrideConnect) -> Self {
+        self.override_connects.push(connect);
+        self
     }
 
     /// Fetch cluster and updates the current state
@@ -42,6 +56,7 @@ impl Fetch {
                 .ok_or(CurpError::internal("cluster not available"))?;
             let new_members = self.member_addrs(&resp);
             let new_connects = self.connect_to(new_members);
+            let new_connects = self.override_connects(new_connects);
             let new_state = ClusterState::new(
                 resp.leader_id
                     .unwrap_or_else(|| unreachable!("leader id should be Some"))
@@ -118,5 +133,35 @@ impl Fetch {
                 (id, rpc::connect(id, addrs, tls_config))
             })
             .collect()
+    }
+
+    /// Overrides the connects
+    fn override_connects(
+        &self,
+        mut connects: HashMap<u64, Arc<dyn ConnectApi>>,
+    ) -> HashMap<u64, Arc<dyn ConnectApi>> {
+        for &(id, ref c) in &self.override_connects {
+            if connects.insert(id, Arc::clone(c)).is_none() {
+                warn!("override an non-existing connect with id: {id}");
+            }
+        }
+
+        connects
+    }
+}
+
+impl std::fmt::Debug for Fetch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Fetch")
+            .field("config", &self.config)
+            .field(
+                "override_connects",
+                &self
+                    .override_connects
+                    .iter()
+                    .map(|&(id, _)| id)
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
     }
 }
