@@ -1,21 +1,18 @@
 /// Client propose implementation
 mod propose_impl;
 
-use std::{cmp::Ordering, marker::PhantomData, time::Duration};
+use std::{marker::PhantomData, time::Duration};
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
-use tonic::Response;
-use tracing::{debug, warn};
+use tracing::warn;
 
 use super::{config::Config, retry::Context, ProposeResponse, RepeatableClientApi};
 use crate::{
     members::ServerId,
-    quorum,
     rpc::{
-        ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
-        Member, MoveLeaderRequest, ProposeConfChangeRequest, PublishRequest, ReadState,
-        ShutdownRequest,
+        ConfChange, CurpError, FetchReadStateRequest, Member, MoveLeaderRequest,
+        ProposeConfChangeRequest, PublishRequest, ReadState, ShutdownRequest,
     },
 };
 
@@ -172,112 +169,5 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
             .unwrap_or_else(|| unreachable!("read_state must be set in fetch read state response"));
 
         Ok(state)
-    }
-
-    /// Send fetch cluster requests to all servers (That's because initially, we didn't
-    /// know who the leader is.)
-    ///
-    /// Note: The fetched cluster may still be outdated if `linearizable` is false
-    async fn fetch_cluster(
-        &self,
-        linearizable: bool,
-        _ctx: Context,
-    ) -> Result<FetchClusterResponse, Self::Error> {
-        let timeout = self.config.wait_synced_timeout();
-        if !linearizable {
-            // firstly, try to fetch the local server
-            if let Some(connect) = self.state.local_connect().await {
-                /// local timeout, in fact, local connect should only be bypassed, so the timeout maybe unused.
-                const FETCH_LOCAL_TIMEOUT: Duration = Duration::from_secs(1);
-
-                let resp = connect
-                    .fetch_cluster(FetchClusterRequest::default(), FETCH_LOCAL_TIMEOUT)
-                    .await?
-                    .into_inner();
-                debug!("fetch local cluster {resp:?}");
-
-                return Ok(resp);
-            }
-        }
-        // then fetch the whole cluster
-        let mut responses = self
-            .state
-            .for_each_server(|conn| async move {
-                (
-                    conn.id(),
-                    conn.fetch_cluster(FetchClusterRequest { linearizable }, timeout)
-                        .await
-                        .map(Response::into_inner),
-                )
-            })
-            .await;
-        let quorum = quorum(responses.len());
-
-        let mut max_term = 0;
-        let mut res = None;
-        let mut ok_cnt = 0;
-        let mut err: Option<CurpError> = None;
-
-        while let Some((id, resp)) = responses.next().await {
-            let inner = match resp {
-                Ok(r) => r,
-                Err(e) => {
-                    warn!("fetch cluster from {} failed, {:?}", id, e);
-                    // similar to fast round
-                    if e.should_abort_fast_round() {
-                        return Err(e);
-                    }
-                    if let Some(old_err) = err.as_ref() {
-                        if old_err.priority() <= e.priority() {
-                            err = Some(e);
-                        }
-                    } else {
-                        err = Some(e);
-                    }
-                    continue;
-                }
-            };
-            // Ignore the response of a node that doesn't know who the leader is.
-            if inner.leader_id.is_some() {
-                #[allow(clippy::arithmetic_side_effects)]
-                match max_term.cmp(&inner.term) {
-                    Ordering::Less => {
-                        max_term = inner.term;
-                        if !inner.members.is_empty() {
-                            res = Some(inner);
-                        }
-                        // reset ok count to 1
-                        ok_cnt = 1;
-                    }
-                    Ordering::Equal => {
-                        if !inner.members.is_empty() {
-                            res = Some(inner);
-                        }
-                        ok_cnt += 1;
-                    }
-                    Ordering::Greater => {}
-                }
-            }
-            // first check quorum
-            if ok_cnt >= quorum {
-                // then check if we got the response
-                if let Some(res) = res {
-                    debug!("fetch cluster succeeded, result: {res:?}");
-                    if let Err(e) = self.state.check_and_update(&res).await {
-                        warn!("update to a new cluster state failed, error {e}");
-                    }
-                    return Ok(res);
-                }
-                debug!("fetch cluster quorum ok, but members are empty");
-            }
-            debug!("fetch cluster from {id} success");
-        }
-
-        if let Some(err) = err {
-            return Err(err);
-        }
-
-        // It seems that the max term has not reached the majority here. Mock a transport error and return it to the external to retry.
-        return Err(CurpError::RpcTransport(()));
     }
 }
