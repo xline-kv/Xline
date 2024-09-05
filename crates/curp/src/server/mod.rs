@@ -2,6 +2,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use engine::SnapshotAllocator;
 use flume::r#async::RecvStream;
+use futures::{Stream, StreamExt};
 use tokio::sync::broadcast;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
@@ -252,6 +253,32 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::InnerProtoc
     ) -> Result<tonic::Response<TryBecomeLeaderNowResponse>, tonic::Status> {
         Ok(tonic::Response::new(
             self.inner.try_become_leader_now(request.get_ref()).await?,
+        ))
+    }
+}
+
+/// Used for bypassed connect because the `Protocol` trait requires `tonic::Streaming`
+/// as request type and there's no easy way to convert a Stream into that.
+#[async_trait::async_trait]
+pub trait StreamingProtocol {
+    /// Lease keep alive
+    async fn lease_keep_alive(
+        &self,
+        request: impl Stream<Item = LeaseKeepAliveMsg> + Send,
+    ) -> Result<tonic::Response<LeaseKeepAliveMsg>, tonic::Status>;
+}
+
+#[async_trait::async_trait]
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> StreamingProtocol for Rpc<C, CE, RC> {
+    #[instrument(skip_all, name = "lease_keep_alive")]
+    async fn lease_keep_alive(
+        &self,
+        request: impl Stream<Item = LeaseKeepAliveMsg> + Send,
+    ) -> Result<tonic::Response<LeaseKeepAliveMsg>, tonic::Status> {
+        let stream = request.map(Ok::<_, std::io::Error>);
+
+        Ok(tonic::Response::new(
+            self.inner.lease_keep_alive(stream).await?,
         ))
     }
 }

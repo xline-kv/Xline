@@ -37,6 +37,7 @@ use crate::{
         Protocol, PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse,
         TriggerShutdownRequest, TryBecomeLeaderNowRequest, VoteRequest, VoteResponse,
     },
+    server::StreamingProtocol,
     snapshot::Snapshot,
 };
 
@@ -676,7 +677,7 @@ impl Bypass for tonic::metadata::MetadataMap {
 #[async_trait]
 impl<T> ConnectApi for BypassedConnect<T>
 where
-    T: Protocol,
+    T: Protocol + StreamingProtocol,
 {
     /// Get server id
     fn id(&self) -> ServerId {
@@ -808,12 +809,16 @@ where
     }
 
     /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(
-        &self,
-        _client_id: u64,
-        _interval: Duration,
-    ) -> Result<u64, CurpError> {
-        unreachable!("cannot invoke lease_keep_alive in bypassed connect")
+    async fn lease_keep_alive(&self, client_id: u64, interval: Duration) -> Result<u64, CurpError> {
+        let stream = heartbeat_stream(client_id, interval);
+        let new_id = StreamingProtocol::lease_keep_alive(&self.server, stream)
+            .await?
+            .into_inner()
+            .client_id;
+        // The only place to update the client id for follower
+        info!("client_id update to {new_id}");
+
+        Ok(new_id)
     }
 }
 

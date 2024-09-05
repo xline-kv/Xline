@@ -22,6 +22,7 @@ use crate::{
         connect::{BypassedConnect, ConnectApi},
         CurpError, FetchClusterRequest, FetchClusterResponse, Protocol,
     },
+    server::StreamingProtocol,
 };
 
 /// The client state
@@ -420,7 +421,7 @@ impl StateBuilder {
     }
 
     /// Build the state with local server
-    pub(super) fn build_bypassed<P: Protocol>(
+    pub(super) fn build_bypassed<P: Protocol + StreamingProtocol>(
         mut self,
         local_server_id: ServerId,
         local_server: P,
