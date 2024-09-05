@@ -1,15 +1,14 @@
 /// Client propose implementation
 mod propose_impl;
 
-use std::{cmp::Ordering, marker::PhantomData, sync::Arc, time::Duration};
+use std::{cmp::Ordering, marker::PhantomData, time::Duration};
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
-use futures::StreamExt;
 use tonic::Response;
 use tracing::{debug, warn};
 
-use super::{retry::Context, state::State, ProposeResponse, RepeatableClientApi};
+use super::{config::Config, retry::Context, ProposeResponse, RepeatableClientApi};
 use crate::{
     members::ServerId,
     quorum,
@@ -44,19 +43,16 @@ impl UnaryConfig {
 /// The unary client
 #[derive(Debug)]
 pub(super) struct Unary<C: Command> {
-    /// Client state
-    state: Arc<State>,
     /// Unary config
-    config: UnaryConfig,
+    config: Config,
     /// marker
     phantom: PhantomData<C>,
 }
 
 impl<C: Command> Unary<C> {
     /// Create an unary client
-    pub(super) fn new(state: Arc<State>, config: UnaryConfig) -> Self {
+    pub(super) fn new(config: Config) -> Self {
         Self {
-            state,
             config,
             phantom: PhantomData,
         }
@@ -97,9 +93,9 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         let req = ProposeConfChangeRequest::new(
             ctx.propose_id(),
             changes,
-            self.state.cluster_version().await,
+            ctx.cluster_state().cluster_version(),
         );
-        let timeout = self.config.wait_synced_timeout;
+        let timeout = self.config.wait_synced_timeout();
         let members = ctx
             .cluster_state()
             .map_leader(|conn| async move { conn.propose_conf_change(req, timeout).await })
@@ -112,8 +108,8 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self, ctx: Context) -> Result<(), Self::Error> {
-        let req = ShutdownRequest::new(ctx.propose_id(), self.state.cluster_version().await);
-        let timeout = self.config.wait_synced_timeout;
+        let req = ShutdownRequest::new(ctx.propose_id(), ctx.cluster_state().cluster_version());
+        let timeout = self.config.wait_synced_timeout();
         let _resp = ctx
             .cluster_state()
             .map_leader(|conn| async move { conn.shutdown(req, timeout).await })
@@ -131,7 +127,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         ctx: Context,
     ) -> Result<(), Self::Error> {
         let req = PublishRequest::new(ctx.propose_id(), node_id, node_name, node_client_urls);
-        let timeout = self.config.wait_synced_timeout;
+        let timeout = self.config.wait_synced_timeout();
         let _resp = ctx
             .cluster_state()
             .map_leader(|conn| async move { conn.publish(req, timeout).await })
@@ -142,8 +138,8 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
 
     /// Send move leader request
     async fn move_leader(&self, node_id: u64, ctx: Context) -> Result<(), Self::Error> {
-        let req = MoveLeaderRequest::new(node_id, self.state.cluster_version().await);
-        let timeout = self.config.wait_synced_timeout;
+        let req = MoveLeaderRequest::new(node_id, ctx.cluster_state().cluster_version());
+        let timeout = self.config.wait_synced_timeout();
         let _resp = ctx
             .cluster_state()
             .map_leader(|conn| async move { conn.move_leader(req, timeout).await })
@@ -160,13 +156,13 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
     ) -> Result<ReadState, Self::Error> {
         // Same as fast_round, we blame the serializing error to the server even
         // thought it is the local error
-        let req = FetchReadStateRequest::new(cmd, self.state.cluster_version().await).map_err(
+        let req = FetchReadStateRequest::new(cmd, ctx.cluster_state().cluster_version()).map_err(
             |ser_err| {
                 warn!("serializing error: {ser_err}");
                 CurpError::from(ser_err)
             },
         )?;
-        let timeout = self.config.wait_synced_timeout;
+        let timeout = self.config.wait_synced_timeout();
         let state = ctx
             .cluster_state()
             .map_leader(|conn| async move { conn.fetch_read_state(req, timeout).await })
@@ -187,7 +183,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         linearizable: bool,
         _ctx: Context,
     ) -> Result<FetchClusterResponse, Self::Error> {
-        let timeout = self.config.wait_synced_timeout;
+        let timeout = self.config.wait_synced_timeout();
         if !linearizable {
             // firstly, try to fetch the local server
             if let Some(connect) = self.state.local_connect().await {

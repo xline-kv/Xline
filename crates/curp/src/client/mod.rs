@@ -43,7 +43,7 @@ mod tests;
 
 #[cfg(madsim)]
 use std::sync::atomic::AtomicU64;
-use std::{collections::HashMap, fmt::Debug, ops::Deref, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, ops::Deref, time::Duration};
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
@@ -57,11 +57,12 @@ use utils::ClientTlsConfig;
 use utils::{build_endpoint, config::ClientConfig};
 
 use self::{
+    config::Config,
     fetch::Fetch,
     keep_alive::KeepAlive,
     retry::{Context, Retry, RetryConfig},
     state::StateBuilder,
-    unary::{Unary, UnaryConfig},
+    unary::Unary,
 };
 use crate::{
     members::ServerId,
@@ -442,10 +443,13 @@ impl ClientBuilder {
     }
 
     /// Init unary config
-    fn init_unary_config(&self) -> UnaryConfig {
-        UnaryConfig::new(
+    fn init_unary_config(&self) -> Config {
+        Config::new(
+            None,
+            self.tls_config.clone(),
             *self.config.propose_timeout(),
             *self.config.wait_synced_timeout(),
+            self.is_raw_curp,
         )
     }
 
@@ -459,12 +463,11 @@ impl ClientBuilder {
         &self,
     ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static, tonic::Status>
     {
-        let state = Arc::new(self.init_state_builder().build());
         let keep_alive = KeepAlive::new(*self.config.keep_alive_interval());
         // TODO: build the fetch object
         let fetch = Fetch::default();
         let client = Retry::new(
-            Unary::new(Arc::clone(&state), self.init_unary_config()),
+            Unary::new(self.init_unary_config()),
             self.init_retry_config(),
             keep_alive,
             fetch,
@@ -510,16 +513,11 @@ impl<P: Protocol> ClientBuilderWithBypass<P> {
     pub fn build<C: Command>(
         self,
     ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C>, tonic::Status> {
-        let state = self
-            .inner
-            .init_state_builder()
-            .build_bypassed::<P>(self.local_server_id, self.local_server);
-        let state = Arc::new(state);
         let keep_alive = KeepAlive::new(*self.inner.config.keep_alive_interval());
         // TODO: build the fetch object
         let fetch = Fetch::default();
         let client = Retry::new(
-            Unary::new(Arc::clone(&state), self.inner.init_unary_config()),
+            Unary::new(self.inner.init_unary_config()),
             self.inner.init_retry_config(),
             keep_alive,
             fetch,

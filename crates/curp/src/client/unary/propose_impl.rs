@@ -142,16 +142,16 @@ impl<C: Command> Unary<C> {
         token: Option<&String>,
         ctx: &Context,
     ) -> Result<EventStream<'_, C>, CurpError> {
-        let term = self.state.term().await;
+        let term = ctx.cluster_state().term();
         let propose_req = ProposeRequest::new::<C>(
             ctx.propose_id(),
             cmd,
-            self.state.cluster_version().await,
+            ctx.cluster_state().cluster_version(),
             term,
             !use_fast_path,
             ctx.first_incomplete(),
         );
-        let timeout = self.config.propose_timeout;
+        let timeout = self.config.propose_timeout();
         let token = token.cloned();
         let stream = ctx
             .cluster_state()
@@ -169,11 +169,10 @@ impl<C: Command> Unary<C> {
     ///
     /// Returns `true` if the read index is successful
     async fn send_read_index(&self, ctx: &Context) -> bool {
-        let term = self.state.term().await;
-        let connects_len = self.state.connects_len().await;
-        let quorum = quorum(connects_len);
+        let term = ctx.cluster_state().term();
+        let quorum = ctx.cluster_state().get_quorum(quorum);
         let expect = quorum.wrapping_sub(1);
-        let timeout = self.config.propose_timeout;
+        let timeout = self.config.propose_timeout();
 
         ctx.cluster_state()
             .for_each_follower(|conn| async move { conn.read_index(timeout).await })
@@ -189,9 +188,8 @@ impl<C: Command> Unary<C> {
     ///
     /// Returns a stream that yield a single event
     async fn send_record(&self, cmd: &C, ctx: &Context) -> EventStream<'_, C> {
-        let connects_len = self.state.connects_len().await;
-        let superquorum = super_quorum(connects_len);
-        let timeout = self.config.propose_timeout;
+        let superquorum = ctx.cluster_state().get_quorum(super_quorum);
+        let timeout = self.config.propose_timeout();
         let record_req = RecordRequest::new::<C>(ctx.propose_id(), cmd);
         let expect = superquorum.wrapping_sub(1);
         let stream = ctx
