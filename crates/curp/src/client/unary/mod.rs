@@ -96,7 +96,7 @@ impl<C: Command> Unary<C> {
 }
 
 #[async_trait]
-impl<C: Command> ClientApi for Unary<C> {
+impl<C: Command> RepeatableClientApi for Unary<C> {
     /// The error is generated from server
     type Error = CurpError;
 
@@ -107,38 +107,70 @@ impl<C: Command> ClientApi for Unary<C> {
     /// requests (event the requests are commutative).
     async fn propose(
         &self,
-        _cmd: &C,
-        _token: Option<&String>,
-        _use_fast_path: bool,
-    ) -> Result<ProposeResponse<C>, CurpError> {
-        unimplemented!("please use `Retry<Unary<C>>`");
+        cmd: &Self::Cmd,
+        token: Option<&String>,
+        use_fast_path: bool,
+        ctx: Context,
+    ) -> Result<ProposeResponse<Self::Cmd>, Self::Error> {
+        let propose_id = ctx.propose_id();
+        let first_incomplete = ctx.first_incomplete();
+        if cmd.is_read_only() {
+            self.propose_read_only(cmd, propose_id, token, use_fast_path, first_incomplete)
+                .await
+        } else {
+            self.propose_mutative(cmd, propose_id, token, first_incomplete, use_fast_path)
+                .await
+        }
     }
 
     /// Send propose configuration changes to the cluster
     async fn propose_conf_change(
         &self,
-        _changes: Vec<ConfChange>,
-    ) -> Result<Vec<Member>, CurpError> {
-        unimplemented!("please use `Retry<Unary<C>>`");
+        changes: Vec<ConfChange>,
+        ctx: Context,
+    ) -> Result<Vec<Member>, Self::Error> {
+        let req = ProposeConfChangeRequest::new(
+            ctx.propose_id(),
+            changes,
+            self.state.cluster_version().await,
+        );
+        let timeout = self.config.wait_synced_timeout;
+        let members = self
+            .map_leader(|conn| async move { conn.propose_conf_change(req, timeout).await })
+            .await?
+            .into_inner()
+            .members;
+        Ok(members)
     }
 
     /// Send propose to shutdown cluster
-    async fn propose_shutdown(&self) -> Result<(), CurpError> {
-        unimplemented!("please use `Retry<Unary<C>>`");
+    async fn propose_shutdown(&self, ctx: Context) -> Result<(), Self::Error> {
+        let req = ShutdownRequest::new(ctx.propose_id(), self.state.cluster_version().await);
+        let timeout = self.config.wait_synced_timeout;
+        let _ig = self
+            .map_leader(|conn| async move { conn.shutdown(req, timeout).await })
+            .await?;
+        Ok(())
     }
 
     /// Send propose to publish a node id and name
     async fn propose_publish(
         &self,
-        _node_id: ServerId,
-        _node_name: String,
-        _node_client_urls: Vec<String>,
+        node_id: ServerId,
+        node_name: String,
+        node_client_urls: Vec<String>,
+        ctx: Context,
     ) -> Result<(), Self::Error> {
-        unimplemented!("please use `Retry<Unary<C>>`");
+        let req = PublishRequest::new(ctx.propose_id(), node_id, node_name, node_client_urls);
+        let timeout = self.config.wait_synced_timeout;
+        let _ig = self
+            .map_leader(|conn| async move { conn.publish(req, timeout).await })
+            .await?;
+        Ok(())
     }
 
     /// Send move leader request
-    async fn move_leader(&self, node_id: ServerId) -> Result<(), Self::Error> {
+    async fn move_leader(&self, node_id: u64, ctx: Context) -> Result<(), Self::Error> {
         let req = MoveLeaderRequest::new(node_id, self.state.cluster_version().await);
         let timeout = self.config.wait_synced_timeout;
         let _ig = self
@@ -148,7 +180,11 @@ impl<C: Command> ClientApi for Unary<C> {
     }
 
     /// Send fetch read state from leader
-    async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, CurpError> {
+    async fn fetch_read_state(
+        &self,
+        cmd: &Self::Cmd,
+        ctx: Context,
+    ) -> Result<ReadState, Self::Error> {
         // Same as fast_round, we blame the serializing error to the server even
         // thought it is the local error
         let req = FetchReadStateRequest::new(cmd, self.state.cluster_version().await).map_err(
@@ -167,9 +203,15 @@ impl<C: Command> ClientApi for Unary<C> {
         Ok(state)
     }
 
-    /// Send fetch cluster requests to all servers
+    /// Send fetch cluster requests to all servers (That's because initially, we didn't
+    /// know who the leader is.)
+    ///
     /// Note: The fetched cluster may still be outdated if `linearizable` is false
-    async fn fetch_cluster(&self, linearizable: bool) -> Result<FetchClusterResponse, Self::Error> {
+    async fn fetch_cluster(
+        &self,
+        linearizable: bool,
+        ctx: Context,
+    ) -> Result<FetchClusterResponse, Self::Error> {
         let timeout = self.config.wait_synced_timeout;
         if !linearizable {
             // firstly, try to fetch the local server
@@ -266,74 +308,5 @@ impl<C: Command> ClientApi for Unary<C> {
 
         // It seems that the max term has not reached the majority here. Mock a transport error and return it to the external to retry.
         return Err(CurpError::RpcTransport(()));
-    }
-}
-
-#[async_trait]
-impl<C: Command> RepeatableClientApi for Unary<C> {
-    /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
-    /// requests (event the requests are commutative).
-    async fn propose(
-        &self,
-        cmd: &Self::Cmd,
-        token: Option<&String>,
-        use_fast_path: bool,
-        ctx: Context,
-    ) -> Result<ProposeResponse<Self::Cmd>, Self::Error> {
-        let propose_id = ctx.propose_id();
-        let first_incomplete = ctx.first_incomplete();
-        if cmd.is_read_only() {
-            self.propose_read_only(cmd, propose_id, token, use_fast_path, first_incomplete)
-                .await
-        } else {
-            self.propose_mutative(cmd, propose_id, token, first_incomplete, use_fast_path)
-                .await
-        }
-    }
-
-    /// Send propose configuration changes to the cluster
-    async fn propose_conf_change(
-        &self,
-        changes: Vec<ConfChange>,
-        ctx: Context,
-    ) -> Result<Vec<Member>, Self::Error> {
-        let req = ProposeConfChangeRequest::new(
-            ctx.propose_id(),
-            changes,
-            self.state.cluster_version().await,
-        );
-        let timeout = self.config.wait_synced_timeout;
-        let members = self
-            .map_leader(|conn| async move { conn.propose_conf_change(req, timeout).await })
-            .await?
-            .into_inner()
-            .members;
-        Ok(members)
-    }
-
-    /// Send propose to shutdown cluster
-    async fn propose_shutdown(&self, ctx: Context) -> Result<(), Self::Error> {
-        let req = ShutdownRequest::new(ctx.propose_id(), self.state.cluster_version().await);
-        let timeout = self.config.wait_synced_timeout;
-        let _ig = self
-            .map_leader(|conn| async move { conn.shutdown(req, timeout).await })
-            .await?;
-        Ok(())
-    }
-
-    /// Send propose to publish a node id and name
-    async fn propose_publish(
-        &self,
-        node_id: ServerId,
-        node_name: String,
-        node_client_urls: Vec<String>,
-        ctx: Context,
-    ) -> Result<(), Self::Error> {
-        let req = PublishRequest::new(ctx.propose_id(), node_id, node_name, node_client_urls);
-        let timeout = self.config.wait_synced_timeout;
-        let _ig = self
-            .map_leader(|conn| async move { conn.publish(req, timeout).await })
-            .await?;
-        Ok(())
     }
 }
