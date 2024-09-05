@@ -45,7 +45,6 @@ impl<C: ConnectApi> Reconnect<C> {
         // Cancel the leader keep alive loop task because it hold a read lock
         let _cancel = self.event.notify(1);
         let _ignore = self.connect.write().await.replace(new_connect);
-        let _continue = self.event.notify(1);
     }
 
     /// Try to reconnect if the result is `Err`
@@ -177,12 +176,9 @@ impl<C: ConnectApi> ConnectApi for Reconnect<C> {
     async fn lease_keep_alive(&self, client_id: u64, interval: Duration) -> Result<u64, CurpError> {
         let connect = self.connect.read().await;
         let connect_ref = connect.as_ref().unwrap();
-        let result = tokio::select! {
+        tokio::select! {
             result = connect_ref.lease_keep_alive(client_id, interval) => result,
             _empty = self.event.listen() => Err(CurpError::RpcTransport(())),
-        };
-        // Wait for connection update
-        self.event.listen().await;
-        result
+        }
     }
 }
