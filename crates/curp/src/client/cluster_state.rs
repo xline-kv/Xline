@@ -4,13 +4,74 @@ use futures::{stream::FuturesUnordered, Future};
 
 use crate::{
     members::ServerId,
-    rpc::{connect::ConnectApi, CurpError},
+    rpc::{connect::ConnectApi, connects, CurpError},
 };
+
+/// Take an async function and map to all server, returning `FuturesUnordered<F>`
+pub(crate) trait ForEachServer {
+    /// Take an async function and map to all server, returning `FuturesUnordered<F>`
+    fn for_each_server<R, F: Future<Output = R>>(
+        &self,
+        f: impl FnMut(Arc<dyn ConnectApi>) -> F,
+    ) -> FuturesUnordered<F>;
+}
+
+/// Cluster State
+#[derive(Debug, Clone)]
+pub(crate) enum ClusterStateSuper {
+    /// Initial cluster state
+    Init(ClusterStateInit),
+    /// Ready cluster state
+    Ready(ClusterState),
+}
+
+impl ForEachServer for ClusterStateSuper {
+    fn for_each_server<R, F: Future<Output = R>>(
+        &self,
+        f: impl FnMut(Arc<dyn ConnectApi>) -> F,
+    ) -> FuturesUnordered<F> {
+        match *self {
+            ClusterStateSuper::Init(ref init) => init.for_each_server(f),
+            ClusterStateSuper::Ready(ref ready) => ready.for_each_server(f),
+        }
+    }
+}
+
+/// Initial cluster state
+#[derive(Clone)]
+pub(crate) struct ClusterStateInit {
+    /// Member connects
+    connects: Vec<Arc<dyn ConnectApi>>,
+}
+
+impl ClusterStateInit {
+    /// Creates a new `ClusterStateInit`
+    pub(crate) fn new(connects: Vec<Arc<dyn ConnectApi>>) -> Self {
+        Self { connects }
+    }
+}
+
+impl ForEachServer for ClusterStateInit {
+    fn for_each_server<R, F: Future<Output = R>>(
+        &self,
+        f: impl FnMut(Arc<dyn ConnectApi>) -> F,
+    ) -> FuturesUnordered<F> {
+        self.connects.clone().into_iter().map(f).collect()
+    }
+}
+
+impl std::fmt::Debug for ClusterStateInit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClusterStateInit")
+            .field("connects_len", &self.connects.len())
+            .finish()
+    }
+}
 
 /// The cluster state
 ///
 /// The client must discover the cluster info before sending any propose
-#[derive(Default, Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct ClusterState {
     /// Leader id.
     leader: ServerId,
@@ -30,6 +91,15 @@ impl std::fmt::Debug for ClusterState {
             .field("cluster_version", &self.cluster_version)
             .field("connects", &self.connects.keys())
             .finish()
+    }
+}
+
+impl ForEachServer for ClusterState {
+    fn for_each_server<R, F: Future<Output = R>>(
+        &self,
+        f: impl FnMut(Arc<dyn ConnectApi>) -> F,
+    ) -> FuturesUnordered<F> {
+        self.connects.values().map(Arc::clone).map(f).collect()
     }
 }
 
@@ -72,16 +142,8 @@ impl ClusterState {
         // an inconsistency between the client's local leader state and the cluster
         // state, then mock a `WrongClusterVersion` return to the outside.
         f(Arc::clone(self.connects.get(&self.leader).unwrap_or_else(
-            || unreachable!("leader connect should always exists"),
+            || unreachable!("leader should always exist"),
         )))
-    }
-
-    /// Take an async function and map to all server, returning `FuturesUnordered<F>`
-    pub(crate) fn for_each_server<R, F: Future<Output = R>>(
-        &self,
-        f: impl FnMut(Arc<dyn ConnectApi>) -> F,
-    ) -> FuturesUnordered<F> {
-        self.connects.values().map(Arc::clone).map(f).collect()
     }
 
     /// Take an async function and map to all server, returning `FuturesUnordered<F>`
