@@ -9,10 +9,7 @@ use futures::{Future, StreamExt};
 use tonic::Response;
 use tracing::{debug, warn};
 
-use super::{
-    retry::Context, state::State, ClientApi, LeaderStateUpdate, ProposeResponse,
-    RepeatableClientApi,
-};
+use super::{retry::Context, state::State, ClientApi, ProposeResponse, RepeatableClientApi};
 use crate::{
     members::ServerId,
     quorum,
@@ -338,13 +335,5 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
             .map_leader(|conn| async move { conn.publish(req, timeout).await })
             .await?;
         Ok(())
-    }
-}
-
-#[async_trait]
-impl<C: Command> LeaderStateUpdate for Unary<C> {
-    /// Update leader
-    async fn update_leader(&self, leader_id: Option<ServerId>, term: u64) -> bool {
-        self.state.check_and_update_leader(leader_id, term).await
     }
 }

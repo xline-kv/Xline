@@ -212,13 +212,6 @@ trait RepeatableClientApi: ClientApi {
     ) -> Result<(), Self::Error>;
 }
 
-/// Update leader state
-#[async_trait]
-trait LeaderStateUpdate {
-    /// update
-    async fn update_leader(&self, leader_id: Option<ServerId>, term: u64) -> bool;
-}
-
 /// Client builder to build a client
 #[derive(Debug, Clone, Default)]
 #[allow(clippy::module_name_repetitions)] // better than just Builder

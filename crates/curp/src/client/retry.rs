@@ -13,7 +13,7 @@ use super::{
     cluster_state::ClusterState,
     fetch::Fetch,
     keep_alive::{KeepAlive, KeepAliveHandle},
-    ClientApi, LeaderStateUpdate, ProposeIdGuard, ProposeResponse, RepeatableClientApi,
+    ClientApi, ProposeIdGuard, ProposeResponse, RepeatableClientApi,
 };
 use crate::{
     members::ServerId,
@@ -194,7 +194,7 @@ pub(super) struct Retry<Api> {
 
 impl<Api> Retry<Api>
 where
-    Api: RepeatableClientApi<Error = CurpError> + LeaderStateUpdate + Send + Sync + 'static,
+    Api: RepeatableClientApi<Error = CurpError> + Send + Sync + 'static,
 {
     /// Create a retry client
     pub(super) fn new(
@@ -302,7 +302,7 @@ where
 #[async_trait]
 impl<Api> ClientApi for Retry<Api>
 where
-    Api: RepeatableClientApi<Error = CurpError> + LeaderStateUpdate + Send + Sync + 'static,
+    Api: RepeatableClientApi<Error = CurpError> + Send + Sync + 'static,
 {
     /// The client error
     type Error = tonic::Status;
