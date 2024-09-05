@@ -7,17 +7,18 @@ use std::{
 use async_trait::async_trait;
 use futures::Future;
 use parking_lot::RwLock;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use super::{
-    cluster_state::ClusterState,
+    cluster_state::{ClusterState, ClusterStateInit, ClusterStateSuper},
+    config::Config,
     fetch::Fetch,
     keep_alive::{KeepAlive, KeepAliveHandle},
     ClientApi, ProposeIdGuard, ProposeResponse, RepeatableClientApi,
 };
 use crate::{
     members::ServerId,
-    rpc::{ConfChange, CurpError, FetchClusterResponse, Member, ProposeId, ReadState},
+    rpc::{connects, ConfChange, CurpError, FetchClusterResponse, Member, ProposeId, ReadState},
     tracker::Tracker,
 };
 
@@ -174,6 +175,46 @@ impl CmdTracker {
     }
 }
 
+/// A shared cluster state
+#[derive(Debug)]
+pub(crate) struct ClusterStateShared {
+    /// Inner state
+    inner: RwLock<ClusterStateSuper>,
+    /// Fetch cluster object
+    fetch: Fetch,
+}
+
+impl ClusterStateShared {
+    /// Creates a new `ClusterStateShared`
+    fn new(inner: ClusterStateSuper, fetch: Fetch) -> Self {
+        Self {
+            inner: RwLock::new(inner),
+            fetch,
+        }
+    }
+
+    /// Fetch and updates current state
+    ///
+    /// Returns the fetched cluster state
+    pub(crate) async fn fetch_and_update(&self) -> Result<ClusterState, CurpError> {
+        let current = self.inner.read().clone();
+        let (new_state, _) = self.fetch.fetch_cluster(current).await?;
+        *self.inner.write() = ClusterStateSuper::Ready(new_state.clone());
+        debug!("cluster state updates to: {new_state:?}");
+
+        Ok(new_state)
+    }
+
+    /// Retrieves the cluster state if it's ready, or fetches and updates it if not.
+    pub(crate) async fn ready_or_fetch(&self) -> Result<ClusterState, CurpError> {
+        let current = self.inner.read().clone();
+        match current {
+            ClusterStateSuper::Init(init) => self.fetch_and_update().await,
+            ClusterStateSuper::Ready(ready) => Ok(ready),
+        }
+    }
+}
+
 /// The retry client automatically retry the requests of the inner client api
 /// which raises the [`tonic::Status`] error
 #[derive(Debug)]
@@ -183,7 +224,7 @@ pub(super) struct Retry<Api> {
     /// Retry config
     retry_config: RetryConfig,
     /// Cluster state
-    cluster_state: Arc<RwLock<ClusterState>>,
+    cluster_state: Arc<ClusterStateShared>,
     /// Keep alive client
     keep_alive: KeepAliveHandle,
     /// Fetch cluster object
@@ -202,9 +243,12 @@ where
         retry_config: RetryConfig,
         keep_alive: KeepAlive,
         fetch: Fetch,
+        cluster_state_init: ClusterStateInit,
     ) -> Self {
-        // TODO: build state from parameters
-        let cluster_state = Arc::new(RwLock::default());
+        let cluster_state = Arc::new(ClusterStateShared::new(
+            ClusterStateSuper::Init(cluster_state_init),
+            fetch.clone(),
+        ));
         let keep_alive_handle = keep_alive.spawn_keep_alive(Arc::clone(&cluster_state));
         Self {
             inner,
@@ -230,7 +274,7 @@ where
         let propose_id_guard = self.tracker.gen_propose_id(client_id);
         let first_incomplete = self.tracker.first_incomplete();
         while let Some(delay) = backoff.next_delay() {
-            let cluster_state = self.cluster_state.read().clone();
+            let cluster_state = self.cluster_state.ready_or_fetch().await?;
             let context = Context::new(*propose_id_guard, first_incomplete, cluster_state.clone());
             let result = tokio::select! {
                 result = f(&self.inner, context) => result,
@@ -289,9 +333,8 @@ where
             | CurpError::WrongClusterVersion(())
             | CurpError::Redirect(_) // FIXME: The redirect error needs to include full cluster state
             | CurpError::Zombie(()) => {
-                let (new_cluster_state, _) = self.fetch.fetch_cluster(cluster_state).await?;
                 // TODO: Prevent concurrent updating cluster state
-                *self.cluster_state.write() = new_cluster_state;
+                let _ignore = self.cluster_state.fetch_and_update().await?;
             }
         }
 
