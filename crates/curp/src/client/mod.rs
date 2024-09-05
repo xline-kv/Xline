@@ -73,6 +73,7 @@ use crate::{
         ConfChange, FetchClusterRequest, FetchClusterResponse, Member, ProposeId, Protocol,
         ReadState,
     },
+    server::StreamingProtocol,
     tracker::Tracker,
 };
 
@@ -493,7 +494,7 @@ impl ClientBuilder {
     }
 }
 
-impl<P: Protocol> ClientBuilderWithBypass<P> {
+impl<P: Protocol + StreamingProtocol> ClientBuilderWithBypass<P> {
     /// Build the state with local server
     pub(super) fn bypassed_connect(
         local_server_id: ServerId,
