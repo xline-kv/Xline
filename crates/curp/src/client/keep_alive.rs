@@ -44,11 +44,12 @@ impl KeepAliveHandle {
     /// Wait for the client id
     pub(crate) async fn wait_id_update(&self, current_id: u64) -> u64 {
         loop {
+            let listen_update = self.update_event.listen();
             let id = self.client_id.load(Ordering::Relaxed);
             if current_id != id {
                 return id;
             }
-            self.update_event.listen().await;
+            listen_update.await;
         }
     }
 }
