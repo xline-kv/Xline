@@ -169,14 +169,8 @@ mod test {
     }
 
     /// Create unary client for test
-    fn init_fetch() -> Fetch {
-        Fetch::new(Config::new(
-            None,
-            None,
-            Duration::from_secs(1),
-            Duration::from_secs(1),
-            true,
-        ))
+    fn init_fetch(connects: HashMap<u64, Arc<dyn ConnectApi>>) -> Fetch {
+        Fetch::new(Duration::from_secs(0), move |_| connects.clone())
     }
 
     #[traced_test]
@@ -197,7 +191,7 @@ mod test {
                 }))
             });
         });
-        let fetch = init_fetch();
+        let fetch = init_fetch(connects.clone());
         let (_, res) = fetch.fetch_cluster(connects).await.unwrap();
         assert_eq!(
             res.into_peer_urls(),
@@ -261,7 +255,7 @@ mod test {
                     Ok(tonic::Response::new(resp))
                 });
         });
-        let fetch = init_fetch();
+        let fetch = init_fetch(connects.clone());
         let (_, res) = fetch.fetch_cluster(connects).await.unwrap();
         assert_eq!(
             res.into_peer_urls(),
@@ -334,7 +328,7 @@ mod test {
                     Ok(tonic::Response::new(resp))
                 });
         });
-        let fetch = init_fetch();
+        let fetch = init_fetch(connects.clone());
         let err = fetch.fetch_cluster(connects).await.unwrap_err();
         // only server(0, 1)'s responses are valid, less than majority quorum(3), got a
         // mocked RpcTransport to retry
