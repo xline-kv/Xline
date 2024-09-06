@@ -73,8 +73,13 @@ impl KeepAlive {
         let handle = tokio::spawn(async move {
             loop {
                 let fetch_result = cluster_state.ready_or_fetch().await;
+                // TODO: make the error handling code reusable
                 let current_state = match fetch_result {
                     Ok(ready) => ready,
+                    Err(CurpError::ShuttingDown(())) => {
+                        info!("cluster is shutting down, exiting keep alive task");
+                        return;
+                    }
                     Err(e) => {
                         warn!("fetch cluster failed: {e:?}");
                         // Sleep for some time, the cluster state should be updated in a while
@@ -88,6 +93,10 @@ impl KeepAlive {
                     Ok(new_id) => {
                         client_id.store(new_id, Ordering::Relaxed);
                         let _ignore = update_event.notify(usize::MAX);
+                    }
+                    Err(CurpError::ShuttingDown(())) => {
+                        info!("cluster is shutting down, exiting keep alive task");
+                        return;
                     }
                     Err(e) => {
                         warn!("keep alive failed: {e:?}");
