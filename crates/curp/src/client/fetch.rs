@@ -165,3 +165,200 @@ impl std::fmt::Debug for Fetch {
             .finish()
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::{collections::HashMap, sync::Arc, time::Duration};
+
+    use futures::stream::FuturesUnordered;
+    use tracing_test::traced_test;
+
+    use crate::{
+        client::{cluster_state::ForEachServer, config::Config, tests::init_mocked_connects},
+        rpc::{connect::ConnectApi, CurpError, FetchClusterResponse, Member},
+    };
+
+    use super::Fetch;
+
+    impl ForEachServer for HashMap<u64, Arc<dyn ConnectApi>> {
+        fn for_each_server<R, F: futures::Future<Output = R>>(
+            &self,
+            f: impl FnMut(Arc<dyn ConnectApi>) -> F,
+        ) -> FuturesUnordered<F> {
+            self.values().cloned().map(f).collect()
+        }
+    }
+
+    /// Create unary client for test
+    fn init_fetch() -> Fetch {
+        Fetch::new(Config::new(
+            None,
+            None,
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            true,
+        ))
+    }
+
+    #[traced_test]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_unary_fetch_clusters_serializable() {
+        let connects = init_mocked_connects(3, |_id, conn| {
+            conn.expect_fetch_cluster().returning(|_req, _timeout| {
+                Ok(tonic::Response::new(FetchClusterResponse {
+                    leader_id: Some(0.into()),
+                    term: 1,
+                    cluster_id: 123,
+                    members: vec![
+                        Member::new(0, "S0", vec!["A0".to_owned()], [], false),
+                        Member::new(1, "S1", vec!["A1".to_owned()], [], false),
+                        Member::new(2, "S2", vec!["A2".to_owned()], [], false),
+                    ],
+                    cluster_version: 1,
+                }))
+            });
+        });
+        let fetch = init_fetch();
+        let (_, res) = fetch.fetch_cluster(connects).await.unwrap();
+        assert_eq!(
+            res.into_peer_urls(),
+            HashMap::from([
+                (0, vec!["A0".to_owned()]),
+                (1, vec!["A1".to_owned()]),
+                (2, vec!["A2".to_owned()])
+            ])
+        );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_unary_fetch_clusters_linearizable() {
+        let connects = init_mocked_connects(5, |id, conn| {
+            conn.expect_fetch_cluster()
+                .return_once(move |_req, _timeout| {
+                    let resp = match id {
+                        0 => FetchClusterResponse {
+                            leader_id: Some(0.into()),
+                            term: 2,
+                            cluster_id: 123,
+                            members: vec![
+                                Member::new(0, "S0", vec!["A0".to_owned()], [], false),
+                                Member::new(1, "S1", vec!["A1".to_owned()], [], false),
+                                Member::new(2, "S2", vec!["A2".to_owned()], [], false),
+                                Member::new(3, "S3", vec!["A3".to_owned()], [], false),
+                                Member::new(4, "S4", vec!["A4".to_owned()], [], false),
+                            ],
+                            cluster_version: 1,
+                        },
+                        1 | 4 => FetchClusterResponse {
+                            leader_id: Some(0.into()),
+                            term: 2,
+                            cluster_id: 123,
+                            members: vec![], // linearizable read from follower returns empty members
+                            cluster_version: 1,
+                        },
+                        2 => FetchClusterResponse {
+                            leader_id: None,
+                            term: 23, // abnormal term
+                            cluster_id: 123,
+                            members: vec![],
+                            cluster_version: 1,
+                        },
+                        3 => FetchClusterResponse {
+                            leader_id: Some(3.into()), // imagine this node is a old leader
+                            term: 1,                   // with the old term
+                            cluster_id: 123,
+                            members: vec![
+                                Member::new(0, "S0", vec!["B0".to_owned()], [], false),
+                                Member::new(1, "S1", vec!["B1".to_owned()], [], false),
+                                Member::new(2, "S2", vec!["B2".to_owned()], [], false),
+                                Member::new(3, "S3", vec!["B3".to_owned()], [], false),
+                                Member::new(4, "S4", vec!["B4".to_owned()], [], false),
+                            ],
+                            cluster_version: 1,
+                        },
+                        _ => unreachable!("there are only 5 nodes"),
+                    };
+                    Ok(tonic::Response::new(resp))
+                });
+        });
+        let fetch = init_fetch();
+        let (_, res) = fetch.fetch_cluster(connects).await.unwrap();
+        assert_eq!(
+            res.into_peer_urls(),
+            HashMap::from([
+                (0, vec!["A0".to_owned()]),
+                (1, vec!["A1".to_owned()]),
+                (2, vec!["A2".to_owned()]),
+                (3, vec!["A3".to_owned()]),
+                (4, vec!["A4".to_owned()])
+            ])
+        );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_unary_fetch_clusters_linearizable_failed() {
+        let connects = init_mocked_connects(5, |id, conn| {
+            conn.expect_fetch_cluster()
+                .return_once(move |_req, _timeout| {
+                    let resp = match id {
+                        0 => FetchClusterResponse {
+                            leader_id: Some(0.into()),
+                            term: 2,
+                            cluster_id: 123,
+                            members: vec![
+                                Member::new(0, "S0", vec!["A0".to_owned()], [], false),
+                                Member::new(1, "S1", vec!["A1".to_owned()], [], false),
+                                Member::new(2, "S2", vec!["A2".to_owned()], [], false),
+                                Member::new(3, "S3", vec!["A3".to_owned()], [], false),
+                                Member::new(4, "S4", vec!["A4".to_owned()], [], false),
+                            ],
+                            cluster_version: 1,
+                        },
+                        1 => FetchClusterResponse {
+                            leader_id: Some(0.into()),
+                            term: 2,
+                            cluster_id: 123,
+                            members: vec![], // linearizable read from follower returns empty members
+                            cluster_version: 1,
+                        },
+                        2 => FetchClusterResponse {
+                            leader_id: None, // imagine this node is a disconnected candidate
+                            term: 23,        // with a high term
+                            cluster_id: 123,
+                            members: vec![],
+                            cluster_version: 1,
+                        },
+                        3 => FetchClusterResponse {
+                            leader_id: Some(3.into()), // imagine this node is a old leader
+                            term: 1,                   // with the old term
+                            cluster_id: 123,
+                            members: vec![
+                                Member::new(0, "S0", vec!["B0".to_owned()], [], false),
+                                Member::new(1, "S1", vec!["B1".to_owned()], [], false),
+                                Member::new(2, "S2", vec!["B2".to_owned()], [], false),
+                                Member::new(3, "S3", vec!["B3".to_owned()], [], false),
+                                Member::new(4, "S4", vec!["B4".to_owned()], [], false),
+                            ],
+                            cluster_version: 1,
+                        },
+                        4 => FetchClusterResponse {
+                            leader_id: Some(3.into()), // imagine this node is a old follower of old leader(3)
+                            term: 1,                   // with the old term
+                            cluster_id: 123,
+                            members: vec![],
+                            cluster_version: 1,
+                        },
+                        _ => unreachable!("there are only 5 nodes"),
+                    };
+                    Ok(tonic::Response::new(resp))
+                });
+        });
+        let fetch = init_fetch();
+        let err = fetch.fetch_cluster(connects).await.unwrap_err();
+        // only server(0, 1)'s responses are valid, less than majority quorum(3), got a
+        // mocked RpcTransport to retry
+        assert_eq!(err, CurpError::RpcTransport(()));
+    }
+}
