@@ -8,17 +8,9 @@ mod metrics;
 /// Unary rpc client
 mod unary;
 
-#[cfg(ignore)]
-/// Stream rpc client
-mod stream;
-
 #[allow(unused)]
 /// Retry layer
 mod retry;
-
-#[allow(unused)]
-/// State for clients
-mod state;
 
 #[allow(unused)]
 /// State of the cluster
