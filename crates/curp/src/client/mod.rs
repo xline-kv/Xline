@@ -28,9 +28,8 @@ mod config;
 /// Lease keep alive implementation
 mod keep_alive;
 
-// TODO: rewrite these tests
 /// Tests for client
-#[cfg(ignore)]
+#[cfg(test)]
 mod tests;
 
 #[cfg(madsim)]
@@ -49,7 +48,7 @@ use utils::ClientTlsConfig;
 use utils::{build_endpoint, config::ClientConfig};
 
 use self::{
-    cluster_state::ClusterStateInit,
+    cluster_state::{ClusterState, ClusterStateInit},
     config::Config,
     fetch::Fetch,
     keep_alive::KeepAlive,
@@ -453,7 +452,7 @@ impl ClientBuilder {
             self.init_retry_config(),
             keep_alive,
             fetch,
-            cluster_state_init,
+            ClusterState::Init(cluster_state_init),
         );
 
         Ok(client)
@@ -516,7 +515,7 @@ impl<P: Protocol + StreamingProtocol> ClientBuilderWithBypass<P> {
             self.inner.init_retry_config(),
             keep_alive,
             fetch,
-            cluster_state_init,
+            ClusterState::Init(cluster_state_init),
         );
 
         Ok(client)
