@@ -282,7 +282,7 @@ async fn test_retry_propose_return_no_retry_error() {
             unary,
             RetryConfig::new_fixed(Duration::from_millis(100), 5),
             KeepAlive::new(Duration::from_secs(1)),
-            Fetch::default(),
+            Fetch::new_disable(),
             ClusterState::Ready(cluster_state),
         );
         let err = retry
@@ -335,7 +335,7 @@ async fn test_retry_propose_return_retry_error() {
             unary,
             RetryConfig::new_fixed(Duration::from_millis(10), 5),
             KeepAlive::new(Duration::from_secs(1)),
-            Fetch::default(),
+            Fetch::new_disable(),
             ClusterState::Ready(cluster_state),
         );
         let err = retry

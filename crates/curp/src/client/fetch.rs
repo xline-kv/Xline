@@ -65,6 +65,15 @@ impl Fetch {
         }
     }
 
+    #[cfg(test)]
+    /// Creates a new `Fetch` fetch disabled
+    pub(crate) fn new_disable() -> Self {
+        Self {
+            timeout: Duration::default(),
+            connect_to: Box::new(|_| HashMap::default()),
+        }
+    }
+
     /// Fetch cluster and updates the current state
     pub(crate) async fn fetch_cluster(
         &self,
