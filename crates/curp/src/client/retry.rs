@@ -243,12 +243,9 @@ where
         retry_config: RetryConfig,
         keep_alive: KeepAlive,
         fetch: Fetch,
-        cluster_state_init: ClusterStateInit,
+        cluster_state: ClusterState,
     ) -> Self {
-        let cluster_state = Arc::new(ClusterStateShared::new(
-            ClusterState::Init(cluster_state_init),
-            fetch.clone(),
-        ));
+        let cluster_state = Arc::new(ClusterStateShared::new(cluster_state, fetch.clone()));
         let keep_alive_handle = keep_alive.spawn_keep_alive(Arc::clone(&cluster_state));
         Self {
             inner,
