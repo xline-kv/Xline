@@ -11,28 +11,26 @@ use tracing_test::traced_test;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
 
-use super::{
-    state::State,
-    unary::{Unary, UnaryConfig},
-};
+use super::{cluster_state::ClusterState, config::Config, unary::Unary};
 use crate::{
     client::{
+        cluster_state::ClusterStateReady,
         fetch::Fetch,
         keep_alive::KeepAlive,
-        retry::{Retry, RetryConfig},
-        ClientApi,
+        retry::{Context, Retry, RetryConfig},
+        ClientApi, RepeatableClientApi,
     },
     members::ServerId,
     rpc::{
         connect::{ConnectApi, MockConnectApi},
-        CurpError, FetchClusterResponse, Member, OpResponse, ProposeResponse, ReadIndexResponse,
-        RecordResponse, ResponseOp, SyncedResponse,
+        CurpError, FetchClusterResponse, Member, OpResponse, ProposeId, ProposeResponse,
+        ReadIndexResponse, RecordResponse, ResponseOp, SyncedResponse,
     },
 };
 
 /// Create a mocked connects with server id from 0~size
 #[allow(trivial_casts)] // Trait object with high ranked type inferences failed, cast manually
-fn init_mocked_connects(
+pub(super) fn init_mocked_connects(
     size: usize,
     f: impl Fn(usize, &mut MockConnectApi),
 ) -> HashMap<ServerId, Arc<dyn ConnectApi>> {
@@ -50,216 +48,19 @@ fn init_mocked_connects(
 
 /// Create unary client for test
 fn init_unary_client(
-    connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
     local_server: Option<ServerId>,
-    leader: Option<ServerId>,
-    term: u64,
-    cluster_version: u64,
     tls_config: Option<ClientTlsConfig>,
 ) -> Unary<TestCommand> {
-    let state = State::new_arc(
-        connects,
+    Unary::new(Config::new(
         local_server,
-        leader,
-        term,
-        cluster_version,
         tls_config,
-    );
-    Unary::new(
-        state,
-        UnaryConfig::new(Duration::from_secs(0), Duration::from_secs(0)),
-    )
+        Duration::from_secs(0),
+        Duration::from_secs(0),
+        false,
+    ))
 }
 
 // Tests for unary client
-
-#[traced_test]
-#[tokio::test]
-async fn test_unary_fetch_clusters_serializable() {
-    let connects = init_mocked_connects(3, |_id, conn| {
-        conn.expect_fetch_cluster().return_once(|_req, _timeout| {
-            Ok(tonic::Response::new(FetchClusterResponse {
-                leader_id: Some(0.into()),
-                term: 1,
-                cluster_id: 123,
-                members: vec![
-                    Member::new(0, "S0", vec!["A0".to_owned()], [], false),
-                    Member::new(1, "S1", vec!["A1".to_owned()], [], false),
-                    Member::new(2, "S2", vec!["A2".to_owned()], [], false),
-                ],
-                cluster_version: 1,
-            }))
-        });
-    });
-    let unary = init_unary_client(connects, None, None, 0, 0, None);
-    let res = unary.fetch_cluster(false).await.unwrap();
-    assert_eq!(
-        res.into_peer_urls(),
-        HashMap::from([
-            (0, vec!["A0".to_owned()]),
-            (1, vec!["A1".to_owned()]),
-            (2, vec!["A2".to_owned()])
-        ])
-    );
-}
-
-#[traced_test]
-#[tokio::test]
-async fn test_unary_fetch_clusters_serializable_local_first() {
-    let connects = init_mocked_connects(3, |id, conn| {
-        conn.expect_fetch_cluster()
-            .return_once(move |_req, _timeout| {
-                let members = if id == 1 {
-                    // local server(1) does not see the cluster members
-                    vec![]
-                } else {
-                    panic!("other server's `fetch_cluster` should not be invoked");
-                };
-                Ok(tonic::Response::new(FetchClusterResponse {
-                    leader_id: Some(0.into()),
-                    term: 1,
-                    cluster_id: 123,
-                    members,
-                    cluster_version: 1,
-                }))
-            });
-    });
-    let unary = init_unary_client(connects, Some(1), None, 0, 0, None);
-    let res = unary.fetch_cluster(false).await.unwrap();
-    assert!(res.members.is_empty());
-}
-
-#[traced_test]
-#[tokio::test]
-async fn test_unary_fetch_clusters_linearizable() {
-    let connects = init_mocked_connects(5, |id, conn| {
-        conn.expect_fetch_cluster()
-            .return_once(move |_req, _timeout| {
-                let resp = match id {
-                    0 => FetchClusterResponse {
-                        leader_id: Some(0.into()),
-                        term: 2,
-                        cluster_id: 123,
-                        members: vec![
-                            Member::new(0, "S0", vec!["A0".to_owned()], [], false),
-                            Member::new(1, "S1", vec!["A1".to_owned()], [], false),
-                            Member::new(2, "S2", vec!["A2".to_owned()], [], false),
-                            Member::new(3, "S3", vec!["A3".to_owned()], [], false),
-                            Member::new(4, "S4", vec!["A4".to_owned()], [], false),
-                        ],
-                        cluster_version: 1,
-                    },
-                    1 | 4 => FetchClusterResponse {
-                        leader_id: Some(0.into()),
-                        term: 2,
-                        cluster_id: 123,
-                        members: vec![], // linearizable read from follower returns empty members
-                        cluster_version: 1,
-                    },
-                    2 => FetchClusterResponse {
-                        leader_id: None,
-                        term: 23, // abnormal term
-                        cluster_id: 123,
-                        members: vec![],
-                        cluster_version: 1,
-                    },
-                    3 => FetchClusterResponse {
-                        leader_id: Some(3.into()), // imagine this node is a old leader
-                        term: 1,                   // with the old term
-                        cluster_id: 123,
-                        members: vec![
-                            Member::new(0, "S0", vec!["B0".to_owned()], [], false),
-                            Member::new(1, "S1", vec!["B1".to_owned()], [], false),
-                            Member::new(2, "S2", vec!["B2".to_owned()], [], false),
-                            Member::new(3, "S3", vec!["B3".to_owned()], [], false),
-                            Member::new(4, "S4", vec!["B4".to_owned()], [], false),
-                        ],
-                        cluster_version: 1,
-                    },
-                    _ => unreachable!("there are only 5 nodes"),
-                };
-                Ok(tonic::Response::new(resp))
-            });
-    });
-    let unary = init_unary_client(connects, None, None, 0, 0, None);
-    let res = unary.fetch_cluster(true).await.unwrap();
-    assert_eq!(
-        res.into_peer_urls(),
-        HashMap::from([
-            (0, vec!["A0".to_owned()]),
-            (1, vec!["A1".to_owned()]),
-            (2, vec!["A2".to_owned()]),
-            (3, vec!["A3".to_owned()]),
-            (4, vec!["A4".to_owned()])
-        ])
-    );
-}
-
-#[traced_test]
-#[tokio::test]
-async fn test_unary_fetch_clusters_linearizable_failed() {
-    let connects = init_mocked_connects(5, |id, conn| {
-        conn.expect_fetch_cluster()
-            .return_once(move |_req, _timeout| {
-                let resp = match id {
-                    0 => FetchClusterResponse {
-                        leader_id: Some(0.into()),
-                        term: 2,
-                        cluster_id: 123,
-                        members: vec![
-                            Member::new(0, "S0", vec!["A0".to_owned()], [], false),
-                            Member::new(1, "S1", vec!["A1".to_owned()], [], false),
-                            Member::new(2, "S2", vec!["A2".to_owned()], [], false),
-                            Member::new(3, "S3", vec!["A3".to_owned()], [], false),
-                            Member::new(4, "S4", vec!["A4".to_owned()], [], false),
-                        ],
-                        cluster_version: 1,
-                    },
-                    1 => FetchClusterResponse {
-                        leader_id: Some(0.into()),
-                        term: 2,
-                        cluster_id: 123,
-                        members: vec![], // linearizable read from follower returns empty members
-                        cluster_version: 1,
-                    },
-                    2 => FetchClusterResponse {
-                        leader_id: None, // imagine this node is a disconnected candidate
-                        term: 23,        // with a high term
-                        cluster_id: 123,
-                        members: vec![],
-                        cluster_version: 1,
-                    },
-                    3 => FetchClusterResponse {
-                        leader_id: Some(3.into()), // imagine this node is a old leader
-                        term: 1,                   // with the old term
-                        cluster_id: 123,
-                        members: vec![
-                            Member::new(0, "S0", vec!["B0".to_owned()], [], false),
-                            Member::new(1, "S1", vec!["B1".to_owned()], [], false),
-                            Member::new(2, "S2", vec!["B2".to_owned()], [], false),
-                            Member::new(3, "S3", vec!["B3".to_owned()], [], false),
-                            Member::new(4, "S4", vec!["B4".to_owned()], [], false),
-                        ],
-                        cluster_version: 1,
-                    },
-                    4 => FetchClusterResponse {
-                        leader_id: Some(3.into()), // imagine this node is a old follower of old leader(3)
-                        term: 1,                   // with the old term
-                        cluster_id: 123,
-                        members: vec![],
-                        cluster_version: 1,
-                    },
-                    _ => unreachable!("there are only 5 nodes"),
-                };
-                Ok(tonic::Response::new(resp))
-            });
-    });
-    let unary = init_unary_client(connects, None, None, 0, 0, None);
-    let res = unary.fetch_cluster(true).await.unwrap_err();
-    // only server(0, 1)'s responses are valid, less than majority quorum(3), got a
-    // mocked RpcTransport to retry
-    assert_eq!(res, CurpError::RpcTransport(()));
-}
 
 fn build_propose_response(conflict: bool) -> OpResponse {
     let resp = ResponseOp::Propose(ProposeResponse::new_result::<TestCommand>(
@@ -304,9 +105,11 @@ async fn test_unary_propose_fast_path_works() {
             Ok(tonic::Response::new(resp))
         });
     });
-    let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
+    let unary = init_unary_client(None, None);
+    let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+    let ctx = Context::new(ProposeId::default(), 0, cluster_state);
     let res = unary
-        .propose(&TestCommand::new_put(vec![1], 1), None, true)
+        .propose(&TestCommand::new_put(vec![1], 1), None, true, ctx)
         .await
         .unwrap()
         .unwrap();
@@ -338,10 +141,12 @@ async fn test_unary_propose_slow_path_works() {
         });
     });
 
-    let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
+    let unary = init_unary_client(None, None);
+    let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+    let ctx = Context::new(ProposeId::default(), 0, cluster_state);
     let start_at = Instant::now();
     let res = unary
-        .propose(&TestCommand::new_put(vec![1], 1), None, false)
+        .propose(&TestCommand::new_put(vec![1], 1), None, false, ctx)
         .await
         .unwrap()
         .unwrap();
@@ -381,10 +186,13 @@ async fn test_unary_propose_fast_path_fallback_slow_path() {
             Ok(tonic::Response::new(resp))
         });
     });
-    let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
+
+    let unary = init_unary_client(None, None);
+    let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+    let ctx = Context::new(ProposeId::default(), 0, cluster_state);
     let start_at = Instant::now();
     let res = unary
-        .propose(&TestCommand::new_put(vec![1], 1), None, true)
+        .propose(&TestCommand::new_put(vec![1], 1), None, true, ctx)
         .await
         .unwrap()
         .unwrap();
@@ -427,9 +235,12 @@ async fn test_unary_propose_return_early_err() {
             conn.expect_record()
                 .return_once(move |_req, _timeout| Err(err));
         });
-        let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
+
+        let unary = init_unary_client(None, None);
+        let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+        let ctx = Context::new(ProposeId::default(), 0, cluster_state);
         let err = unary
-            .propose(&TestCommand::new_put(vec![1], 1), None, true)
+            .propose(&TestCommand::new_put(vec![1], 1), None, true, ctx)
             .await
             .unwrap_err();
         assert_eq!(err, early_err);
@@ -464,12 +275,15 @@ async fn test_retry_propose_return_no_retry_error() {
             conn.expect_record()
                 .return_once(move |_req, _timeout| Err(err));
         });
-        let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
+
+        let unary = init_unary_client(None, None);
+        let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
         let retry = Retry::new(
             unary,
             RetryConfig::new_fixed(Duration::from_millis(100), 5),
             KeepAlive::new(Duration::from_secs(1)),
             Fetch::default(),
+            ClusterState::Ready(cluster_state),
         );
         let err = retry
             .propose(&TestCommand::new_put(vec![1], 1), None, false)
@@ -515,12 +329,14 @@ async fn test_retry_propose_return_retry_error() {
             conn.expect_record()
                 .returning(move |_req, _timeout| Err(err.clone()));
         });
-        let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
+        let unary = init_unary_client(None, None);
+        let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
         let retry = Retry::new(
             unary,
             RetryConfig::new_fixed(Duration::from_millis(10), 5),
             KeepAlive::new(Duration::from_secs(1)),
             Fetch::default(),
+            ClusterState::Ready(cluster_state),
         );
         let err = retry
             .propose(&TestCommand::new_put(vec![1], 1), None, false)
@@ -555,9 +371,12 @@ async fn test_read_index_success() {
             Ok(tonic::Response::new(resp))
         });
     });
-    let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
+
+    let unary = init_unary_client(None, None);
+    let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+    let ctx = Context::new(ProposeId::default(), 0, cluster_state);
     let res = unary
-        .propose(&TestCommand::default(), None, true)
+        .propose(&TestCommand::default(), None, true, ctx)
         .await
         .unwrap()
         .unwrap();
@@ -588,8 +407,12 @@ async fn test_read_index_fail() {
             Ok(tonic::Response::new(resp))
         });
     });
-    let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
-    let res = unary.propose(&TestCommand::default(), None, true).await;
+    let unary = init_unary_client(None, None);
+    let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+    let ctx = Context::new(ProposeId::default(), 0, cluster_state);
+    let res = unary
+        .propose(&TestCommand::default(), None, true, ctx)
+        .await;
     assert!(res.is_err());
 }
 
