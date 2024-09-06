@@ -15,31 +15,54 @@ use crate::{
 use super::cluster_state::{ClusterState, ClusterStateReady, ForEachServer};
 use super::config::Config;
 
-/// An override connect
-type OverrideConnect = (u64, Arc<dyn ConnectApi>);
+/// Connect to cluster
+///
+/// This is used to build a boxed closure that handles the `FetchClusterResponse` and returns
+/// new connections.
+pub(super) trait ConnectToCluster:
+    Fn(&FetchClusterResponse) -> HashMap<u64, Arc<dyn ConnectApi>> + Send + Sync + 'static
+{
+    /// Clone the value
+    fn clone_box(&self) -> Box<dyn ConnectToCluster>;
+}
+
+impl<T> ConnectToCluster for T
+where
+    T: Fn(&FetchClusterResponse) -> HashMap<u64, Arc<dyn ConnectApi>>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    fn clone_box(&self) -> Box<dyn ConnectToCluster> {
+        Box::new(self.clone())
+    }
+}
 
 /// Fetch cluster implementation
-#[derive(Default, Clone)]
 pub(crate) struct Fetch {
-    /// The fetch config
-    config: Config,
-    /// Override connect
-    override_connects: Vec<OverrideConnect>,
+    /// The fetch timeout
+    timeout: Duration,
+    /// Connect to the given fetch cluster response
+    connect_to: Box<dyn ConnectToCluster>,
+}
+
+impl Clone for Fetch {
+    fn clone(&self) -> Self {
+        Self {
+            timeout: self.timeout,
+            connect_to: self.connect_to.clone_box(),
+        }
+    }
 }
 
 impl Fetch {
     /// Creates a new `Fetch`
-    pub(crate) fn new(config: Config) -> Self {
+    pub(crate) fn new<C: ConnectToCluster>(timeout: Duration, connect_to: C) -> Self {
         Self {
-            config,
-            override_connects: Vec::new(),
+            timeout,
+            connect_to: Box::new(connect_to),
         }
-    }
-
-    /// Add an override connect to fetch cluster response
-    pub(crate) fn with_override(mut self, connect: OverrideConnect) -> Self {
-        self.override_connects.push(connect);
-        self
     }
 
     /// Fetch cluster and updates the current state
@@ -54,9 +77,10 @@ impl Fetch {
                 .pre_fetch(&state)
                 .await
                 .ok_or(CurpError::internal("cluster not available"))?;
-            let new_members = self.member_addrs(&resp);
-            let new_connects = self.connect_to(new_members);
-            let new_connects = self.override_connects(new_connects);
+            let new_connects = (self.connect_to)(&resp);
+            //let new_members = self.member_addrs(&resp);
+            //let new_connects = self.connect_to(new_members);
+            //let new_connects = self.override_connects(new_connects);
             let new_state = ClusterStateReady::new(
                 resp.leader_id
                     .unwrap_or_else(|| unreachable!("leader id should be Some"))
@@ -75,7 +99,7 @@ impl Fetch {
 
     /// Fetch the term of the cluster. This ensures that the current leader is the latest.
     async fn fetch_term(&self, state: &ClusterStateReady) -> bool {
-        let timeout = self.config.wait_synced_timeout();
+        let timeout = self.timeout;
         let term = state.term();
         let quorum = state.get_quorum(quorum);
         state
@@ -95,7 +119,7 @@ impl Fetch {
     /// Prefetch, send fetch cluster request to the cluster and get the
     /// config with the greatest quorum.
     async fn pre_fetch(&self, state: &impl ForEachServer) -> Option<FetchClusterResponse> {
-        let timeout = self.config.wait_synced_timeout();
+        let timeout = self.timeout;
         let requests = state.for_each_server(|c| async move {
             c.fetch_cluster(FetchClusterRequest { linearizable: true }, timeout)
                 .await
@@ -111,57 +135,12 @@ impl Fetch {
             .filter(|resp| !resp.members.is_empty())
             .max_by(|x, y| x.term.cmp(&y.term))
     }
-
-    /// Gets the member addresses to connect to
-    fn member_addrs(&self, resp: &FetchClusterResponse) -> HashMap<u64, Vec<String>> {
-        if self.config.is_raw_curp() {
-            resp.clone().into_peer_urls()
-        } else {
-            resp.clone().into_client_urls()
-        }
-    }
-
-    /// Connect to the given addrs
-    fn connect_to(
-        &self,
-        new_members: HashMap<u64, Vec<String>>,
-    ) -> HashMap<u64, Arc<dyn ConnectApi>> {
-        new_members
-            .into_iter()
-            .map(|(id, addrs)| {
-                let tls_config = self.config.tls_config().cloned();
-                (id, rpc::connect(id, addrs, tls_config))
-            })
-            .collect()
-    }
-
-    /// Overrides the connects
-    fn override_connects(
-        &self,
-        mut connects: HashMap<u64, Arc<dyn ConnectApi>>,
-    ) -> HashMap<u64, Arc<dyn ConnectApi>> {
-        for &(id, ref c) in &self.override_connects {
-            if connects.insert(id, Arc::clone(c)).is_none() {
-                warn!("override an non-existing connect with id: {id}");
-            }
-        }
-
-        connects
-    }
 }
 
 impl std::fmt::Debug for Fetch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Fetch")
-            .field("config", &self.config)
-            .field(
-                "override_connects",
-                &self
-                    .override_connects
-                    .iter()
-                    .map(|&(id, _)| id)
-                    .collect::<Vec<_>>(),
-            )
+            .field("timeout", &self.timeout)
             .finish()
     }
 }

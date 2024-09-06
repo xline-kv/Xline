@@ -50,7 +50,7 @@ use utils::{build_endpoint, config::ClientConfig};
 use self::{
     cluster_state::{ClusterState, ClusterStateInit},
     config::Config,
-    fetch::Fetch,
+    fetch::{ConnectToCluster, Fetch},
     keep_alive::KeepAlive,
     retry::{Context, Retry, RetryConfig},
     unary::Unary,
@@ -420,6 +420,27 @@ impl ClientBuilder {
         )
     }
 
+    /// Build connect to closure
+    fn build_connect_to(
+        &self,
+        bypassed: Option<(u64, Arc<dyn ConnectApi>)>,
+    ) -> impl ConnectToCluster {
+        let is_raw_curp = self.is_raw_curp;
+        let tls_config = self.tls_config.clone();
+        move |resp: &FetchClusterResponse| -> HashMap<u64, Arc<dyn ConnectApi>> {
+            let members = if is_raw_curp {
+                resp.clone().into_peer_urls()
+            } else {
+                resp.clone().into_client_urls()
+            };
+            members
+                .into_iter()
+                .map(|(id, addrs)| (id, rpc::connect(id, addrs, tls_config.clone())))
+                .chain(bypassed.clone())
+                .collect()
+        }
+    }
+
     /// Connect to members
     fn connect_members(&self, tls_config: Option<&ClientTlsConfig>) -> ClusterStateInit {
         let all_members = self
@@ -445,7 +466,10 @@ impl ClientBuilder {
     {
         let config = self.init_config(None);
         let keep_alive = KeepAlive::new(*self.config.keep_alive_interval());
-        let fetch = Fetch::new(config.clone());
+        let fetch = Fetch::new(
+            *self.config.wait_synced_timeout(),
+            self.build_connect_to(None),
+        );
         let cluster_state_init = self.connect_members(self.tls_config.as_ref());
         let client = Retry::new(
             Unary::new(config),
@@ -508,7 +532,10 @@ impl<P: Protocol + StreamingProtocol> ClientBuilderWithBypass<P> {
         let bypassed = Self::bypassed_connect(self.local_server_id, self.local_server);
         let config = self.inner.init_config(Some(self.local_server_id));
         let keep_alive = KeepAlive::new(*self.inner.config.keep_alive_interval());
-        let fetch = Fetch::new(config.clone()).with_override(bypassed);
+        let fetch = Fetch::new(
+            *self.inner.config.wait_synced_timeout(),
+            self.inner.build_connect_to(Some(bypassed)),
+        );
         let cluster_state_init = self.inner.connect_members(self.inner.tls_config.as_ref());
         let client = Retry::new(
             Unary::new(config),
