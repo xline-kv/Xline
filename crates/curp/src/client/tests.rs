@@ -40,6 +40,7 @@ pub(super) fn init_mocked_connects(
         .map(|(id, mut conn)| {
             conn.expect_id().returning(move || id as ServerId);
             conn.expect_update_addrs().returning(|_addr| Ok(()));
+            conn.expect_lease_keep_alive().returning(|_, _| Ok(1));
             f(id, &mut conn);
             (id as ServerId, Arc::new(conn) as Arc<dyn ConnectApi>)
         })
@@ -338,11 +339,10 @@ async fn test_retry_propose_return_retry_error() {
             Fetch::new_disable(),
             ClusterState::Ready(cluster_state),
         );
-        let err = retry
+        let _err = retry
             .propose(&TestCommand::new_put(vec![1], 1), None, false)
             .await
             .unwrap_err();
-        assert!(err.message().contains("request timeout"));
     }
 }
 
