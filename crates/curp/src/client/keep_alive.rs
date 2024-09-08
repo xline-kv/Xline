@@ -107,6 +107,10 @@ impl KeepAlive {
                         }
                     }
                 }
+
+                /// This helps prevent blocking the runtime if this task cannot be
+                /// cancelled on runtime exit.
+                tokio::task::yield_now().await;
             }
         });
 
