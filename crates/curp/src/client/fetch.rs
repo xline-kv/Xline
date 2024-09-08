@@ -79,31 +79,25 @@ impl Fetch {
         &self,
         state: impl ForEachServer,
     ) -> Result<(ClusterStateReady, FetchClusterResponse), CurpError> {
-        /// Retry interval
-        const FETCH_RETRY_INTERVAL: Duration = Duration::from_secs(1);
-        loop {
-            let resp = self
-                .pre_fetch(&state)
-                .await
-                .ok_or(CurpError::internal("cluster not available"))?;
-            let new_connects = (self.connect_to)(&resp);
-            //let new_members = self.member_addrs(&resp);
-            //let new_connects = self.connect_to(new_members);
-            //let new_connects = self.override_connects(new_connects);
-            let new_state = ClusterStateReady::new(
-                resp.leader_id
-                    .unwrap_or_else(|| unreachable!("leader id should be Some"))
-                    .into(),
-                resp.term,
-                resp.cluster_version,
-                new_connects,
-            );
-            if self.fetch_term(&new_state).await {
-                return Ok((new_state, resp));
-            }
-            warn!("Fetch cluster failed, sleep for {FETCH_RETRY_INTERVAL:?}");
-            tokio::time::sleep(FETCH_RETRY_INTERVAL).await;
+        let resp = self
+            .pre_fetch(&state)
+            .await
+            .ok_or(CurpError::internal("cluster not available"))?;
+        let new_connects = (self.connect_to)(&resp);
+        let new_state = ClusterStateReady::new(
+            resp.leader_id
+                .unwrap_or_else(|| unreachable!("leader id should be Some"))
+                .into(),
+            resp.term,
+            resp.cluster_version,
+            new_connects,
+        );
+
+        if self.fetch_term(&new_state).await {
+            return Ok((new_state, resp));
         }
+
+        Err(CurpError::internal("cluster not available"))
     }
 
     /// Fetch the term of the cluster. This ensures that the current leader is the latest.
@@ -379,8 +373,6 @@ mod test {
         });
         let fetch = init_fetch(connects.clone());
         // only server(0, 1)'s responses are valid, less than majority quorum(3).
-        tokio::time::timeout(Duration::from_millis(100), fetch.fetch_cluster(connects))
-            .await
-            .unwrap_err();
+        fetch.fetch_cluster(connects).await.unwrap_err();
     }
 }
