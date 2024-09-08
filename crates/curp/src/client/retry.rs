@@ -193,6 +193,15 @@ impl ClusterStateShared {
         }
     }
 
+    /// Creates a new `ClusterStateShared`
+    #[cfg(test)]
+    pub(crate) fn new_test(inner: ClusterState, fetch: Fetch) -> Self {
+        Self {
+            inner: RwLock::new(inner),
+            fetch,
+        }
+    }
+
     /// Fetch and updates current state
     ///
     /// Returns the fetched cluster state
