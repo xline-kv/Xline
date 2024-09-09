@@ -111,7 +111,7 @@ impl Backoff {
 pub(crate) struct Context {
     /// The propose id
     propose_id: ProposeId,
-    /// First incomplete seqence
+    /// First incomplete sequence
     first_incomplete: u64,
     /// The current cluster state
     cluster_state: ClusterStateReady,
