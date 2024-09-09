@@ -52,6 +52,12 @@ impl KeepAliveHandle {
             listen_update.await;
         }
     }
+
+    #[cfg(madsim)]
+    /// Clone the client id
+    pub(crate) fn clone_client_id(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.client_id)
+    }
 }
 
 impl KeepAlive {

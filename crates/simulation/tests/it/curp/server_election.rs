@@ -1,6 +1,6 @@
 use curp::members::ServerId;
 use curp_test_utils::{init_logger, sleep_secs, test_cmd::TestCommand};
-use simulation::curp_group::CurpGroup;
+use simulation::curp_group::{CurpGroup, SimClient};
 
 /// Wait some time for the election to finish, and get the leader to ensure that the election is
 /// completed.
@@ -138,6 +138,9 @@ async fn propose_after_reelect() {
     group.disable_node(leader1);
 
     let (_leader, _term) = wait_for_election(&group).await;
+
+    assert_new_leader_expire_client_id(&client).await;
+
     assert_eq!(
         client
             .propose(TestCommand::new_get(vec![0]), true)
@@ -181,6 +184,8 @@ async fn conflict_should_detected_in_new_leader() {
     group.unclog_link_client_nodes(group.nodes.keys().filter(|id| **id != leader1));
     let (_leader, _term) = wait_for_election(&group).await;
 
+    assert_new_leader_expire_client_id(&client).await;
+
     assert_eq!(
         client
             .propose(TestCommand::new_get(vec![0]), true)
@@ -191,4 +196,13 @@ async fn conflict_should_detected_in_new_leader() {
             .values,
         vec![0]
     );
+}
+
+// NOTE: Currently propose to a new leader will not migrate the client id.
+async fn assert_new_leader_expire_client_id(client: &SimClient<TestCommand>) {
+    let err = client
+        .propose(TestCommand::new_get(vec![0]), true)
+        .await
+        .unwrap_err();
+    assert!(err.message().contains("Expired client ID"));
 }

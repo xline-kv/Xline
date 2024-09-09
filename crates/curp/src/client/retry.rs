@@ -266,6 +266,29 @@ where
         }
     }
 
+    #[cfg(madsim)]
+    /// Create a retry client, also returns client id for tests
+    pub(super) fn new_with_client_id(
+        inner: Api,
+        retry_config: RetryConfig,
+        keep_alive: KeepAlive,
+        fetch: Fetch,
+        cluster_state: ClusterState,
+    ) -> (Self, Arc<AtomicU64>) {
+        let cluster_state = Arc::new(ClusterStateShared::new(cluster_state, fetch.clone()));
+        let keep_alive_handle = keep_alive.spawn_keep_alive(Arc::clone(&cluster_state));
+        let client_id = keep_alive_handle.clone_client_id();
+        let retry = Self {
+            inner,
+            retry_config,
+            cluster_state,
+            keep_alive: keep_alive_handle,
+            fetch,
+            tracker: CmdTracker::default(),
+        };
+        (retry, client_id)
+    }
+
     /// Takes a function f and run retry.
     async fn retry<'a, R, F>(
         &'a self,

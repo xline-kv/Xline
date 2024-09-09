@@ -496,16 +496,20 @@ impl ClientBuilder {
         impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static,
         Arc<AtomicU64>,
     ) {
-        let state = Arc::new(self.init_state_builder().build());
-
-        let client = Retry::new(
-            Unary::new(Arc::clone(&state), self.init_unary_config()),
-            self.init_retry_config(),
-            Some(self.spawn_bg_tasks(Arc::clone(&state))),
+        let config = self.init_config(None);
+        let keep_alive = KeepAlive::new(*self.config.keep_alive_interval());
+        let fetch = Fetch::new(
+            *self.config.wait_synced_timeout(),
+            self.build_connect_to(None),
         );
-        let client_id = state.clone_client_id();
-
-        (client, client_id)
+        let cluster_state_init = self.connect_members(self.tls_config.as_ref());
+        Retry::new_with_client_id(
+            Unary::new(config),
+            self.init_retry_config(),
+            keep_alive,
+            fetch,
+            ClusterState::Init(cluster_state_init),
+        )
     }
 }
 
