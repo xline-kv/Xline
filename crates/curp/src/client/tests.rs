@@ -15,10 +15,11 @@ use super::{cluster_state::ClusterState, config::Config, unary::Unary};
 use crate::{
     client::{
         cluster_state::ClusterStateReady,
+        connect::RepeatableClientApi,
         fetch::Fetch,
         keep_alive::KeepAlive,
         retry::{Context, Retry, RetryConfig},
-        ClientApi, RepeatableClientApi,
+        ClientApi,
     },
     members::ServerId,
     rpc::{

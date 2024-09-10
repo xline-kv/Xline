@@ -12,9 +12,10 @@ use tracing::{debug, warn};
 use super::{
     cluster_state::{ClusterState, ClusterStateInit, ClusterStateReady},
     config::Config,
+    connect::{ProposeResponse, RepeatableClientApi},
     fetch::Fetch,
     keep_alive::{KeepAlive, KeepAliveHandle},
-    ClientApi, ProposeIdGuard, ProposeResponse, RepeatableClientApi,
+    ClientApi, ProposeIdGuard,
 };
 use crate::{
     members::ServerId,

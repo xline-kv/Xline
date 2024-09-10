@@ -7,7 +7,11 @@ use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use tracing::warn;
 
-use super::{config::Config, retry::Context, ProposeResponse, RepeatableClientApi};
+use super::{
+    config::Config,
+    connect::{ProposeResponse, RepeatableClientApi},
+    retry::Context,
+};
 use crate::{
     members::ServerId,
     rpc::{

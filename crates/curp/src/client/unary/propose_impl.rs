@@ -4,7 +4,7 @@ use curp_external_api::cmd::Command;
 use futures::{future, stream, FutureExt, Stream, StreamExt};
 
 use crate::{
-    client::{retry::Context, ProposeResponse},
+    client::{connect::ProposeResponse, retry::Context},
     quorum,
     rpc::{CurpError, OpResponse, ProposeRequest, RecordRequest, ResponseOp},
     super_quorum,
