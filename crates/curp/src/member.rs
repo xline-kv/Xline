@@ -110,6 +110,16 @@ impl Membership {
     pub(crate) fn as_joint(&self) -> Joint<BTreeSet<u64>, &[BTreeSet<u64>]> {
         Joint::new(self.members.as_slice())
     }
+
+    /// Gets the addresses of all members
+    pub(crate) fn members(&self) -> impl Iterator<Item = (u64, &String)> {
+        self.nodes.iter().filter_map(|(id, addr)| {
+            self.members
+                .iter()
+                .any(|m| m.contains(id))
+                .then_some((*id, addr))
+        })
+    }
 }
 
 /// The change of membership

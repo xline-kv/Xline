@@ -40,7 +40,7 @@ pub(crate) trait QuorumSet<I> {
 #[allow(clippy::arithmetic_side_effects)]
 impl<I> QuorumSet<I> for BTreeSet<u64>
 where
-    I: Iterator<Item = u64> + Clone,
+    I: IntoIterator<Item = u64> + Clone,
 {
     fn is_quorum(&self, ids: I) -> bool {
         let num = ids.into_iter().filter(|id| self.contains(id)).count();
@@ -60,7 +60,7 @@ where
 
 impl<I, QS> QuorumSet<I> for Joint<QS, Vec<QS>>
 where
-    I: Iterator<Item = u64> + Clone,
+    I: IntoIterator<Item = u64> + Clone,
     QS: QuorumSet<I>,
 {
     fn is_quorum(&self, ids: I) -> bool {
@@ -78,7 +78,7 @@ where
 
 impl<I, QS> QuorumSet<I> for Joint<QS, &[QS]>
 where
-    I: Iterator<Item = u64> + Clone,
+    I: IntoIterator<Item = u64> + Clone,
     QS: QuorumSet<I>,
 {
     fn is_quorum(&self, ids: I) -> bool {

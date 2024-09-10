@@ -1,9 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
-use futures::{stream::FuturesUnordered, Future};
+use futures::{stream::FuturesUnordered, Future, FutureExt, StreamExt};
 
 use crate::{
+    member::Membership,
     members::ServerId,
+    quorum::QuorumSet,
     rpc::{connect::ConnectApi, connects, CurpError},
 };
 
@@ -73,6 +75,8 @@ impl std::fmt::Debug for ClusterStateInit {
 /// The cluster state that is ready for client propose
 #[derive(Clone, Default)]
 pub(crate) struct ClusterStateReady {
+    /// The membership state
+    membership: Membership,
     /// Leader id.
     leader: ServerId,
     /// Term, initialize to 0, calibrated by the server.
@@ -112,6 +116,7 @@ impl ClusterStateReady {
         connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
     ) -> Self {
         Self {
+            membership: Membership::default(), // FIXME: build initial membership config
             leader,
             term,
             cluster_version,
@@ -157,6 +162,55 @@ impl ClusterStateReady {
             .map(Arc::clone)
             .map(f)
             .collect()
+    }
+
+    /// Execute an operation on each follower, until a quorum is reached.
+    ///
+    /// Parameters:
+    /// - f: Operation to execute on each follower's connection
+    /// - filter: Function to filter on each response
+    /// - quorum: Function to determine if a quorum is reached, use functions in `QuorumSet` trait
+    ///
+    /// Returns `true` if then given quorum is reached.
+    pub(crate) async fn for_each_follower_with_quorum<R, Fut: Future<Output = R>, F, Q>(
+        self,
+        mut f: impl FnMut(Arc<dyn ConnectApi>) -> Fut,
+        mut filter: F,
+        mut expect_quorum: Q,
+    ) -> bool
+    where
+        F: FnMut(R) -> bool,
+        Q: FnMut(&dyn QuorumSet<Vec<u64>>, Vec<u64>) -> bool,
+    {
+        let qs = self.membership.as_joint();
+        let leader_id = self.leader_id();
+
+        #[allow(clippy::pattern_type_mismatch)]
+        let stream: FuturesUnordered<_> = self
+            .member_connects()
+            .filter(|(id, _)| *id != leader_id)
+            .map(|(id, conn)| f(Arc::clone(conn)).map(move |r| (id, r)))
+            .collect();
+
+        let mut filtered =
+            stream.filter_map(|(id, r)| futures::future::ready(filter(r).then_some(id)));
+
+        let mut ids = vec![leader_id];
+        while let Some(id) = filtered.next().await {
+            ids.push(id);
+            if expect_quorum(&qs, ids.clone()) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Gets member connects
+    fn member_connects(&self) -> impl Iterator<Item = (u64, &Arc<dyn ConnectApi>)> {
+        self.membership
+            .members()
+            .filter_map(|(id, _)| self.connects.get(&id).map(|c| (id, c)))
     }
 
     /// Returns the quorum size based on the given quorum function

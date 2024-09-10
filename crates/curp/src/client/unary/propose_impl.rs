@@ -1,13 +1,12 @@
-use std::pin::Pin;
+use std::{pin::Pin, sync::Arc};
 
 use curp_external_api::cmd::Command;
 use futures::{future, stream, FutureExt, Stream, StreamExt};
 
 use crate::{
     client::{connect::ProposeResponse, retry::Context},
-    quorum,
-    rpc::{CurpError, OpResponse, ProposeRequest, RecordRequest, ResponseOp},
-    super_quorum,
+    quorum::QuorumSet,
+    rpc::{connect::ConnectApi, CurpError, OpResponse, ProposeRequest, RecordRequest, ResponseOp},
 };
 
 use super::Unary;
@@ -164,17 +163,16 @@ impl<C: Command> Unary<C> {
     /// Returns `true` if the read index is successful
     async fn send_read_index(&self, ctx: &Context) -> bool {
         let term = ctx.cluster_state().term();
-        let quorum = ctx.cluster_state().get_quorum(quorum);
-        let expect = quorum.wrapping_sub(1);
         let timeout = self.config.propose_timeout();
+        let read_index =
+            move |conn: Arc<dyn ConnectApi>| async move { conn.read_index(timeout).await };
 
         ctx.cluster_state()
-            .for_each_follower(|conn| async move { conn.read_index(timeout).await })
-            .filter_map(|res| future::ready(res.ok()))
-            .filter(|resp| future::ready(resp.get_ref().term == term))
-            .take(expect)
-            .count()
-            .map(|c| c >= expect)
+            .for_each_follower_with_quorum(
+                read_index,
+                move |res| res.is_ok_and(|resp| resp.get_ref().term == term),
+                |qs, ids| QuorumSet::is_quorum(qs, ids),
+            )
             .await
     }
 
@@ -182,23 +180,21 @@ impl<C: Command> Unary<C> {
     ///
     /// Returns a stream that yield a single event
     fn send_record(&self, cmd: &C, ctx: &Context) -> EventStream<'_, C> {
-        let superquorum = ctx.cluster_state().get_quorum(super_quorum);
         let timeout = self.config.propose_timeout();
         let record_req = RecordRequest::new::<C>(ctx.propose_id(), cmd);
-        let expect = superquorum.wrapping_sub(1);
+        let record = move |conn: Arc<dyn ConnectApi>| {
+            let record_req_c = record_req.clone();
+            async move { conn.record(record_req_c, timeout).await }
+        };
+
         let stream = ctx
             .cluster_state()
-            .for_each_follower(|conn| {
-                let record_req_c = record_req.clone();
-                async move { conn.record(record_req_c, timeout).await }
-            })
-            .filter_map(|res| future::ready(res.ok()))
-            .filter(|resp| future::ready(!resp.get_ref().conflict))
-            .take(expect)
-            .count()
-            .map(move |c| ProposeEvent::Record {
-                conflict: c < expect,
-            })
+            .for_each_follower_with_quorum(
+                record,
+                |res| res.is_ok_and(|resp| !resp.get_ref().conflict),
+                |qs, ids| QuorumSet::is_super_quorum(qs, ids),
+            )
+            .map(move |conflict| ProposeEvent::Record { conflict })
             .map(Ok)
             .into_stream();
 

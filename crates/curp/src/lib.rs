@@ -212,15 +212,6 @@ mod member;
 /// Quorum definitions
 mod quorum;
 
-/// Calculate the super quorum
-#[inline]
-#[must_use]
-#[allow(clippy::arithmetic_side_effects)] // it's safe
-fn super_quorum(size: usize) -> usize {
-    let fault_tolerance = size - quorum(size);
-    fault_tolerance + recover_quorum(size)
-}
-
 /// Calculate the quorum
 #[inline]
 #[must_use]
@@ -259,7 +250,6 @@ mod test {
         for (node_cnt, expected) in nodes.into_iter().zip(expected_res.into_iter()) {
             assert_eq!(quorum(node_cnt), expected.0);
             assert_eq!(recover_quorum(node_cnt), expected.1);
-            assert_eq!(super_quorum(node_cnt), expected.2);
         }
     }
 }
