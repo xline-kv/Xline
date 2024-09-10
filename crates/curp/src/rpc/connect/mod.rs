@@ -51,8 +51,8 @@ use crate::{
 use super::{
     proto::commandpb::{ReadIndexRequest, ReadIndexResponse},
     reconnect::Reconnect,
-    AddLearnerRequest, AddLearnerResponse, OpResponse, RecordRequest, RecordResponse,
-    RemoveLearnerRequest, RemoveLearnerResponse,
+    AddLearnerRequest, AddLearnerResponse, FetchMembershipRequest, FetchMembershipResponse,
+    OpResponse, RecordRequest, RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse,
 };
 
 /// Install snapshot chunk size: 64KB
@@ -237,6 +237,13 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
 
     /// Keep send lease keep alive to server and mutate the client id
     async fn lease_keep_alive(&self, client_id: u64, interval: Duration) -> Result<u64, CurpError>;
+
+    /// Fetches the membership
+    async fn fetch_membership(
+        &self,
+        request: FetchMembershipRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError>;
 
     /// Add a learner to the cluster.
     async fn add_learner(
@@ -555,6 +562,16 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         Ok(new_id)
     }
 
+    async fn fetch_membership(
+        &self,
+        request: FetchMembershipRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
+        let mut client = self.rpc_connect.clone();
+        let req = tonic::Request::new(request);
+        with_timeout!(timeout, client.fetch_membership(req)).map_err(Into::into)
+    }
+
     async fn add_learner(
         &self,
         request: AddLearnerRequest,
@@ -869,6 +886,17 @@ where
         info!("client_id update to {new_id}");
 
         Ok(new_id)
+    }
+
+    async fn fetch_membership(
+        &self,
+        request: FetchMembershipRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
+        req.metadata_mut().inject_current();
+        self.server.fetch_membership(req).await.map_err(Into::into)
     }
 
     async fn add_learner(

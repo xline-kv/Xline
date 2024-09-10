@@ -8,11 +8,11 @@ use crate::{
     members::ServerId,
     rpc::{
         connect::ConnectApi, AddLearnerRequest, AddLearnerResponse, CurpError, FetchClusterRequest,
-        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse, MoveLeaderRequest,
-        MoveLeaderResponse, OpResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
-        ProposeRequest, PublishRequest, PublishResponse, ReadIndexResponse, RecordRequest,
-        RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse, ShutdownRequest,
-        ShutdownResponse,
+        FetchClusterResponse, FetchMembershipRequest, FetchMembershipResponse,
+        FetchReadStateRequest, FetchReadStateResponse, MoveLeaderRequest, MoveLeaderResponse,
+        OpResponse, ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest,
+        PublishRequest, PublishResponse, ReadIndexResponse, RecordRequest, RecordResponse,
+        RemoveLearnerRequest, RemoveLearnerResponse, ShutdownRequest, ShutdownResponse,
     },
 };
 
@@ -181,6 +181,15 @@ impl<C: ConnectApi> ConnectApi for Reconnect<C> {
             result = connect_ref.lease_keep_alive(client_id, interval) => result,
             _empty = self.event.listen() => Err(CurpError::RpcTransport(())),
         }
+    }
+
+    /// Fetches the membership
+    async fn fetch_membership(
+        &self,
+        request: FetchMembershipRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
+        execute_with_reconnect!(self, ConnectApi::fetch_membership, request, timeout)
     }
 
     /// Add a learner to the cluster.

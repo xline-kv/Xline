@@ -155,10 +155,11 @@ mod tests {
     use crate::rpc::{
         connect::{ConnectApi, MockConnectApi},
         AddLearnerRequest, AddLearnerResponse, CurpError, FetchClusterRequest,
-        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse, Member,
-        MoveLeaderRequest, MoveLeaderResponse, OpResponse, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeId, ProposeRequest, ProposeResponse, PublishRequest,
-        PublishResponse, ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
+        FetchClusterResponse, FetchMembershipRequest, FetchMembershipResponse,
+        FetchReadStateRequest, FetchReadStateResponse, Member, MoveLeaderRequest,
+        MoveLeaderResponse, OpResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
+        ProposeId, ProposeRequest, ProposeResponse, PublishRequest, PublishResponse,
+        ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
         RemoveLearnerResponse, ResponseOp, ShutdownRequest, ShutdownResponse, SyncedResponse,
     };
 
@@ -276,6 +277,14 @@ mod tests {
             _interval: Duration,
         ) -> Result<u64, CurpError> {
             (self.lease_keep_alive_handle)(client_id).await
+        }
+
+        async fn fetch_membership(
+            &self,
+            _request: FetchMembershipRequest,
+            _timeout: Duration,
+        ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
+            unreachable!("please use MockedConnectApi")
         }
 
         async fn add_learner(
