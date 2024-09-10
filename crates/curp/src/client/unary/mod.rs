@@ -15,8 +15,8 @@ use super::{
 use crate::{
     members::ServerId,
     rpc::{
-        AddLearnerRequest, CurpError, FetchReadStateRequest, MoveLeaderRequest, PublishRequest,
-        ReadState, RemoveLearnerRequest, ShutdownRequest,
+        AddLearnerRequest, AddMemberRequest, CurpError, FetchReadStateRequest, MoveLeaderRequest,
+        PublishRequest, ReadState, RemoveLearnerRequest, RemoveMemberRequest, ShutdownRequest,
     },
 };
 
@@ -151,6 +151,30 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         let _ig = ctx
             .cluster_state()
             .map_leader(|conn| async move { conn.remove_learner(req, timeout).await })
+            .await?;
+
+        Ok(())
+    }
+
+    /// Add some members to the cluster.
+    async fn add_member(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error> {
+        let req = AddMemberRequest { node_ids: ids };
+        let timeout = self.config.wait_synced_timeout();
+        let _ig = ctx
+            .cluster_state()
+            .map_leader(|conn| async move { conn.add_member(req, timeout).await })
+            .await?;
+
+        Ok(())
+    }
+
+    /// Add some members to the cluster.
+    async fn remove_member(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error> {
+        let req = RemoveMemberRequest { node_ids: ids };
+        let timeout = self.config.wait_synced_timeout();
+        let _ig = ctx
+            .cluster_state()
+            .map_leader(|conn| async move { conn.remove_member(req, timeout).await })
             .await?;
 
         Ok(())

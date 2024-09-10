@@ -37,12 +37,13 @@ use crate::{
             commandpb::protocol_client::ProtocolClient,
             inner_messagepb::inner_protocol_client::InnerProtocolClient,
         },
-        AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchClusterRequest,
-        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
-        MoveLeaderResponse, ProposeRequest, Protocol, PublishRequest, PublishResponse,
-        ShutdownRequest, ShutdownResponse, TriggerShutdownRequest, TryBecomeLeaderNowRequest,
-        VoteRequest, VoteResponse,
+        AddMemberRequest, AddMemberResponse, AppendEntriesRequest, AppendEntriesResponse,
+        CurpError, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
+        FetchReadStateResponse, InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg,
+        MoveLeaderRequest, MoveLeaderResponse, ProposeRequest, Protocol, PublishRequest,
+        PublishResponse, RemoveMemberRequest, RemoveMemberResponse, ShutdownRequest,
+        ShutdownResponse, TriggerShutdownRequest, TryBecomeLeaderNowRequest, VoteRequest,
+        VoteResponse,
     },
     server::StreamingProtocol,
     snapshot::Snapshot,
@@ -251,6 +252,20 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         request: RemoveLearnerRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError>;
+
+    /// Add a learner to the cluster.
+    async fn add_member(
+        &self,
+        request: AddMemberRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<AddMemberResponse>, CurpError>;
+
+    /// Remove a learner from the cluster.
+    async fn remove_member(
+        &self,
+        request: RemoveMemberRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<RemoveMemberResponse>, CurpError>;
 }
 
 /// Inner Connect interface among different servers
@@ -563,6 +578,29 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         req.metadata_mut().inject_current();
         with_timeout!(timeout, client.remove_learner(req)).map_err(Into::into)
     }
+
+    async fn add_member(
+        &self,
+        request: AddMemberRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<AddMemberResponse>, CurpError> {
+        let mut client = self.rpc_connect.clone();
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_current();
+        with_timeout!(timeout, client.add_member(req)).map_err(Into::into)
+    }
+
+    /// Remove a learner from the cluster.
+    async fn remove_member(
+        &self,
+        request: RemoveMemberRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<RemoveMemberResponse>, CurpError> {
+        let mut client = self.rpc_connect.clone();
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_current();
+        with_timeout!(timeout, client.remove_member(req)).map_err(Into::into)
+    }
 }
 
 #[allow(clippy::let_and_return)] // for metrics
@@ -874,6 +912,29 @@ where
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.remove_learner(req).await.map_err(Into::into)
+    }
+
+    async fn add_member(
+        &self,
+        request: AddMemberRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<AddMemberResponse>, CurpError> {
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
+        req.metadata_mut().inject_current();
+        self.server.add_member(req).await.map_err(Into::into)
+    }
+
+    /// Remove a learner from the cluster.
+    async fn remove_member(
+        &self,
+        request: RemoveMemberRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<RemoveMemberResponse>, CurpError> {
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
+        req.metadata_mut().inject_current();
+        self.server.remove_member(req).await.map_err(Into::into)
     }
 }
 

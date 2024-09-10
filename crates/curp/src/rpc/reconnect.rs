@@ -7,11 +7,12 @@ use futures::Stream;
 use crate::{
     members::ServerId,
     rpc::{
-        connect::ConnectApi, AddLearnerRequest, AddLearnerResponse, CurpError, FetchClusterRequest,
-        FetchClusterResponse, FetchMembershipRequest, FetchMembershipResponse,
-        FetchReadStateRequest, FetchReadStateResponse, MoveLeaderRequest, MoveLeaderResponse,
-        OpResponse, ProposeRequest, PublishRequest, PublishResponse, ReadIndexResponse,
-        RecordRequest, RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse,
+        connect::ConnectApi, AddLearnerRequest, AddLearnerResponse, AddMemberRequest,
+        AddMemberResponse, CurpError, FetchClusterRequest, FetchClusterResponse,
+        FetchMembershipRequest, FetchMembershipResponse, FetchReadStateRequest,
+        FetchReadStateResponse, MoveLeaderRequest, MoveLeaderResponse, OpResponse, ProposeRequest,
+        PublishRequest, PublishResponse, ReadIndexResponse, RecordRequest, RecordResponse,
+        RemoveLearnerRequest, RemoveLearnerResponse, RemoveMemberRequest, RemoveMemberResponse,
         ShutdownRequest, ShutdownResponse,
     },
 };
@@ -199,5 +200,23 @@ impl<C: ConnectApi> ConnectApi for Reconnect<C> {
         timeout: Duration,
     ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
         execute_with_reconnect!(self, ConnectApi::remove_learner, request, timeout)
+    }
+
+    /// Add a learner to the cluster.
+    async fn add_member(
+        &self,
+        request: AddMemberRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<AddMemberResponse>, CurpError> {
+        execute_with_reconnect!(self, ConnectApi::add_member, request, timeout)
+    }
+
+    /// Remove a learner from the cluster.
+    async fn remove_member(
+        &self,
+        request: RemoveMemberRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<RemoveMemberResponse>, CurpError> {
+        execute_with_reconnect!(self, ConnectApi::remove_member, request, timeout)
     }
 }

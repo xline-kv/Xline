@@ -468,6 +468,18 @@ where
         self.retry::<_, _>(|client, ctx| client.remove_learner(ids.clone(), ctx))
             .await
     }
+
+    /// Add some members to the cluster.
+    async fn add_member(&self, ids: Vec<u64>) -> Result<(), Self::Error> {
+        self.retry::<_, _>(|client, ctx| client.add_member(ids.clone(), ctx))
+            .await
+    }
+
+    /// Add some members to the cluster.
+    async fn remove_member(&self, ids: Vec<u64>) -> Result<(), Self::Error> {
+        self.retry::<_, _>(|client, ctx| client.remove_member(ids.clone(), ctx))
+            .await
+    }
 }
 
 /// Tests for backoff

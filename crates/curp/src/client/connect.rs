@@ -83,6 +83,12 @@ pub trait ClientApi {
 
     /// Remove some learners from the cluster.
     async fn remove_learner(&self, ids: Vec<u64>) -> Result<(), Self::Error>;
+
+    /// Add some members to the cluster.
+    async fn add_member(&self, ids: Vec<u64>) -> Result<(), Self::Error>;
+
+    /// Add some members to the cluster.
+    async fn remove_member(&self, ids: Vec<u64>) -> Result<(), Self::Error>;
 }
 
 /// This trait override some unrepeatable methods in ClientApi, and a client with this trait will be able to retry.
@@ -131,4 +137,10 @@ pub(crate) trait RepeatableClientApi {
 
     /// Remove some learners from the cluster.
     async fn remove_learner(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error>;
+
+    /// Add some members to the cluster.
+    async fn add_member(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error>;
+
+    /// Remove some members from the cluster.
+    async fn remove_member(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error>;
 }
