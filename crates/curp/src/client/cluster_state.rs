@@ -124,6 +124,22 @@ impl ClusterStateReady {
         }
     }
 
+    /// Creates a new `ClusterState`
+    pub(crate) fn new_membership(
+        leader: ServerId,
+        term: u64,
+        connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
+        membership: Membership,
+    ) -> Self {
+        Self {
+            membership,
+            leader,
+            term,
+            cluster_version: 0,
+            connects,
+        }
+    }
+
     /// Take an async function and map to the dedicated server, return None
     /// if the server can not found in local state
     pub(crate) fn map_server<R, F: Future<Output = Result<R, CurpError>>>(

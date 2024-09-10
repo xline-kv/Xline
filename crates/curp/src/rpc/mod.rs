@@ -65,7 +65,7 @@ pub use self::proto::{
     },
     inner_messagepb::inner_protocol_server::InnerProtocolServer,
 };
-use crate::{cmd::Command, log_entry::LogEntry, members::ServerId, LogIndex};
+use crate::{cmd::Command, log_entry::LogEntry, member::Membership, members::ServerId, LogIndex};
 
 /// Metrics
 #[cfg(feature = "client-metrics")]
@@ -949,5 +949,19 @@ impl std::fmt::Display for ProposeId {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}#{}", self.0, self.1)
+    }
+}
+
+impl FetchMembershipResponse {
+    /// Consumes self and returns a `Membership`
+    pub(crate) fn into_membership(self) -> Membership {
+        let Self { members, nodes, .. } = self;
+        Membership {
+            members: members
+                .into_iter()
+                .map(|m| m.set.into_iter().collect())
+                .collect(),
+            nodes: nodes.into_iter().map(|n| (n.node_id, n.addr)).collect(),
+        }
     }
 }

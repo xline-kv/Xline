@@ -9,7 +9,10 @@ use utils::parking_lot_lock::RwLockMap;
 
 use crate::{
     quorum,
-    rpc::{self, connect::ConnectApi, CurpError, FetchClusterRequest, FetchClusterResponse},
+    rpc::{
+        self, connect::ConnectApi, CurpError, FetchClusterRequest, FetchClusterResponse,
+        FetchMembershipRequest, FetchMembershipResponse,
+    },
 };
 
 use super::cluster_state::{ClusterState, ClusterStateReady, ForEachServer};
@@ -35,6 +38,30 @@ where
         + 'static,
 {
     fn clone_box(&self) -> Box<dyn ConnectToCluster> {
+        Box::new(self.clone())
+    }
+}
+
+/// Connect to cluster
+///
+/// This is used to build a boxed closure that handles the `FetchClusterResponse` and returns
+/// new connections.
+pub(super) trait ConnectToClusterNew:
+    Fn(&FetchMembershipResponse) -> HashMap<u64, Arc<dyn ConnectApi>> + Send + Sync + 'static
+{
+    /// Clone the value
+    fn clone_box(&self) -> Box<dyn ConnectToClusterNew>;
+}
+
+impl<T> ConnectToClusterNew for T
+where
+    T: Fn(&FetchMembershipResponse) -> HashMap<u64, Arc<dyn ConnectApi>>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    fn clone_box(&self) -> Box<dyn ConnectToClusterNew> {
         Box::new(self.clone())
     }
 }
@@ -65,6 +92,12 @@ impl Fetch {
         }
     }
 
+    #[allow(clippy::unimplemented)] // FIXME: implement this
+    /// Creates a new `Fetch`
+    pub(crate) fn new_membership<C: ConnectToClusterNew>(timeout: Duration, connect_to: C) -> Self {
+        unimplemented!()
+    }
+
     #[cfg(test)]
     /// Creates a new `Fetch` fetch disabled
     pub(crate) fn new_disable() -> Self {
@@ -93,6 +126,29 @@ impl Fetch {
             new_connects,
         );
 
+        if self.fetch_term(&new_state).await {
+            return Ok((new_state, resp));
+        }
+
+        Err(CurpError::internal("cluster not available"))
+    }
+
+    #[allow(clippy::diverging_sub_expression, clippy::todo)] // FIXME: implement
+    /// Fetch cluster and updates the current state
+    pub(crate) async fn fetch_membership(
+        &self,
+        state: impl ForEachServer,
+    ) -> Result<(ClusterStateReady, FetchMembershipResponse), CurpError> {
+        let resp = self
+            .pre_fetch_membership(&state)
+            .await
+            .ok_or(CurpError::internal("cluster not available"))?;
+        let new_state = ClusterStateReady::new_membership(
+            resp.leader_id,
+            resp.term,
+            todo!("call connect"),
+            resp.into_membership(),
+        );
         if self.fetch_term(&new_state).await {
             return Ok((new_state, resp));
         }
@@ -135,6 +191,27 @@ impl Fetch {
         responses
             .into_iter()
             .filter(|resp| resp.leader_id.is_some())
+            .filter(|resp| !resp.members.is_empty())
+            .max_by(|x, y| x.term.cmp(&y.term))
+    }
+
+    /// Prefetch, send fetch cluster request to the cluster and get the
+    /// config with the greatest quorum.
+    async fn pre_fetch_membership(
+        &self,
+        state: &impl ForEachServer,
+    ) -> Option<FetchMembershipResponse> {
+        let timeout = self.timeout;
+        let requests = state.for_each_server(|c| async move {
+            c.fetch_membership(FetchMembershipRequest {}, timeout).await
+        });
+        let responses: Vec<_> = requests
+            .filter_map(|r| future::ready(r.ok()))
+            .map(Response::into_inner)
+            .collect()
+            .await;
+        responses
+            .into_iter()
             .filter(|resp| !resp.members.is_empty())
             .max_by(|x, y| x.term.cmp(&y.term))
     }
