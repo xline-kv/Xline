@@ -244,8 +244,7 @@ impl Client {
         let curp_client = Arc::new(
             CurpClientBuilder::new(options.client_config, false)
                 .tls_config(options.tls_config)
-                .discover_from(addrs)
-                .await?
+                .init_nodes(addrs.into_iter().map(|addr| vec![addr]))
                 .build::<Command>()?,
         ) as Arc<CurpClient>;
         let id_gen = Arc::new(lease_gen::LeaseIdGenerator::new());

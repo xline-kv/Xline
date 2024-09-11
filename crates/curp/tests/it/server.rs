@@ -437,7 +437,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_leader()
     // build a client and set a wrong leader id
     let client = ClientBuilder::new(ClientConfig::default(), true)
         .leader_state(follower_id, 0)
-        .all_members(group.all_addrs_map())
+        .init_nodes(group.all_addrs_map().values().cloned())
         .build::<TestCommand>()
         .unwrap();
     client.propose_shutdown().await.unwrap();
