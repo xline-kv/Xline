@@ -1,10 +1,9 @@
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
-use tracing::debug;
 
 use crate::{
     members::ServerId,
-    rpc::{FetchClusterResponse, ReadState},
+    rpc::{FetchMembershipResponse, ReadState},
 };
 
 use super::retry::Context;
@@ -55,27 +54,17 @@ pub trait ClientApi {
     /// know who the leader is.)
     ///
     /// Note: The fetched cluster may still be outdated if `linearizable` is false
-    async fn fetch_cluster(&self, linearizable: bool) -> Result<FetchClusterResponse, Self::Error>;
+    async fn fetch_cluster(
+        &self,
+        linearizable: bool,
+    ) -> Result<FetchMembershipResponse, Self::Error>;
 
     /// Fetch leader id
     #[inline]
     async fn fetch_leader_id(&self, linearizable: bool) -> Result<ServerId, Self::Error> {
-        if linearizable {
-            let resp = self.fetch_cluster(true).await?;
-            return Ok(resp
-                .leader_id
-                .unwrap_or_else(|| {
-                    unreachable!("linearizable fetch cluster should return a leader id")
-                })
-                .into());
-        }
-        let resp = self.fetch_cluster(false).await?;
-        if let Some(id) = resp.leader_id {
-            return Ok(id.into());
-        }
-        debug!("no leader id in FetchClusterResponse, try to send linearizable request");
-        // fallback to linearizable fetch
-        self.fetch_leader_id(true).await
+        self.fetch_cluster(linearizable)
+            .await
+            .map(|resp| resp.leader_id)
     }
 
     /// Add some learners to the cluster.
