@@ -81,8 +81,6 @@ pub(crate) struct ClusterStateReady {
     leader: ServerId,
     /// Term, initialize to 0, calibrated by the server.
     term: u64,
-    /// Cluster version, initialize to 0, calibrated by the server.
-    cluster_version: u64,
     /// Members' connect, calibrated by the server.
     connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
 }
@@ -92,7 +90,6 @@ impl std::fmt::Debug for ClusterStateReady {
         f.debug_struct("State")
             .field("leader", &self.leader)
             .field("term", &self.term)
-            .field("cluster_version", &self.cluster_version)
             .field("connects", &self.connects.keys())
             .finish()
     }
@@ -112,22 +109,6 @@ impl ClusterStateReady {
     pub(crate) fn new(
         leader: ServerId,
         term: u64,
-        cluster_version: u64,
-        connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
-    ) -> Self {
-        Self {
-            membership: Membership::default(), // FIXME: build initial membership config
-            leader,
-            term,
-            cluster_version,
-            connects,
-        }
-    }
-
-    /// Creates a new `ClusterState`
-    pub(crate) fn new_membership(
-        leader: ServerId,
-        term: u64,
         connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
         membership: Membership,
     ) -> Self {
@@ -135,7 +116,6 @@ impl ClusterStateReady {
             membership,
             leader,
             term,
-            cluster_version: 0,
             connects,
         }
     }
@@ -241,11 +221,6 @@ impl ClusterStateReady {
     /// Returns the term of the cluster
     pub(crate) fn term(&self) -> u64 {
         self.term
-    }
-
-    /// Returns the cluster version
-    pub(crate) fn cluster_version(&self) -> u64 {
-        self.cluster_version
     }
 
     /// Returns the leader id

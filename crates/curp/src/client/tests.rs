@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -21,6 +21,7 @@ use crate::{
         retry::{Context, Retry, RetryConfig},
         ClientApi,
     },
+    member::Membership,
     members::ServerId,
     rpc::{
         connect::{ConnectApi, MockConnectApi},
@@ -83,6 +84,12 @@ fn build_empty_response() -> OpResponse {
     OpResponse { op: None }
 }
 
+fn build_default_membership() -> Membership {
+    let members = (0..5).collect::<BTreeSet<_>>();
+    let nodes = members.iter().map(|id| (*id, format!("{id}"))).collect();
+    Membership::new(vec![members], nodes)
+}
+
 #[traced_test]
 #[tokio::test]
 async fn test_unary_propose_fast_path_works() {
@@ -108,7 +115,7 @@ async fn test_unary_propose_fast_path_works() {
         });
     });
     let unary = init_unary_client(None, None);
-    let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+    let cluster_state = ClusterStateReady::new(0, 1, connects, build_default_membership());
     let ctx = Context::new(ProposeId::default(), 0, cluster_state);
     let res = unary
         .propose(&TestCommand::new_put(vec![1], 1), None, true, ctx)
@@ -144,7 +151,7 @@ async fn test_unary_propose_slow_path_works() {
     });
 
     let unary = init_unary_client(None, None);
-    let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+    let cluster_state = ClusterStateReady::new(0, 1, connects, build_default_membership());
     let ctx = Context::new(ProposeId::default(), 0, cluster_state);
     let start_at = Instant::now();
     let res = unary
@@ -190,7 +197,7 @@ async fn test_unary_propose_fast_path_fallback_slow_path() {
     });
 
     let unary = init_unary_client(None, None);
-    let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+    let cluster_state = ClusterStateReady::new(0, 1, connects, build_default_membership());
     let ctx = Context::new(ProposeId::default(), 0, cluster_state);
     let start_at = Instant::now();
     let res = unary
@@ -238,7 +245,7 @@ async fn test_unary_propose_return_early_err() {
         });
 
         let unary = init_unary_client(None, None);
-        let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+        let cluster_state = ClusterStateReady::new(0, 1, connects, build_default_membership());
         let ctx = Context::new(ProposeId::default(), 0, cluster_state);
         let err = unary
             .propose(&TestCommand::new_put(vec![1], 1), None, true, ctx)
@@ -277,7 +284,7 @@ async fn test_retry_propose_return_no_retry_error() {
         });
 
         let unary = init_unary_client(None, None);
-        let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+        let cluster_state = ClusterStateReady::new(0, 1, connects, build_default_membership());
         let retry = Retry::new(
             unary,
             RetryConfig::new_fixed(Duration::from_millis(100), 5),
@@ -330,7 +337,7 @@ async fn test_retry_propose_return_retry_error() {
                 .returning(move |_req, _timeout| Err(err.clone()));
         });
         let unary = init_unary_client(None, None);
-        let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+        let cluster_state = ClusterStateReady::new(0, 1, connects, build_default_membership());
         let retry = Retry::new(
             unary,
             RetryConfig::new_fixed(Duration::from_millis(10), 5),
@@ -372,7 +379,7 @@ async fn test_read_index_success() {
     });
 
     let unary = init_unary_client(None, None);
-    let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+    let cluster_state = ClusterStateReady::new(0, 1, connects, build_default_membership());
     let ctx = Context::new(ProposeId::default(), 0, cluster_state);
     let res = unary
         .propose(&TestCommand::default(), None, true, ctx)
@@ -407,7 +414,7 @@ async fn test_read_index_fail() {
         });
     });
     let unary = init_unary_client(None, None);
-    let cluster_state = ClusterStateReady::new(0, 1, 0, connects);
+    let cluster_state = ClusterStateReady::new(0, 1, connects, build_default_membership());
     let ctx = Context::new(ProposeId::default(), 0, cluster_state);
     let res = unary
         .propose(&TestCommand::default(), None, true, ctx)
