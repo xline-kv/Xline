@@ -1,4 +1,4 @@
-use anyhow::{Ok, Result};
+use anyhow::Result;
 use opentelemetry::global;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
@@ -6,7 +6,9 @@ use opentelemetry_sdk::runtime::Tokio;
 use tracing::warn;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::{fmt::format, util::SubscriberInitExt, Layer};
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{fmt::format, Layer};
 use utils::config::{file_appender, LogConfig, RotationConfig, TraceConfig};
 
 /// Return a Box trait from the config
@@ -66,16 +68,19 @@ pub fn init_subscriber(
         .with_filter(tracing_subscriber::EnvFilter::from_default_env());
     let writer = generate_writer(name, log_config);
     let (non_blocking, guard) = tracing_appender::non_blocking(writer);
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::default().add_directive((*log_config.level()).into()));
     let log_layer = tracing_subscriber::fmt::layer()
         .event_format(format().compact())
         .with_writer(non_blocking)
         .with_ansi(false)
-        .with_filter(*log_config.level());
+        .with_filter(filter);
+
     tracing_subscriber::registry()
         .with(jaeger_fmt_layer)
         .with(jaeger_online_layer)
         .with(jaeger_offline_layer)
         .with(log_layer)
         .try_init()?;
-    Ok(Some(guard))
+    anyhow::Ok(Some(guard))
 }
