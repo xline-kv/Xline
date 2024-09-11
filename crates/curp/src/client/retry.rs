@@ -19,7 +19,7 @@ use super::{
 };
 use crate::{
     members::ServerId,
-    rpc::{CurpError, FetchClusterResponse, ReadState, Redirect, ProposeId, FetchMembershipResponse}, tracker::Tracker,
+    rpc::{CurpError, ReadState, Redirect, ProposeId, FetchMembershipResponse}, tracker::Tracker,
 };
 
 /// Backoff config

@@ -4,10 +4,10 @@ use curp::{
     cmd::PbCodec,
     rpc::{
         AddLearnerRequest, AddLearnerResponse, AddMemberRequest, AddMemberResponse,
-        FetchClusterRequest, FetchClusterResponse, FetchMembershipRequest, FetchMembershipResponse,
-        FetchReadStateRequest, FetchReadStateResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
-        MoveLeaderResponse, OpResponse, ProposeRequest, Protocol, PublishRequest, PublishResponse,
-        ReadIndexRequest, ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
+        FetchMembershipRequest, FetchMembershipResponse, FetchReadStateRequest,
+        FetchReadStateResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse,
+        OpResponse, ProposeRequest, Protocol, PublishRequest, PublishResponse, ReadIndexRequest,
+        ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
         RemoveLearnerResponse, RemoveMemberRequest, RemoveMemberResponse, ShutdownRequest,
         ShutdownResponse,
     },
@@ -87,13 +87,6 @@ impl Protocol for AuthWrapper {
         request: tonic::Request<PublishRequest>,
     ) -> Result<tonic::Response<PublishResponse>, tonic::Status> {
         self.curp_server.publish(request).await
-    }
-
-    async fn fetch_cluster(
-        &self,
-        request: tonic::Request<FetchClusterRequest>,
-    ) -> Result<tonic::Response<FetchClusterResponse>, tonic::Status> {
-        self.curp_server.fetch_cluster(request).await
     }
 
     async fn fetch_read_state(

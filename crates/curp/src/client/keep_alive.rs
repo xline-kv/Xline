@@ -157,12 +157,12 @@ mod tests {
         rpc::{
             connect::{ConnectApi, MockConnectApi},
             AddLearnerRequest, AddLearnerResponse, AddMemberRequest, AddMemberResponse, CurpError,
-            FetchClusterRequest, FetchClusterResponse, FetchMembershipRequest,
-            FetchMembershipResponse, FetchReadStateRequest, FetchReadStateResponse, Member,
-            MoveLeaderRequest, MoveLeaderResponse, OpResponse, ProposeId, ProposeRequest,
-            ProposeResponse, PublishRequest, PublishResponse, ReadIndexResponse, RecordRequest,
-            RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse, RemoveMemberRequest,
-            RemoveMemberResponse, ResponseOp, ShutdownRequest, ShutdownResponse, SyncedResponse,
+            FetchMembershipRequest, FetchMembershipResponse, FetchReadStateRequest,
+            FetchReadStateResponse, Member, MoveLeaderRequest, MoveLeaderResponse, OpResponse,
+            ProposeId, ProposeRequest, ProposeResponse, PublishRequest, PublishResponse,
+            ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
+            RemoveLearnerResponse, RemoveMemberRequest, RemoveMemberResponse, ResponseOp,
+            ShutdownRequest, ShutdownResponse, SyncedResponse,
         },
     };
 
@@ -230,20 +230,6 @@ mod tests {
             _timeout: Duration,
         ) -> Result<tonic::Response<ShutdownResponse>, CurpError> {
             unreachable!("please use MockedConnectApi")
-        }
-
-        /// Send `FetchClusterRequest`
-        async fn fetch_cluster(
-            &self,
-            _request: FetchClusterRequest,
-            _timeout: Duration,
-        ) -> Result<tonic::Response<FetchClusterResponse>, CurpError> {
-            let members = (0..5)
-                .into_iter()
-                .map(|id| Member::new(id, format!("{id}"), vec![], vec![], false))
-                .collect();
-            let resp = FetchClusterResponse::new(Some(0), 1, 1, members, 1);
-            Ok(tonic::Response::new(resp))
         }
 
         /// Send `FetchReadStateRequest`

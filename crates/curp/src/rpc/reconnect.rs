@@ -8,12 +8,11 @@ use crate::{
     members::ServerId,
     rpc::{
         connect::ConnectApi, AddLearnerRequest, AddLearnerResponse, AddMemberRequest,
-        AddMemberResponse, CurpError, FetchClusterRequest, FetchClusterResponse,
-        FetchMembershipRequest, FetchMembershipResponse, FetchReadStateRequest,
-        FetchReadStateResponse, MoveLeaderRequest, MoveLeaderResponse, OpResponse, ProposeRequest,
-        PublishRequest, PublishResponse, ReadIndexResponse, RecordRequest, RecordResponse,
-        RemoveLearnerRequest, RemoveLearnerResponse, RemoveMemberRequest, RemoveMemberResponse,
-        ShutdownRequest, ShutdownResponse,
+        AddMemberResponse, CurpError, FetchMembershipRequest, FetchMembershipResponse,
+        FetchReadStateRequest, FetchReadStateResponse, MoveLeaderRequest, MoveLeaderResponse,
+        OpResponse, ProposeRequest, PublishRequest, PublishResponse, ReadIndexResponse,
+        RecordRequest, RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse,
+        RemoveMemberRequest, RemoveMemberResponse, ShutdownRequest, ShutdownResponse,
     },
 };
 
@@ -136,15 +135,6 @@ impl<C: ConnectApi> ConnectApi for Reconnect<C> {
         timeout: Duration,
     ) -> Result<tonic::Response<ShutdownResponse>, CurpError> {
         execute_with_reconnect!(self, ConnectApi::shutdown, request, timeout)
-    }
-
-    /// Send `FetchClusterRequest`
-    async fn fetch_cluster(
-        &self,
-        request: FetchClusterRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<FetchClusterResponse>, CurpError> {
-        execute_with_reconnect!(self, ConnectApi::fetch_cluster, request, timeout)
     }
 
     /// Send `FetchReadStateRequest`

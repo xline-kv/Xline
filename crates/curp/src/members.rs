@@ -5,19 +5,16 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    time::Duration,
 };
 
 use dashmap::{mapref::one::Ref, DashMap};
-use futures::{stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
 #[cfg(not(madsim))]
-use tonic::transport::ClientTlsConfig;
-use tracing::{debug, info};
+use tracing::debug;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
 
-use crate::rpc::{self, FetchClusterRequest, FetchClusterResponse, Member};
+use crate::rpc::Member;
 
 /// Server Id
 pub type ServerId = u64;
@@ -130,47 +127,6 @@ impl ClusterInfo {
         };
         cluster_info.gen_cluster_id();
         cluster_info
-    }
-
-    /// Construct a new `ClusterInfo` from `FetchClusterResponse`
-    ///
-    /// # Panics
-    ///
-    /// panic if `cluster.members` doesn't contain `self_addr`
-    #[inline]
-    #[must_use]
-    pub fn from_cluster(
-        cluster: FetchClusterResponse,
-        self_peer_urls: &[String],
-        self_client_urls: &[String],
-        self_name: &str,
-    ) -> Self {
-        let mut member_id = 0;
-        let sorted_self_addr = self_peer_urls.iter().sorted();
-        let members = cluster
-            .members
-            .into_iter()
-            .map(|mut member| {
-                if member
-                    .peer_urls()
-                    .iter()
-                    .sorted()
-                    .eq(sorted_self_addr.clone())
-                {
-                    member_id = member.id;
-                    member.name = self_name.to_owned();
-                    member.client_urls = self_client_urls.to_vec();
-                }
-                (member.id, member)
-            })
-            .collect();
-        assert!(member_id != 0, "self_id should not be 0");
-        Self {
-            cluster_id: cluster.cluster_id,
-            member_id,
-            members,
-            cluster_version: Arc::new(AtomicU64::new(cluster.cluster_version)),
-        }
     }
 
     /// Get all members
@@ -393,45 +349,6 @@ impl ClusterInfo {
             s.client_urls = client_urls;
         }
     }
-}
-
-/// Get cluster info from remote servers
-#[inline]
-pub async fn get_cluster_info_from_remote(
-    init_cluster_info: &ClusterInfo,
-    self_peer_urls: &[String],
-    self_name: &str,
-    timeout: Duration,
-    tls_config: Option<&ClientTlsConfig>,
-) -> Option<ClusterInfo> {
-    let peers = init_cluster_info.peers_addrs();
-    let self_client_urls = init_cluster_info.self_client_urls();
-    let connects = rpc::connects(peers, tls_config)
-        .map(|pair| pair.1)
-        .collect_vec();
-    let mut futs = connects
-        .iter()
-        .map(|c| {
-            c.fetch_cluster(
-                FetchClusterRequest {
-                    linearizable: false,
-                },
-                timeout,
-            )
-        })
-        .collect::<FuturesUnordered<_>>();
-    while let Some(result) = futs.next().await {
-        if let Ok(cluster_res) = result {
-            info!("get cluster info from remote success: {:?}", cluster_res);
-            return Some(ClusterInfo::from_cluster(
-                cluster_res.into_inner(),
-                self_peer_urls,
-                self_client_urls.as_slice(),
-                self_name,
-            ));
-        }
-    }
-    None
 }
 
 #[cfg(test)]
