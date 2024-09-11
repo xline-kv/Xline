@@ -217,6 +217,7 @@ pub fn parse_log_level(s: &str) -> Result<LevelConfig, ConfigParseError> {
         "info" => Ok(LevelConfig::INFO),
         "warn" => Ok(LevelConfig::WARN),
         "error" => Ok(LevelConfig::ERROR),
+        "off" => Ok(LevelConfig::OFF),
         _ => Err(ConfigParseError::InvalidValue(format!(
             "the log level should be one of 'trace', 'debug', 'info', 'warn' or 'error' ({s})"
         ))),
