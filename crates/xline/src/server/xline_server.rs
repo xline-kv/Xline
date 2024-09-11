@@ -5,7 +5,7 @@ use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp::{
     client::ClientBuilder as CurpClientBuilder,
     member::MembershipInfo,
-    members::{get_cluster_info_from_remote, ClusterInfo},
+    members::ClusterInfo,
     rpc::{InnerProtocolServer, ProtocolServer},
     server::{Rpc, StorageApi as _, DB as CurpDB},
 };
@@ -116,14 +116,11 @@ impl XlineServer {
         #[cfg(madsim)]
         let (client_tls_config, server_tls_config) = (None, None);
         let curp_storage = Arc::new(CurpDB::open(&cluster_config.curp_config().engine_cfg)?);
-        let cluster_info = Arc::new(
-            Self::init_cluster_info(
-                &cluster_config,
-                curp_storage.as_ref(),
-                client_tls_config.as_ref(),
-            )
-            .await?,
-        );
+        let cluster_info = Arc::new(Self::init_cluster_info(
+            &cluster_config,
+            curp_storage.as_ref(),
+            client_tls_config.as_ref(),
+        )?);
         let membership_info = MembershipInfo::new(
             *cluster_config.node_id(),
             cluster_config.initial_membership_info().clone(),
@@ -143,11 +140,12 @@ impl XlineServer {
         })
     }
 
+    #[allow(clippy::todo)]
     /// Init cluster info from cluster config
-    async fn init_cluster_info(
+    fn init_cluster_info(
         cluster_config: &ClusterConfig,
         curp_storage: &CurpDB<Command>,
-        tls_config: Option<&ClientTlsConfig>,
+        _tls_config: Option<&ClientTlsConfig>,
     ) -> Result<ClusterInfo> {
         info!("name = {:?}", cluster_config.name());
         info!("cluster_peers = {:?}", cluster_config.peers());
@@ -155,7 +153,6 @@ impl XlineServer {
         let name = cluster_config.name().clone();
         let all_members = cluster_config.peers().clone();
         let self_client_urls = cluster_config.client_advertise_urls().clone();
-        let self_peer_urls = cluster_config.peer_advertise_urls().clone();
         match (
             curp_storage.recover_cluster_info()?,
             *cluster_config.initial_cluster_state(),
@@ -172,18 +169,8 @@ impl XlineServer {
                 Ok(cluster_info)
             }
             (None, InitialClusterState::Existing) => {
-                info!("get cluster_info from remote");
-                let cluster_info = get_cluster_info_from_remote(
-                    &ClusterInfo::from_members_map(all_members, self_client_urls, &name),
-                    &self_peer_urls,
-                    cluster_config.name(),
-                    *cluster_config.client_config().wait_synced_timeout(),
-                    tls_config,
-                )
-                .await
-                .ok_or_else(|| anyhow!("Failed to get cluster info from remote"))?;
-                curp_storage.put_cluster_info(&cluster_info)?;
-                Ok(cluster_info)
+                // FIXME
+                todo!("adding a new member to the cluster");
             }
             (None, _) => {
                 unreachable!("xline only supports two initial cluster states: new, existing")

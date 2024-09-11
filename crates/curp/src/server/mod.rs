@@ -30,8 +30,6 @@ use crate::rpc::AddLearnerRequest;
 use crate::rpc::AddLearnerResponse;
 use crate::rpc::AppendEntriesRequest;
 use crate::rpc::AppendEntriesResponse;
-use crate::rpc::FetchClusterRequest;
-use crate::rpc::FetchClusterResponse;
 use crate::rpc::FetchMembershipRequest;
 use crate::rpc::FetchMembershipResponse;
 use crate::rpc::FetchReadStateRequest;
@@ -168,16 +166,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
         request.metadata().extract_span();
         Ok(tonic::Response::new(
             self.inner.publish(request.into_inner(), bypassed)?,
-        ))
-    }
-
-    #[instrument(skip_all, name = "curp_fetch_cluster")]
-    async fn fetch_cluster(
-        &self,
-        request: tonic::Request<FetchClusterRequest>,
-    ) -> Result<tonic::Response<FetchClusterResponse>, tonic::Status> {
-        Ok(tonic::Response::new(
-            self.inner.fetch_cluster(request.into_inner())?,
         ))
     }
 

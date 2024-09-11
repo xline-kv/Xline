@@ -56,9 +56,10 @@ pub mod commandpb {
 }
 
 pub use commandpb::{
-    protocol_client::ProtocolClient, FetchClusterRequest, FetchClusterResponse, ProposeRequest,
-    ProposeResponse,
+    protocol_client::ProtocolClient, FetchMembershipResponse, ProposeRequest, ProposeResponse,
 };
+
+use self::commandpb::FetchMembershipRequest;
 
 /// `BOTTOM_TASKS` are tasks which not dependent on other tasks in the task group.
 /// `CurpGroup` uses `BOTTOM_TASKS` to detect whether the curp group is closed or not.
@@ -444,21 +445,21 @@ impl CurpGroup {
                 Err(e) => continue,
             };
 
-            let FetchClusterResponse {
+            let FetchMembershipResponse {
                 leader_id, term, ..
-            } = if let Ok(resp) = client.fetch_cluster(FetchClusterRequest::default()).await {
+            } = if let Ok(resp) = client.fetch_membership(FetchMembershipRequest {}).await {
                 resp.into_inner()
             } else {
                 continue;
             };
             if term > max_term {
                 max_term = term;
-                leader = leader_id;
+                leader = Some(leader_id);
             } else if term == max_term && leader.is_none() {
-                leader = leader_id;
+                leader = Some(leader_id);
             }
         }
-        leader.map(|l| (l.value, max_term))
+        leader.map(|l| (l, max_term))
     }
 
     pub async fn get_leader(&self) -> (ServerId, u64) {
@@ -485,9 +486,9 @@ impl CurpGroup {
                 Err(e) => continue,
             };
 
-            let FetchClusterResponse {
+            let FetchMembershipResponse {
                 leader_id, term, ..
-            } = if let Ok(resp) = client.fetch_cluster(FetchClusterRequest::default()).await {
+            } = if let Ok(resp) = client.fetch_membership(FetchMembershipRequest {}).await {
                 resp.into_inner()
             } else {
                 continue;
@@ -511,32 +512,6 @@ impl CurpGroup {
         };
         let channel = channel_fut.await.unwrap();
         ProtocolClient::new(channel)
-    }
-
-    pub async fn fetch_cluster_info(&self, addrs: &[String], name: &str) -> ClusterInfo {
-        let leader_id = self.get_leader().await.0;
-        let mut connect = self.get_connect(&leader_id).await;
-        let client_urls: Vec<String> = vec![];
-        let cluster_res_base = connect
-            .fetch_cluster(tonic::Request::new(FetchClusterRequest {
-                linearizable: false,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        let members = cluster_res_base
-            .members
-            .into_iter()
-            .map(|m| Member::new(m.id, m.name, m.peer_urls, m.client_urls, m.is_learner))
-            .collect();
-        let cluster_res = curp::rpc::FetchClusterResponse {
-            leader_id: cluster_res_base.leader_id.map(|l| l.value.into()),
-            term: cluster_res_base.term,
-            cluster_id: cluster_res_base.cluster_id,
-            members,
-            cluster_version: cluster_res_base.cluster_version,
-        };
-        ClusterInfo::from_cluster(cluster_res, addrs, client_urls.as_slice(), name)
     }
 }
 

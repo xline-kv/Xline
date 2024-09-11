@@ -38,12 +38,11 @@ use crate::{
             inner_messagepb::inner_protocol_client::InnerProtocolClient,
         },
         AddMemberRequest, AddMemberResponse, AppendEntriesRequest, AppendEntriesResponse,
-        CurpError, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
-        FetchReadStateResponse, InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg,
-        MoveLeaderRequest, MoveLeaderResponse, ProposeRequest, Protocol, PublishRequest,
-        PublishResponse, RemoveMemberRequest, RemoveMemberResponse, ShutdownRequest,
-        ShutdownResponse, TriggerShutdownRequest, TryBecomeLeaderNowRequest, VoteRequest,
-        VoteResponse,
+        CurpError, FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
+        InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse,
+        ProposeRequest, Protocol, PublishRequest, PublishResponse, RemoveMemberRequest,
+        RemoveMemberResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
+        TryBecomeLeaderNowRequest, VoteRequest, VoteResponse,
     },
     server::StreamingProtocol,
     snapshot::Snapshot,
@@ -207,13 +206,6 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         request: ShutdownRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<ShutdownResponse>, CurpError>;
-
-    /// Send `FetchClusterRequest`
-    async fn fetch_cluster(
-        &self,
-        request: FetchClusterRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<FetchClusterResponse>, CurpError>;
 
     /// Send `FetchReadStateRequest`
     async fn fetch_read_state(
@@ -498,17 +490,6 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_current();
         with_timeout!(timeout, client.publish(req)).map_err(Into::into)
-    }
-
-    /// Send `FetchClusterRequest`
-    async fn fetch_cluster(
-        &self,
-        request: FetchClusterRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<FetchClusterResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
-        let req = tonic::Request::new(request);
-        with_timeout!(timeout, client.fetch_cluster(req)).map_err(Into::into)
     }
 
     /// Send `FetchReadStateRequest`
@@ -831,18 +812,6 @@ where
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.shutdown(req).await.map_err(Into::into)
-    }
-
-    /// Send `FetchClusterRequest`
-    async fn fetch_cluster(
-        &self,
-        request: FetchClusterRequest,
-        _timeout: Duration,
-    ) -> Result<tonic::Response<FetchClusterResponse>, CurpError> {
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_bypassed();
-        req.metadata_mut().inject_current();
-        self.server.fetch_cluster(req).await.map_err(Into::into)
     }
 
     /// Send `FetchReadStateRequest`

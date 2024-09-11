@@ -47,14 +47,14 @@ use crate::{
     rpc::{
         self,
         connect::{InnerConnectApi, InnerConnectApiWrapper},
-        AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchClusterRequest,
-        FetchClusterResponse, FetchMembershipRequest, FetchMembershipResponse,
-        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
-        InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse, Node,
-        PoolEntry, ProposeId, ProposeRequest, ProposeResponse, PublishRequest, PublishResponse,
-        QuorumSet, ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest,
-        ShutdownResponse, SyncedResponse, TriggerShutdownRequest, TriggerShutdownResponse,
-        TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse, VoteRequest, VoteResponse,
+        AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchMembershipRequest,
+        FetchMembershipResponse, FetchReadStateRequest, FetchReadStateResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
+        MoveLeaderResponse, Node, PoolEntry, ProposeId, ProposeRequest, ProposeResponse,
+        PublishRequest, PublishResponse, QuorumSet, ReadIndexResponse, RecordRequest,
+        RecordResponse, ShutdownRequest, ShutdownResponse, SyncedResponse, TriggerShutdownRequest,
+        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
+        VoteRequest, VoteResponse,
     },
     server::{
         cmd_worker::{after_sync, worker_reset, worker_snapshot},
@@ -497,32 +497,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     pub(super) fn trigger_shutdown(&self, _req: TriggerShutdownRequest) -> TriggerShutdownResponse {
         self.curp.task_manager().mark_leader_notified();
         TriggerShutdownResponse::default()
-    }
-
-    /// Handle `FetchCluster` requests
-    #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
-    pub(super) fn fetch_cluster(
-        &self,
-        req: FetchClusterRequest,
-    ) -> Result<FetchClusterResponse, CurpError> {
-        let (leader_id, term, is_leader) = self.curp.leader();
-        let cluster_id = self.curp.cluster().cluster_id();
-        let members = if is_leader || !req.linearizable {
-            self.curp.cluster().all_members_vec()
-        } else {
-            // if it is a follower and enabled linearizable read, return empty members
-            // the client will ignore empty members and retry util it gets response from
-            // the leader
-            Vec::new()
-        };
-        let cluster_version = self.curp.cluster().cluster_version();
-        Ok(FetchClusterResponse::new(
-            leader_id,
-            term,
-            cluster_id,
-            members,
-            cluster_version,
-        ))
     }
 
     /// Handle `InstallSnapshot` stream

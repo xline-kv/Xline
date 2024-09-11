@@ -24,8 +24,9 @@ use crate::{
     member::Membership,
     members::ServerId,
     rpc::{
+        self,
         connect::{ConnectApi, MockConnectApi},
-        CurpError, FetchClusterResponse, Member, OpResponse, ProposeId, ProposeResponse,
+        CurpError, FetchMembershipResponse, Node, OpResponse, ProposeId, ProposeResponse,
         ReadIndexResponse, RecordResponse, ResponseOp, SyncedResponse,
     },
 };
@@ -88,6 +89,33 @@ fn build_default_membership() -> Membership {
     let members = (0..5).collect::<BTreeSet<_>>();
     let nodes = members.iter().map(|id| (*id, format!("{id}"))).collect();
     Membership::new(vec![members], nodes)
+}
+
+fn build_membership_resp(
+    leader_id: Option<u64>,
+    term: u64,
+    members: impl IntoIterator<Item = u64>,
+) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
+    let leader_id = leader_id.ok_or(CurpError::leader_transfer("no current leader"))?;
+
+    let members: Vec<_> = members.into_iter().collect();
+    let nodes: Vec<Node> = members
+        .clone()
+        .into_iter()
+        .map(|node_id| Node {
+            node_id,
+            addr: String::new(),
+        })
+        .collect();
+    let qs = rpc::QuorumSet { set: members };
+
+    let resp = FetchMembershipResponse {
+        members: vec![qs],
+        nodes,
+        term,
+        leader_id,
+    };
+    Ok(tonic::Response::new(resp))
 }
 
 #[traced_test]
@@ -309,21 +337,9 @@ async fn test_retry_propose_return_retry_error() {
         CurpError::internal("No reason"),
     ] {
         let connects = init_mocked_connects(5, |id, conn| {
-            conn.expect_fetch_cluster()
+            conn.expect_fetch_membership()
                 .returning(move |_req, _timeout| {
-                    Ok(tonic::Response::new(FetchClusterResponse {
-                        leader_id: Some(0.into()),
-                        term: 2,
-                        cluster_id: 123,
-                        members: vec![
-                            Member::new(0, "S0", vec!["A0".to_owned()], [], false),
-                            Member::new(1, "S1", vec!["A1".to_owned()], [], false),
-                            Member::new(2, "S2", vec!["A2".to_owned()], [], false),
-                            Member::new(3, "S3", vec!["A3".to_owned()], [], false),
-                            Member::new(4, "S4", vec!["A4".to_owned()], [], false),
-                        ],
-                        cluster_version: 1,
-                    }))
+                    build_membership_resp(Some(0), 2, vec![0, 1, 2, 3, 4])
                 });
             if id == 0 {
                 let err = early_err.clone();

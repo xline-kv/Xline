@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use curp_external_api::{
     cmd::{ConflictCheck, PbCodec, PbSerializeError},
@@ -31,8 +31,6 @@ pub use self::proto::{
         AddMemberRequest,
         AddMemberResponse,
         CmdResult,
-        FetchClusterRequest,
-        FetchClusterResponse,
         FetchMembershipRequest,
         FetchMembershipResponse,
         FetchReadStateRequest,
@@ -139,41 +137,6 @@ impl From<&OptionalU64> for u64 {
     #[inline]
     fn from(value: &OptionalU64) -> Self {
         value.value
-    }
-}
-
-impl FetchClusterResponse {
-    /// Create a new `FetchClusterResponse`
-    pub(crate) fn new(
-        leader_id: Option<ServerId>,
-        term: u64,
-        cluster_id: u64,
-        members: Vec<Member>,
-        cluster_version: u64,
-    ) -> Self {
-        Self {
-            leader_id: leader_id.map(Into::into),
-            term,
-            cluster_id,
-            members,
-            cluster_version,
-        }
-    }
-
-    /// Get all members peer urls
-    pub(crate) fn into_peer_urls(self) -> HashMap<ServerId, Vec<String>> {
-        self.members
-            .into_iter()
-            .map(|member| (member.id, member.peer_urls))
-            .collect()
-    }
-
-    /// Get all members peer urls
-    pub(crate) fn into_client_urls(self) -> HashMap<ServerId, Vec<String>> {
-        self.members
-            .into_iter()
-            .map(|member| (member.id, member.client_urls))
-            .collect()
     }
 }
 
