@@ -84,7 +84,7 @@ impl Fetch {
             .await
             .ok_or(CurpError::internal("cluster not available"))?;
         let connects = (self.connect_to)(&resp);
-        let new_state = ClusterStateReady::new_membership(
+        let new_state = ClusterStateReady::new(
             resp.leader_id,
             resp.term,
             connects,

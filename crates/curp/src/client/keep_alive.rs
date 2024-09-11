@@ -144,7 +144,7 @@ impl KeepAlive {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
 
     use super::*;
 
@@ -152,15 +152,18 @@ mod tests {
     use tonic::Status;
     use tracing_test::traced_test;
 
-    use crate::rpc::{
-        connect::{ConnectApi, MockConnectApi},
-        AddLearnerRequest, AddLearnerResponse, AddMemberRequest, AddMemberResponse, CurpError,
-        FetchClusterRequest, FetchClusterResponse, FetchMembershipRequest, FetchMembershipResponse,
-        FetchReadStateRequest, FetchReadStateResponse, Member, MoveLeaderRequest,
-        MoveLeaderResponse, OpResponse, ProposeId, ProposeRequest, ProposeResponse, PublishRequest,
-        PublishResponse, ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
-        RemoveLearnerResponse, RemoveMemberRequest, RemoveMemberResponse, ResponseOp,
-        ShutdownRequest, ShutdownResponse, SyncedResponse,
+    use crate::{
+        member::Membership,
+        rpc::{
+            connect::{ConnectApi, MockConnectApi},
+            AddLearnerRequest, AddLearnerResponse, AddMemberRequest, AddMemberResponse, CurpError,
+            FetchClusterRequest, FetchClusterResponse, FetchMembershipRequest,
+            FetchMembershipResponse, FetchReadStateRequest, FetchReadStateResponse, Member,
+            MoveLeaderRequest, MoveLeaderResponse, OpResponse, ProposeId, ProposeRequest,
+            ProposeResponse, PublishRequest, PublishResponse, ReadIndexResponse, RecordRequest,
+            RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse, RemoveMemberRequest,
+            RemoveMemberResponse, ResponseOp, ShutdownRequest, ShutdownResponse, SyncedResponse,
+        },
     };
 
     struct MockedStreamConnectApi {
@@ -350,13 +353,14 @@ mod tests {
         connects: HashMap<u64, Arc<dyn ConnectApi>>,
         leader: u64,
         term: u64,
-        cluster_version: u64,
     ) -> KeepAliveHandle {
+        let members = (0..5).collect::<BTreeSet<_>>();
+        let nodes = members.iter().map(|id| (*id, format!("{id}"))).collect();
         let state = ClusterState::Ready(ClusterStateReady::new(
             leader,
             term,
-            cluster_version,
             connects.clone(),
+            Membership::new(vec![members], nodes),
         ));
         let fetch = Fetch::new(Duration::from_secs(0), move |_| connects.clone());
         let state_shared = ClusterStateShared::new_test(state, fetch);
@@ -370,7 +374,7 @@ mod tests {
     async fn test_stream_client_keep_alive_works() {
         let connects =
             init_mocked_stream_connects(5, 0, 1, move |client_id| Box::pin(async move { Ok(10) }));
-        let mut keep_alive = init_stream_client(connects, 0, 1, 1);
+        let mut keep_alive = init_stream_client(connects, 0, 1);
         tokio::time::timeout(Duration::from_millis(100), &mut keep_alive.handle)
             .await
             .unwrap_err();
@@ -382,7 +386,7 @@ mod tests {
     async fn test_stream_client_keep_alive_on_redirect() {
         let connects =
             init_mocked_stream_connects(5, 0, 2, move |client_id| Box::pin(async move { Ok(10) }));
-        let mut keep_alive = init_stream_client(connects, 1, 1, 1);
+        let mut keep_alive = init_stream_client(connects, 1, 1);
         tokio::time::timeout(Duration::from_millis(100), &mut keep_alive.handle)
             .await
             .unwrap_err();
