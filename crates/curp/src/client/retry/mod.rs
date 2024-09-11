@@ -19,7 +19,7 @@ use super::{
 };
 use crate::{
     members::ServerId,
-    rpc::{CurpError, FetchClusterResponse, ReadState, Redirect, ProposeId}, tracker::Tracker,
+    rpc::{CurpError, FetchClusterResponse, ReadState, Redirect, ProposeId, FetchMembershipResponse}, tracker::Tracker,
 };
 
 /// Backoff config
@@ -449,7 +449,7 @@ where
     async fn fetch_cluster(
         &self,
         linearizable: bool,
-    ) -> Result<FetchClusterResponse, tonic::Status> {
+    ) -> Result<FetchMembershipResponse, tonic::Status> {
         self.retry::<_, _>(|client, ctx| async move {
             let (_, resp) = self.fetch.fetch_cluster(ctx.cluster_state()).await?;
             Ok(resp)
