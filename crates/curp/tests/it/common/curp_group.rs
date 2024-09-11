@@ -344,11 +344,9 @@ impl CurpGroup {
     }
 
     pub async fn new_client(&self) -> impl ClientApi<Error = tonic::Status, Cmd = TestCommand> {
-        let addrs = self.all_addrs().cloned().collect();
+        let addrs: Vec<Vec<_>> = self.all_addrs().cloned().map(|addr| vec![addr]).collect();
         ClientBuilder::new(ClientConfig::default(), true)
-            .discover_from(addrs)
-            .await
-            .unwrap()
+            .init_nodes(addrs)
             .build()
             .unwrap()
     }

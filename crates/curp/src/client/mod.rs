@@ -40,17 +40,16 @@ pub use connect::ClientApi;
 
 #[cfg(madsim)]
 use std::sync::atomic::AtomicU64;
-use std::{collections::HashMap, fmt::Debug, ops::Deref, sync::Arc, time::Duration};
+use std::{collections::HashMap, ops::Deref, sync::Arc};
 
 use curp_external_api::cmd::Command;
-use futures::{stream::FuturesUnordered, StreamExt};
 use parking_lot::RwLock;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
-use tracing::{debug, warn};
+use tracing::debug;
+use utils::config::ClientConfig;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
-use utils::{build_endpoint, config::ClientConfig};
 
 use self::{
     cluster_state::{ClusterState, ClusterStateInit},
@@ -65,9 +64,7 @@ use crate::{
     rpc::{
         self,
         connect::{BypassedConnect, ConnectApi},
-        protocol_client::ProtocolClient,
-        FetchClusterRequest, FetchClusterResponse, FetchMembershipResponse, Node, ProposeId,
-        Protocol,
+        FetchMembershipResponse, Node, ProposeId, Protocol,
     },
     server::StreamingProtocol,
     tracker::Tracker,
@@ -112,7 +109,7 @@ pub struct ClientBuilder {
     /// initial cluster version
     cluster_version: Option<u64>,
     /// initial cluster members
-    all_members: Option<HashMap<ServerId, Vec<String>>>,
+    init_nodes: Option<Vec<Vec<String>>>,
     /// is current client send request to raw curp server
     is_raw_curp: bool,
     /// initial leader state
@@ -170,11 +167,11 @@ impl ClientBuilder {
         self
     }
 
-    /// Set the initial all members
+    /// Set the initial nodes
     #[inline]
     #[must_use]
-    pub fn all_members(mut self, all_members: HashMap<ServerId, Vec<String>>) -> Self {
-        self.all_members = Some(all_members);
+    pub fn init_nodes(mut self, nodes: impl IntoIterator<Item = Vec<String>>) -> Self {
+        self.init_nodes = Some(nodes.into_iter().collect());
         self
     }
 
@@ -192,85 +189,6 @@ impl ClientBuilder {
     pub fn tls_config(mut self, tls_config: Option<ClientTlsConfig>) -> Self {
         self.tls_config = tls_config;
         self
-    }
-
-    /// Discover the initial states from some endpoints
-    ///
-    /// # Errors
-    ///
-    /// Return `tonic::Status` for connection failure or some server errors.
-    #[inline]
-    pub async fn discover_from(mut self, addrs: Vec<String>) -> Result<Self, tonic::Status> {
-        /// Sleep duration in secs when the cluster is unavailable
-        const DISCOVER_SLEEP_DURATION: u64 = 1;
-        loop {
-            match self.try_discover_from(&addrs).await {
-                Ok(()) => return Ok(self),
-                Err(e) if matches!(e.code(), tonic::Code::Unavailable) => {
-                    warn!("cluster is unavailable, sleep for {DISCOVER_SLEEP_DURATION} secs");
-                    tokio::time::sleep(Duration::from_secs(DISCOVER_SLEEP_DURATION)).await;
-                }
-                Err(e) => return Err(e),
-            }
-        }
-    }
-
-    /// Discover the initial states from some endpoints
-    ///
-    /// # Errors
-    ///
-    /// Return `tonic::Status` for connection failure or some server errors.
-    #[inline]
-    pub async fn try_discover_from(&mut self, addrs: &[String]) -> Result<(), tonic::Status> {
-        let propose_timeout = *self.config.propose_timeout();
-        let mut futs: FuturesUnordered<_> = addrs
-            .iter()
-            .map(|addr| {
-                let tls_config = self.tls_config.clone();
-                async move {
-                    let endpoint = build_endpoint(addr, tls_config.as_ref()).map_err(|e| {
-                        tonic::Status::internal(format!("create endpoint failed, error: {e}"))
-                    })?;
-                    let channel = endpoint.connect().await.map_err(|e| {
-                        tonic::Status::cancelled(format!("cannot connect to addr, error: {e}"))
-                    })?;
-                    let mut protocol_client = ProtocolClient::new(channel);
-                    let mut req = tonic::Request::new(FetchClusterRequest::default());
-                    req.set_timeout(propose_timeout);
-                    let fetch_cluster_res = protocol_client.fetch_cluster(req).await?.into_inner();
-                    Ok::<FetchClusterResponse, tonic::Status>(fetch_cluster_res)
-                }
-            })
-            .collect();
-        let mut err = tonic::Status::invalid_argument("addrs is empty");
-        // find the first one return `FetchClusterResponse`
-        while let Some(r) = futs.next().await {
-            match r {
-                Ok(r) => {
-                    self.cluster_version = Some(r.cluster_version);
-                    if let Some(ref id) = r.leader_id {
-                        self.leader_state = Some((id.into(), r.term));
-                    }
-                    self.all_members = if self.is_raw_curp {
-                        Some(r.into_peer_urls())
-                    } else {
-                        Some(Self::ensure_no_empty_address(r.into_client_urls())?)
-                    };
-                    return Ok(());
-                }
-                Err(e) => err = e,
-            }
-        }
-        Err(err)
-    }
-
-    /// Ensures that no server has an empty list of addresses.
-    fn ensure_no_empty_address(
-        urls: HashMap<ServerId, Vec<String>>,
-    ) -> Result<HashMap<ServerId, Vec<String>>, tonic::Status> {
-        (!urls.values().any(Vec::is_empty))
-            .then_some(urls)
-            .ok_or(tonic::Status::unavailable("cluster not published"))
     }
 
     /// Init retry config
@@ -324,9 +242,12 @@ impl ClientBuilder {
     /// Connect to members
     fn connect_members(&self, tls_config: Option<&ClientTlsConfig>) -> ClusterStateInit {
         let all_members = self
-            .all_members
+            .init_nodes
             .clone()
-            .unwrap_or_else(|| unreachable!("requires members"));
+            .unwrap_or_else(|| unreachable!("requires members"))
+            .into_iter()
+            .map(|addrs| (0, addrs))
+            .collect();
         let connects = rpc::connects(all_members, tls_config)
             .map(|(_id, conn)| conn)
             .collect();

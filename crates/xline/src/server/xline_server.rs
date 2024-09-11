@@ -534,7 +534,7 @@ impl XlineServer {
             CurpClientBuilder::new(*self.cluster_config.client_config(), true)
                 .tls_config(self.client_tls_config.clone())
                 .cluster_version(self.cluster_info.cluster_version())
-                .all_members(self.cluster_info.all_members_peer_urls())
+                .init_nodes(self.cluster_info.all_members_peer_urls().values().cloned())
                 .bypass(self.cluster_info.self_id(), curp_server.clone())
                 .build::<Command>()?,
         ) as Arc<CurpClient>;
