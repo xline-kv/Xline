@@ -153,7 +153,6 @@ impl CurpGroup {
             let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
             let server = Arc::new(Rpc::new(
                 membership_info,
-                cluster_info,
                 name == leader_name,
                 ce,
                 snapshot_allocator,
@@ -294,7 +293,6 @@ impl CurpGroup {
         let membership_info = MembershipInfo::new(node_id as u64, init_members);
         let server = Arc::new(Rpc::new(
             membership_info,
-            cluster_info,
             false,
             ce,
             snapshot_allocator,

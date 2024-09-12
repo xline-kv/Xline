@@ -3,7 +3,7 @@ use std::{fmt::Debug, pin::Pin, sync::Arc};
 use async_stream::try_stream;
 use bytes::BytesMut;
 use clippy_utilities::{NumericCast, OverflowArithmetic};
-use curp::{cmd::CommandExecutor as _, members::ClusterInfo, server::RawCurp};
+use curp::{cmd::CommandExecutor as _, server::RawCurp};
 use engine::SnapshotApi;
 use futures::stream::Stream;
 use sha2::{Digest, Sha256};
@@ -43,8 +43,6 @@ pub(crate) struct MaintenanceServer {
     header_gen: Arc<HeaderGenerator>,
     /// Consensus client
     client: Arc<CurpClient>,
-    /// cluster information
-    cluster_info: Arc<ClusterInfo>,
     /// Raw curp
     raw_curp: Arc<RawCurp<Command, State<Arc<CurpClient>>>>,
     /// Command executor
@@ -62,7 +60,6 @@ impl MaintenanceServer {
         client: Arc<CurpClient>,
         db: Arc<DB>,
         header_gen: Arc<HeaderGenerator>,
-        cluster_info: Arc<ClusterInfo>,
         raw_curp: Arc<RawCurp<Command, State<Arc<CurpClient>>>>,
         ce: Arc<CommandExecutor>,
         alarm_store: Arc<AlarmStore>,
@@ -73,7 +70,6 @@ impl MaintenanceServer {
             db,
             header_gen,
             client,
-            cluster_info,
             raw_curp,
             ce,
             alarm_store,
@@ -118,7 +114,8 @@ impl Maintenance for MaintenanceServer {
         &self,
         _request: tonic::Request<StatusRequest>,
     ) -> Result<tonic::Response<StatusResponse>, tonic::Status> {
-        let is_learner = self.cluster_info.self_member().is_learner;
+        // FIXME: get learner status
+        let is_learner = false;
         let (leader, term, _) = self.raw_curp.leader();
         let commit_index = self.raw_curp.commit_index();
         let size = self.db.file_size().map_err(|e| {

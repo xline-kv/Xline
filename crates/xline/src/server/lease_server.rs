@@ -2,7 +2,6 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::NumericCast;
-use curp::members::ClusterInfo;
 use futures::stream::Stream;
 use tokio::time;
 #[cfg(not(madsim))]
@@ -44,8 +43,6 @@ pub(crate) struct LeaseServer {
     client: Arc<CurpClient>,
     /// Id generator
     id_gen: Arc<IdGenerator>,
-    /// cluster information
-    cluster_info: Arc<ClusterInfo>,
     /// Client tls config
     client_tls_config: Option<ClientTlsConfig>,
     /// Task manager
@@ -63,7 +60,6 @@ impl LeaseServer {
         auth_storage: Arc<AuthStore>,
         client: Arc<CurpClient>,
         id_gen: Arc<IdGenerator>,
-        cluster_info: Arc<ClusterInfo>,
         client_tls_config: Option<ClientTlsConfig>,
         task_manager: &Arc<TaskManager>,
     ) -> Arc<Self> {
@@ -72,7 +68,6 @@ impl LeaseServer {
             auth_storage,
             client,
             id_gen,
-            cluster_info,
             client_tls_config,
             task_manager: Arc::clone(task_manager),
         });
@@ -307,17 +302,13 @@ impl Lease for LeaseServer {
             if self.lease_storage.is_primary() {
                 break self.leader_keep_alive(request_stream)?;
             }
-            let leader_id = self.client.fetch_leader_id(false).await?;
+            let _leader_id = self.client.fetch_leader_id(false).await?;
             // Given that a candidate server may become a leader when it won the election or
             // a follower when it lost the election. Therefore we need to double check here.
             // We can directly invoke leader_keep_alive when a candidate becomes a leader.
             if !self.lease_storage.is_primary() {
-                let leader_addrs = self.cluster_info.client_urls(leader_id).unwrap_or_else(|| {
-                    unreachable!(
-                        "The address of leader {} not found in all_members {:?}",
-                        leader_id, self.cluster_info
-                    )
-                });
+                // FIXME: get leader address
+                let leader_addrs = vec![];
                 break self
                     .follower_keep_alive(request_stream, &leader_addrs)
                     .await?;
@@ -355,13 +346,8 @@ impl Lease for LeaseServer {
                 };
                 return Ok(tonic::Response::new(res));
             }
-            let leader_id = self.client.fetch_leader_id(false).await?;
-            let leader_addrs = self.cluster_info.client_urls(leader_id).unwrap_or_else(|| {
-                unreachable!(
-                    "The address of leader {} not found in all_members {:?}",
-                    leader_id, self.cluster_info
-                )
-            });
+            let _leader_id = self.client.fetch_leader_id(false).await?;
+            let leader_addrs = vec![]; // FIXME: get leader address
             if !self.lease_storage.is_primary() {
                 let endpoints = build_endpoints(&leader_addrs, self.client_tls_config.as_ref())?;
                 let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());

@@ -112,8 +112,8 @@ impl Metrics {
                 observer.observe_u64(&has_leader, leader_id.map_or(0, |_| 1), &[]);
                 observer.observe_u64(&is_leader, u64::from(leader), &[]);
 
-                let learner = curp.cluster().self_member().is_learner();
-                let id = curp.cluster().self_id();
+                let learner = curp.is_learner();
+                let id = curp.id();
                 observer.observe_u64(&is_learner, u64::from(learner), &[]);
                 observer.observe_u64(&server_id, id, &[]);
 

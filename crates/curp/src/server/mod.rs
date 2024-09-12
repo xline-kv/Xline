@@ -21,7 +21,6 @@ pub use self::raw_curp::RawCurp;
 use crate::cmd::Command;
 use crate::cmd::CommandExecutor;
 use crate::member::MembershipInfo;
-use crate::members::ClusterInfo;
 use crate::members::ServerId;
 use crate::response::ResponseSender;
 use crate::role_change::RoleChange;
@@ -352,7 +351,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     #[allow(clippy::too_many_arguments)] // TODO: refactor this use builder pattern
     pub fn new(
         membership_info: MembershipInfo,
-        cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         executor: Arc<CE>,
         snapshot_allocator: Box<dyn SnapshotAllocator>,
@@ -367,7 +365,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
         #[allow(clippy::panic)]
         let curp_node = match CurpNode::new(
             membership_info,
-            cluster_info,
             is_leader,
             executor,
             snapshot_allocator,

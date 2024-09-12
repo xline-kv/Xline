@@ -4,10 +4,9 @@ use anyhow::{anyhow, Result};
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp::{
     client::ClientBuilder as CurpClientBuilder,
-    member::MembershipInfo,
-    members::ClusterInfo,
+    member::{ClusterId, MembershipInfo},
     rpc::{InnerProtocolServer, ProtocolServer},
-    server::{Rpc, StorageApi as _, DB as CurpDB},
+    server::{Rpc, DB as CurpDB},
 };
 use dashmap::DashMap;
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
@@ -22,13 +21,10 @@ use tonic::transport::{
     server::Connected, Certificate, ClientTlsConfig, Identity, ServerTlsConfig,
 };
 use tonic::transport::{server::Router, Server};
-use tracing::{info, warn};
+use tracing::info;
 use utils::{
     barrier::IdBarrier,
-    config::{
-        AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState, StorageConfig,
-        TlsConfig,
-    },
+    config::{AuthConfig, ClusterConfig, CompactConfig, EngineConfig, StorageConfig, TlsConfig},
     task_manager::{tasks::TaskName, TaskManager},
 };
 #[cfg(madsim)]
@@ -76,8 +72,6 @@ pub(crate) type CurpServer = Rpc<Command, CommandExecutor, State<Arc<CurpClient>
 pub struct XlineServer {
     /// Membership information
     membership_info: MembershipInfo,
-    /// Cluster information
-    cluster_info: Arc<ClusterInfo>,
     /// Cluster Config
     cluster_config: ClusterConfig,
     /// Storage config,
@@ -116,18 +110,12 @@ impl XlineServer {
         #[cfg(madsim)]
         let (client_tls_config, server_tls_config) = (None, None);
         let curp_storage = Arc::new(CurpDB::open(&cluster_config.curp_config().engine_cfg)?);
-        let cluster_info = Arc::new(Self::init_cluster_info(
-            &cluster_config,
-            curp_storage.as_ref(),
-            client_tls_config.as_ref(),
-        )?);
         let membership_info = MembershipInfo::new(
             *cluster_config.node_id(),
             cluster_config.initial_membership_info().clone(),
         );
 
         Ok(Self {
-            cluster_info,
             cluster_config,
             storage_config,
             compact_config,
@@ -138,44 +126,6 @@ impl XlineServer {
             curp_storage,
             membership_info,
         })
-    }
-
-    #[allow(clippy::todo)]
-    /// Init cluster info from cluster config
-    fn init_cluster_info(
-        cluster_config: &ClusterConfig,
-        curp_storage: &CurpDB<Command>,
-        _tls_config: Option<&ClientTlsConfig>,
-    ) -> Result<ClusterInfo> {
-        info!("name = {:?}", cluster_config.name());
-        info!("cluster_peers = {:?}", cluster_config.peers());
-
-        let name = cluster_config.name().clone();
-        let all_members = cluster_config.peers().clone();
-        let self_client_urls = cluster_config.client_advertise_urls().clone();
-        match (
-            curp_storage.recover_cluster_info()?,
-            *cluster_config.initial_cluster_state(),
-        ) {
-            (Some(cluster_info), _) => {
-                info!("get cluster_info from local");
-                Ok(cluster_info)
-            }
-            (None, InitialClusterState::New) => {
-                info!("get cluster_info by args");
-                let cluster_info =
-                    ClusterInfo::from_members_map(all_members, self_client_urls, &name);
-                curp_storage.put_cluster_info(&cluster_info)?;
-                Ok(cluster_info)
-            }
-            (None, InitialClusterState::Existing) => {
-                // FIXME
-                todo!("adding a new member to the cluster");
-            }
-            (None, _) => {
-                unreachable!("xline only supports two initial cluster states: new, existing")
-            }
-        }
     }
 
     /// Construct a `LeaseCollection`
@@ -268,9 +218,11 @@ impl XlineServer {
 
     /// Construct a header generator
     #[inline]
-    fn construct_generator(cluster_info: &ClusterInfo) -> (Arc<HeaderGenerator>, Arc<IdGenerator>) {
-        let member_id = cluster_info.self_id();
-        let cluster_id = cluster_info.cluster_id();
+    fn construct_generator(
+        membership_info: &MembershipInfo,
+    ) -> (Arc<HeaderGenerator>, Arc<IdGenerator>) {
+        let member_id = membership_info.node_id;
+        let cluster_id = membership_info.cluster_id();
         (
             Arc::new(HeaderGenerator::new(cluster_id, member_id)),
             Arc::new(IdGenerator::new(member_id)),
@@ -374,7 +326,7 @@ impl XlineServer {
     {
         let db = DB::open(&self.storage_config.engine)?;
         let key_pair = Self::read_key_pair(&self.auth_config).await?;
-        let (xline_router, curp_router, curp_client) = self.init_router(db, key_pair).await?;
+        let (xline_router, curp_router, _curp_client) = self.init_router(db, key_pair).await?;
         self.task_manager
             .spawn(TaskName::TonicServer, |n1| async move {
                 let n2 = n1.clone();
@@ -383,9 +335,7 @@ impl XlineServer {
                     _ = curp_router.serve_with_incoming_shutdown(curp_incoming, n2.wait()) => {},
                 }
             });
-        if let Err(e) = self.publish(curp_client).await {
-            warn!("publish name to cluster failed: {e:?}");
-        };
+
         Ok(())
     }
 
@@ -447,7 +397,7 @@ impl XlineServer {
         AuthWrapper,
         Arc<CurpClient>,
     )> {
-        let (header_gen, id_gen) = Self::construct_generator(&self.cluster_info);
+        let (header_gen, id_gen) = Self::construct_generator(&self.membership_info);
         let lease_collection = Self::construct_lease_collection(
             self.cluster_config.curp_config().heartbeat_interval,
             self.cluster_config.curp_config().candidate_timeout_ticks,
@@ -504,7 +454,6 @@ impl XlineServer {
 
         let curp_server = CurpServer::new(
             self.membership_info.clone(),
-            Arc::clone(&self.cluster_info),
             *self.cluster_config.is_leader(),
             Arc::clone(&ce),
             snapshot_allocator,
@@ -520,9 +469,14 @@ impl XlineServer {
         let client = Arc::new(
             CurpClientBuilder::new(*self.cluster_config.client_config(), true)
                 .tls_config(self.client_tls_config.clone())
-                .cluster_version(self.cluster_info.cluster_version())
-                .init_nodes(self.cluster_info.all_members_peer_urls().values().cloned())
-                .bypass(self.cluster_info.self_id(), curp_server.clone())
+                .init_nodes(
+                    self.membership_info
+                        .init_members
+                        .values()
+                        .cloned()
+                        .map(|addr| vec![addr]),
+                )
+                .bypass(self.membership_info.node_id, curp_server.clone())
                 .build::<Command>()?,
         ) as Arc<CurpClient>;
 
@@ -530,7 +484,7 @@ impl XlineServer {
             compactor.set_compactable(Arc::clone(&client)).await;
         }
         ce.set_alarmer(Alarmer::new(
-            self.cluster_info.self_id(),
+            self.membership_info.node_id,
             Arc::clone(&client),
         ));
         let raw_curp = curp_server.raw_curp();
@@ -538,6 +492,13 @@ impl XlineServer {
         Metrics::register_callback()?;
 
         let server_timeout = self.cluster_config.server_timeout();
+        let self_addrs: Vec<_> = self
+            .membership_info
+            .init_members
+            .get(&self.membership_info.node_id)
+            .cloned()
+            .into_iter()
+            .collect();
         Ok((
             KvServer::new(
                 Arc::clone(&kv_storage),
@@ -550,7 +511,7 @@ impl XlineServer {
                 Arc::clone(&client),
                 Arc::clone(&auth_storage),
                 Arc::clone(&id_gen),
-                &self.cluster_info.self_peer_urls(),
+                &self_addrs,
                 self.client_tls_config.as_ref(),
             ),
             LeaseServer::new(
@@ -558,7 +519,6 @@ impl XlineServer {
                 Arc::clone(&auth_storage),
                 Arc::clone(&client),
                 id_gen,
-                Arc::clone(&self.cluster_info),
                 self.client_tls_config.clone(),
                 &self.task_manager,
             ),
@@ -575,7 +535,6 @@ impl XlineServer {
                 Arc::clone(&client),
                 db,
                 Arc::clone(&header_gen),
-                Arc::clone(&self.cluster_info),
                 raw_curp,
                 ce,
                 alarm_storage,
@@ -585,17 +544,6 @@ impl XlineServer {
             AuthWrapper::new(curp_server, auth_storage),
             client,
         ))
-    }
-
-    /// Publish the name of current node to cluster
-    async fn publish(&self, curp_client: Arc<CurpClient>) -> Result<(), tonic::Status> {
-        curp_client
-            .propose_publish(
-                self.cluster_info.self_id(),
-                self.cluster_info.self_name(),
-                self.cluster_info.self_client_urls(),
-            )
-            .await
     }
 
     /// Stop `XlineServer`

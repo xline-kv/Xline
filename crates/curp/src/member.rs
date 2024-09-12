@@ -102,6 +102,11 @@ impl NodeMembershipState {
         self.cluster().effective().contains(self.node_id())
     }
 
+    /// Returns `true` if the given node is a member of the cluster
+    pub(crate) fn check_membership(&self, node_id: u64) -> bool {
+        self.cluster().effective().contains(node_id)
+    }
+
     /// Updates the connects
     ///
     /// Returns a pair of (removed, added) connects
@@ -369,7 +374,7 @@ pub(crate) enum Change {
 }
 
 /// Trait for types that can provide a cluster ID.
-trait ClusterId {
+pub trait ClusterId {
     /// Returns the cluster ID.
     fn cluster_id(&self) -> u64;
 }
@@ -383,6 +388,7 @@ impl ClusterId for Membership {
 }
 
 impl ClusterId for MembershipInfo {
+    #[inline]
     fn cluster_id(&self) -> u64 {
         self.clone().into_membership().cluster_id()
     }
