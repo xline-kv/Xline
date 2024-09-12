@@ -15,6 +15,8 @@ use crate::member::NodeMembershipState;
 use crate::rpc::connect::InnerConnectApiWrapper;
 use crate::rpc::inner_connects;
 use crate::rpc::ProposeId;
+use crate::server::StorageApi;
+use crate::server::StorageError;
 
 use super::RawCurp;
 use super::Role;
@@ -35,7 +37,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Updates the membership config
-    pub(crate) fn update_membership<F>(&self, config: Membership, spawn_sync: F) -> ProposeId
+    pub(crate) fn update_membership<F>(
+        &self,
+        config: Membership,
+        spawn_sync: F,
+    ) -> Result<ProposeId, StorageError>
     where
         F: Fn(Arc<Event>, Arc<Event>, InnerConnectApiWrapper),
     {
@@ -48,9 +54,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let new_connects = self.build_connects(&config);
         ms_w.cluster_mut().append(entry.index, config);
         let (removed, added) = ms_w.update_connects(&new_connects);
+        self.ctx
+            .curp_storage
+            .put_membership(ms_w.node_id(), ms_w.cluster())?;
         self.update_node_sync(removed, added, spawn_sync);
 
-        propose_id
+        Ok(propose_id)
     }
 
     /// Append membership entries
@@ -60,7 +69,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         truncate_at: LogIndex,
         commit_index: LogIndex,
         spawn_sync: F,
-    ) where
+    ) -> Result<(), StorageError>
+    where
         E: AsRef<LogEntry<C>>,
         I: IntoIterator<Item = E>,
         F: Fn(Arc<Event>, Arc<Event>, InnerConnectApiWrapper),
@@ -81,9 +91,14 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             self.update_node_sync(removed, added, &spawn_sync);
             ms_w.cluster_mut().append(index, config);
             ms_w.cluster_mut().commit(commit_index.min(index));
+            self.ctx
+                .curp_storage
+                .put_membership(ms_w.node_id(), ms_w.cluster())?;
         }
 
         self.update_role(&ms_w);
+
+        Ok(())
     }
 
     /// Updates the commit index
@@ -118,7 +133,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Updates the background task of node sync
-    /// TODO: member persistent
     fn update_node_sync<F>(
         &self,
         removed: BTreeMap<u64, InnerConnectApiWrapper>,
@@ -141,7 +155,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 remove_events_l.remove(&id).map(|e| e.notify(1)).is_some(),
                 "id doesn't exist"
             );
-            // TODO: update persistent membership
         }
     }
 }

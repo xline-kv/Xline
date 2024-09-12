@@ -771,7 +771,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let (to_persist, truncate_at) = log_w
             .try_append_entries(entries.clone(), prev_log_index, prev_log_term)
             .map_err(|_ig| (term, log_w.commit_index + 1))?;
-        self.append_membership(&entries, truncate_at, leader_commit, spawn_sync);
+        self.append_membership(&entries, truncate_at, leader_commit, spawn_sync)
+            .map_err(|err| {
+                error!("append memebrship entires failed: {err}");
+                (term, log_w.commit_index + 1)
+            })?;
         // update commit index
         let prev_commit_index = log_w.commit_index;
         log_w.commit_index = min(leader_commit, log_w.last_log_index());
