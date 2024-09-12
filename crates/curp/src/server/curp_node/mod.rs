@@ -885,11 +885,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             Self::election_task(Arc::clone(&curp), n)
         });
 
-        let mut remove_events = HashMap::new();
         curp.with_member_connects(|connects| {
             for c in connects.values() {
                 let sync_event = curp.sync_event(c.id());
-                let remove_event = Arc::new(Event::new());
+                let remove_event = curp.remove_event(c.id());
 
                 task_manager.spawn(TaskName::SyncFollower, |n| {
                     Self::sync_follower_task(
@@ -900,25 +899,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                         n,
                     )
                 });
-                _ = remove_events.insert(c.id(), remove_event);
             }
         });
-        // TODO: Remove this after new membership implementation
-        for c in curp.connects() {
-            let sync_event = curp.sync_event(c.id());
-            let remove_event = Arc::new(Event::new());
-
-            task_manager.spawn(TaskName::SyncFollower, |n| {
-                Self::sync_follower_task(
-                    Arc::clone(&curp),
-                    c.value().clone(),
-                    sync_event,
-                    Arc::clone(&remove_event),
-                    n,
-                )
-            });
-            _ = remove_events.insert(c.id(), remove_event);
-        }
 
         task_manager.spawn(TaskName::HandlePropose, |_n| {
             Self::handle_propose_task(Arc::clone(&cmd_executor), Arc::clone(&curp), propose_rx)

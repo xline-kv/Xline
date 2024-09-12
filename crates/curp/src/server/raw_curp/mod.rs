@@ -1356,6 +1356,18 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         )
     }
 
+    // TODO: we could directly abort the sync task instead of signal it manually
+    /// Get remove event
+    pub(super) fn remove_event(&self, id: ServerId) -> Arc<Event> {
+        Arc::clone(
+            self.ctx
+                .remove_events
+                .lock()
+                .get(&id)
+                .unwrap_or_else(|| unreachable!("server id {id} not found")),
+        )
+    }
+
     /// Check if the current node is shutting down
     pub(super) fn is_node_shutdown(&self) -> bool {
         self.task_manager.is_node_shutdown()
