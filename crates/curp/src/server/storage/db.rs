@@ -1,28 +1,17 @@
 use std::ops::Deref;
 
-use engine::{Engine, EngineType, StorageEngine, StorageOps, WriteOperation};
+use engine::{Engine, EngineType, StorageOps, WriteOperation};
 use parking_lot::Mutex;
-use prost::Message;
 use utils::config::EngineConfig;
 
 use super::{
     wal::{codec::DataFrame, config::WALConfig, WALStorage, WALStorageOps},
     RecoverData, StorageApi, StorageError,
 };
-use crate::{
-    cmd::Command,
-    log_entry::LogEntry,
-    members::{ClusterInfo, ServerId},
-    rpc::Member,
-};
+use crate::{cmd::Command, log_entry::LogEntry, member::MembershipState, members::ServerId};
 
 /// Key for persisted state
 const VOTE_FOR: &[u8] = b"VoteFor";
-/// Key for cluster id
-const CLUSTER_ID: &[u8] = b"ClusterId";
-/// Key for member id
-const MEMBER_ID: &[u8] = b"MemberId";
-
 /// Column family name for curp storage
 const CF: &str = "curp";
 /// Column family name for members
@@ -33,6 +22,9 @@ const ROCKSDB_SUB_DIR: &str = "rocksdb";
 
 /// The sub dir for WAL files
 const WAL_SUB_DIR: &str = "wal";
+
+/// Keys for membership persistent
+const MEMBERSHIP: &[u8] = b"membership";
 
 /// `DB` storage implementation
 #[derive(Debug)]
@@ -71,81 +63,6 @@ impl<C: Command> StorageApi for DB<C> {
     }
 
     #[inline]
-    fn put_member(&self, member: &Member) -> Result<(), StorageError> {
-        let id = member.id;
-        let data = member.encode_to_vec();
-        let op = WriteOperation::new_put(MEMBERS_CF, id.to_le_bytes().to_vec(), data);
-        self.db.write_multi(vec![op], true)?;
-        Ok(())
-    }
-
-    #[inline]
-    fn remove_member(&self, id: ServerId) -> Result<(), StorageError> {
-        let id_bytes = id.to_le_bytes();
-        let op = WriteOperation::new_delete(MEMBERS_CF, &id_bytes);
-        self.db.write_multi(vec![op], true)?;
-        Ok(())
-    }
-
-    #[inline]
-    fn put_cluster_info(&self, cluster_info: &ClusterInfo) -> Result<(), StorageError> {
-        let mut ops = Vec::new();
-        ops.push(WriteOperation::new_put(
-            CF,
-            CLUSTER_ID.to_vec(),
-            cluster_info.cluster_id().to_le_bytes().to_vec(),
-        ));
-        ops.push(WriteOperation::new_put(
-            CF,
-            MEMBER_ID.to_vec(),
-            cluster_info.self_id().to_le_bytes().to_vec(),
-        ));
-        for m in cluster_info.all_members_vec() {
-            ops.push(WriteOperation::new_put(
-                MEMBERS_CF,
-                m.id.to_le_bytes().to_vec(),
-                m.encode_to_vec(),
-            ));
-        }
-        self.db.write_multi(ops, true)?;
-        Ok(())
-    }
-
-    #[inline]
-    fn recover_cluster_info(&self) -> Result<Option<ClusterInfo>, StorageError> {
-        let cluster_id = self.db.get(CF, CLUSTER_ID)?.map(|bytes| {
-            u64::from_le_bytes(
-                bytes
-                    .as_slice()
-                    .try_into()
-                    .unwrap_or_else(|e| unreachable!("cannot decode index from backend, {e:?}")),
-            )
-        });
-        let member_id = self.db.get(CF, MEMBER_ID)?.map(|bytes| {
-            u64::from_le_bytes(
-                bytes
-                    .as_slice()
-                    .try_into()
-                    .unwrap_or_else(|e| unreachable!("cannot decode index from backend, {e:?}")),
-            )
-        });
-        let mut members = vec![];
-        for (_k, v) in self.db.get_all(MEMBERS_CF)? {
-            let member = Member::decode(v.as_ref())?;
-            members.push(member);
-        }
-
-        let cluster_info = match (cluster_id, member_id, members.is_empty()) {
-            (Some(cluster_id), Some(member_id), false) => {
-                Some(ClusterInfo::new(cluster_id, member_id, members))
-            }
-            _ => None,
-        };
-
-        Ok(cluster_info)
-    }
-
-    #[inline]
     fn recover(&self) -> Result<RecoverData<Self::Command>, StorageError> {
         let entries = self.wal.lock().recover()?;
         let voted_for = self
@@ -154,6 +71,26 @@ impl<C: Command> StorageApi for DB<C> {
             .map(|bytes| bincode::deserialize::<(u64, ServerId)>(&bytes))
             .transpose()?;
         Ok((voted_for, entries))
+    }
+
+    #[inline]
+    fn put_membership(
+        &self,
+        node_id: u64,
+        membership: &MembershipState,
+    ) -> Result<(), StorageError> {
+        let data = bincode::serialize(&(node_id, membership))?;
+        let op = WriteOperation::new_put(CF, MEMBERSHIP.to_vec(), data);
+        self.db.write_multi(vec![op], true).map_err(Into::into)
+    }
+
+    #[inline]
+    fn recover_membership(&self) -> Result<Option<(u64, MembershipState)>, StorageError> {
+        self.db
+            .get(CF, MEMBERSHIP)?
+            .map(|bytes| bincode::deserialize::<(u64, MembershipState)>(&bytes))
+            .transpose()
+            .map_err(Into::into)
     }
 }
 
