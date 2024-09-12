@@ -1,8 +1,10 @@
 use std::collections::btree_map::Entry;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
 use std::hash::Hash;
+use std::hash::Hasher;
 use std::iter;
 use std::sync::Arc;
 
@@ -35,6 +37,16 @@ impl MembershipInfo {
             init_members,
         }
     }
+
+    /// Converts `MembershipInfo` into a `Membership`.
+    pub(crate) fn into_membership(self) -> Membership {
+        let MembershipInfo { init_members, .. } = self;
+
+        Membership {
+            nodes: init_members.clone(),
+            members: vec![init_members.into_keys().collect()],
+        }
+    }
 }
 
 /// The membership state of the node
@@ -56,14 +68,8 @@ impl NodeMembershipState {
         info: MembershipInfo,
         init_connects: BTreeMap<u64, InnerConnectApiWrapper>,
     ) -> Self {
-        let MembershipInfo {
-            node_id,
-            init_members,
-        } = info;
-        let init_ms = Membership {
-            members: vec![init_members.keys().copied().collect()],
-            nodes: init_members,
-        };
+        let node_id = info.node_id;
+        let init_ms = info.into_membership();
         let cluster_state = MembershipState {
             effective: init_ms,
             index_effective: 1,
@@ -360,4 +366,24 @@ pub(crate) enum Change {
     AddMember(Vec<u64>),
     /// Removes members
     RemoveMember(Vec<u64>),
+}
+
+/// Trait for types that can provide a cluster ID.
+trait ClusterId {
+    /// Returns the cluster ID.
+    fn cluster_id(&self) -> u64;
+}
+
+impl ClusterId for Membership {
+    fn cluster_id(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl ClusterId for MembershipInfo {
+    fn cluster_id(&self) -> u64 {
+        self.clone().into_membership().cluster_id()
+    }
 }
