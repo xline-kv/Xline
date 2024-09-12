@@ -92,7 +92,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             });
         };
         for config in configs {
-            let propose_id = self.curp.update_membership(config, spawn_sync);
+            let propose_id = self.curp.update_membership(config, spawn_sync)?;
             self.curp.wait_propose_ids(Some(propose_id)).await;
         }
 
