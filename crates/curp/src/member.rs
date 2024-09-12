@@ -171,8 +171,8 @@ impl NodeMembershipState {
 }
 
 /// Membership state stored in current node
-#[derive(Debug, Default)]
-pub(crate) struct MembershipState {
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct MembershipState {
     /// Config that exist in log, but haven't committed
     effective: Membership,
     /// Index of the effective membership
