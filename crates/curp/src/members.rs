@@ -10,7 +10,6 @@ use std::{
 use dashmap::{mapref::one::Ref, DashMap};
 use itertools::Itertools;
 #[cfg(not(madsim))]
-use tracing::debug;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
 
@@ -331,23 +330,6 @@ impl ClusterInfo {
         self.members
             .iter()
             .find_map(|m| (m.name == name).then_some(m.id))
-    }
-
-    /// Check if cluster contains a node
-    pub(crate) fn contains(&self, node_id: ServerId) -> bool {
-        self.members.contains_key(&node_id)
-    }
-
-    /// Set state for a node
-    pub(crate) fn set_node_state(&self, node_id: ServerId, name: String, client_urls: Vec<String>) {
-        if let Some(mut s) = self.members.get_mut(&node_id) {
-            debug!(
-                "set name and client_urls for node {} to {},{:?}",
-                node_id, name, client_urls
-            );
-            s.name = name;
-            s.client_urls = client_urls;
-        }
     }
 }
 

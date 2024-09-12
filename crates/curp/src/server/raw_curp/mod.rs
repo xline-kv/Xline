@@ -68,7 +68,6 @@ use crate::log_entry::LogEntry;
 use crate::member::Membership;
 use crate::member::MembershipInfo;
 use crate::member::NodeMembershipState;
-use crate::members::ClusterInfo;
 use crate::members::ServerId;
 use crate::quorum::QuorumSet;
 use crate::response::ResponseSender;
@@ -127,8 +126,6 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     membership_info: MembershipInfo,
     /// Member connects
     member_connects: BTreeMap<u64, InnerConnectApiWrapper>,
-    /// Cluster information
-    cluster_info: Arc<ClusterInfo>,
     /// Current node is leader or not
     is_leader: bool,
     /// Cmd board for tracking the cmd sync results
@@ -187,7 +184,6 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
         let log = RwLock::new(Log::new(args.cfg.batch_max_size, args.cfg.log_entries_cap));
 
         let ctx = Context::builder()
-            .cluster_info(args.cluster_info)
             .cb(args.cmd_board)
             .lm(args.lease_manager)
             .cfg(args.cfg)
@@ -331,8 +327,6 @@ enum Role {
 #[derive(Builder)]
 #[builder(build_fn(skip))]
 struct Context<C: Command, RC: RoleChange> {
-    /// Cluster information
-    cluster_info: Arc<ClusterInfo>,
     /// Config
     cfg: Arc<CurpConfig>,
     /// Client tls config
@@ -384,10 +378,6 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
     /// Build the context from the builder
     pub(super) fn build(&mut self) -> Result<Context<C, RC>, ContextBuilderError> {
         Ok(Context {
-            cluster_info: match self.cluster_info.take() {
-                Some(value) => value,
-                None => return Err(ContextBuilderError::UninitializedField("cluster_info")),
-            },
             cfg: match self.cfg.take() {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("cfg")),
@@ -454,7 +444,6 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
 impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Context")
-            .field("cluster_info", &self.cluster_info)
             .field("cfg", &self.cfg)
             .field("cb", &self.cb)
             .field("leader_tx", &self.leader_tx)
@@ -928,7 +917,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
         let st_r = self.st.read();
         let log_r = self.log.read();
-        let contains_candidate = self.cluster().contains(candidate_id);
+        let contains_candidate = self.ms.map_read(|ms| ms.check_membership(candidate_id));
         // extra check to shutdown removed node
         if !contains_candidate {
             debug!(
@@ -1020,7 +1009,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.become_leader(&mut st_w);
 
         // update next_index for each follower
-        for other in self.ctx.cluster_info.peers_ids() {
+        let peers = ms_r
+            .cluster()
+            .effective()
+            .members()
+            .filter_map(|(id, _)| (id != ms_r.node_id()).then_some(id));
+        for other in peers {
             self.lst.update_next_index(other, last_log_index + 1); // iter from the end to front is more likely to match the follower
         }
         if prev_last_log_index < last_log_index {
@@ -1146,11 +1140,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         if st_r.role != Role::Leader {
             return Err(CurpError::redirect(st_r.leader_id, st_r.term));
         }
-        if !self
-            .cluster()
-            .get(&target_id)
-            .is_some_and(|m| !m.is_learner)
-        {
+        if !self.ms.map_read(|ms| ms.check_membership(target_id)) {
             return Err(CurpError::LeaderTransfer(
                 "target node does not exist or it is a learner".to_owned(),
             ));
@@ -1186,7 +1176,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         if st_w.role == Role::Leader {
             return None;
         }
-        if self.cluster().self_member().is_learner() {
+        if !self.ms.read().is_member() {
             return None;
         }
         let mut cst_l = self.cst.lock();
@@ -1216,14 +1206,22 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.log.read().commit_index
     }
 
-    /// Get cluster info
-    pub(super) fn cluster(&self) -> &ClusterInfo {
-        self.ctx.cluster_info.as_ref()
+    #[allow(clippy::unused_self)]
+    #[cfg(test)]
+    /// Get cluster id by it's name
+    pub(super) fn get_id_by_name(&self, _name: impl AsRef<str>) -> Option<u64> {
+        // FIXME: implement logic
+        None
     }
 
     /// Get self's id
     pub(super) fn id(&self) -> ServerId {
-        self.ctx.cluster_info.self_id()
+        self.ms.read().node_id()
+    }
+
+    /// Retruns `true` if the current node is a learner
+    pub(super) fn is_learner(&self) -> bool {
+        !self.ms.read().is_member()
     }
 
     /// Get self's node id

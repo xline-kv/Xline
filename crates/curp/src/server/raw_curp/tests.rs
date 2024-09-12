@@ -38,19 +38,15 @@ impl RawCurp<TestCommand, TestRoleChange> {
         role_change: TestRoleChange,
         task_manager: Arc<TaskManager>,
     ) -> Self {
-        let all_members: HashMap<_, _> = (0..n)
-            .map(|i| (format!("S{i}"), vec![format!("S{i}")]))
-            .collect();
-        let cluster_info = Arc::new(ClusterInfo::from_members_map(all_members, [], "S0"));
+        let peer_ids: Vec<_> = (1..n).collect();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
-        let sync_events = cluster_info
-            .peers_ids()
+        let sync_events = peer_ids
+            .clone()
             .into_iter()
             .map(|id| (id, Arc::new(Event::new())))
             .collect();
-        let connects = cluster_info
-            .peers_ids()
+        let connects = peer_ids
             .into_iter()
             .map(|id| {
                 (
@@ -81,7 +77,6 @@ impl RawCurp<TestCommand, TestRoleChange> {
         let id_barrier = Arc::new(IdBarrier::new());
 
         Self::builder()
-            .cluster_info(cluster_info)
             .is_leader(true)
             .cmd_board(cmd_board)
             .lease_manager(lease_manager)
@@ -230,7 +225,7 @@ fn heartbeat_will_calibrate_term() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { RawCurp::new_test(3, mock_role_change(), task_manager) };
 
-    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let s1_id = curp.get_id_by_name("S1").unwrap();
     let result = curp.handle_append_entries_resp(s1_id, None, 2, false, 1);
     assert!(result.is_err());
 
@@ -245,7 +240,7 @@ fn heartbeat_will_calibrate_next_index() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = RawCurp::new_test(3, mock_role_change(), task_manager);
 
-    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let s1_id = curp.get_id_by_name("S1").unwrap();
     let result = curp.handle_append_entries_resp(s1_id, None, 0, false, 1);
     assert_eq!(result, Ok(false));
 
@@ -260,7 +255,7 @@ fn handle_ae_will_calibrate_term() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
-    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    let s2_id = curp.get_id_by_name("S2").unwrap();
 
     let result = curp.handle_append_entries(2, s2_id, 0, 0, vec![], 0, |_, _, _| {});
     assert!(result.is_ok());
@@ -278,7 +273,7 @@ fn handle_ae_will_set_leader_id() {
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
-    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    let s2_id = curp.get_id_by_name("S2").unwrap();
     let result = curp.handle_append_entries(1, s2_id, 0, 0, vec![], 0, |_, _, _| {});
     assert!(result.is_ok());
 
@@ -295,7 +290,7 @@ fn handle_ae_will_reject_wrong_term() {
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
-    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    let s2_id = curp.get_id_by_name("S2").unwrap();
     let result = curp.handle_append_entries(0, s2_id, 0, 0, vec![], 0, |_, _, _| {});
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().0, 1);
@@ -308,7 +303,7 @@ fn handle_ae_will_reject_wrong_log() {
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
-    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    let s2_id = curp.get_id_by_name("S2").unwrap();
     let result = curp.handle_append_entries(
         1,
         s2_id,
@@ -400,7 +395,7 @@ fn handle_vote_will_calibrate_term() {
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     curp.st.write().leader_id = None;
 
-    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let s1_id = curp.get_id_by_name("S1").unwrap();
     let result = curp.handle_vote(2, s1_id, 0, 0).unwrap();
     assert_eq!(result.0, 2);
 
@@ -415,7 +410,7 @@ fn handle_vote_will_reject_smaller_term() {
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
 
-    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let s1_id = curp.get_id_by_name("S1").unwrap();
     let result = curp.handle_vote(1, s1_id, 0, 0);
     assert_eq!(result.unwrap_err(), Some(2));
 }
@@ -425,7 +420,7 @@ fn handle_vote_will_reject_smaller_term() {
 fn handle_vote_will_reject_outdated_candidate() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
-    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    let s2_id = curp.get_id_by_name("S2").unwrap();
     let result = curp.handle_append_entries(
         2,
         s2_id,
@@ -442,7 +437,7 @@ fn handle_vote_will_reject_outdated_candidate() {
     );
     assert!(result.is_ok());
     curp.st.write().leader_id = None;
-    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let s1_id = curp.get_id_by_name("S1").unwrap();
     let result = curp.handle_vote(3, s1_id, 0, 0);
     assert_eq!(result.unwrap_err(), Some(3));
 }
@@ -459,12 +454,12 @@ fn pre_candidate_will_become_candidate_then_become_leader_after_election_succeed
         let _ig = curp.tick_election();
     }
 
-    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let s1_id = curp.get_id_by_name("S1").unwrap();
     let result = curp.handle_pre_vote_resp(s1_id, 2, true).unwrap();
     assert!(result.is_some());
     assert_eq!(curp.role(), Role::Candidate);
 
-    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    let s2_id = curp.get_id_by_name("S2").unwrap();
     let result = curp.handle_pre_vote_resp(s2_id, 2, true);
     assert!(result.is_err());
     assert_eq!(curp.role(), Role::Candidate);
@@ -490,7 +485,7 @@ fn vote_will_calibrate_pre_candidate_term() {
         let _ig = curp.tick_election();
     }
 
-    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let s1_id = curp.get_id_by_name("S1").unwrap();
     let result = curp.handle_vote_resp(s1_id, 3, false, vec![]);
     assert!(result.is_err());
 
@@ -517,11 +512,11 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
     curp.push_cmd(ProposeId(TEST_CLIENT_ID, 0), Arc::clone(&cmd0));
     curp.log.map_write(|mut log_w| log_w.commit_index = 1);
 
-    let s0_id = curp.cluster().get_id_by_name("S0").unwrap();
-    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
-    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
-    let s3_id = curp.cluster().get_id_by_name("S3").unwrap();
-    let s4_id = curp.cluster().get_id_by_name("S4").unwrap();
+    let s0_id = curp.get_id_by_name("S0").unwrap();
+    let s1_id = curp.get_id_by_name("S1").unwrap();
+    let s2_id = curp.get_id_by_name("S2").unwrap();
+    let s3_id = curp.get_id_by_name("S3").unwrap();
+    let s4_id = curp.get_id_by_name("S4").unwrap();
 
     let spec_pools = BTreeMap::from([
         (
@@ -672,8 +667,8 @@ fn is_synced_should_return_true_when_followers_caught_up_with_leader() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { RawCurp::new_test(3, mock_role_change(), task_manager) };
 
-    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
-    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    let s1_id = curp.get_id_by_name("S1").unwrap();
+    let s2_id = curp.get_id_by_name("S2").unwrap();
     curp.log.write().commit_index = 3;
     assert!(!curp.is_synced(s1_id));
     assert!(!curp.is_synced(s2_id));
@@ -740,7 +735,7 @@ fn add_learner_node_and_promote_should_success() {
 fn add_exists_node_should_return_node_already_exists_error() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
-    let exists_node_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let exists_node_id = curp.get_id_by_name("S1").unwrap();
     let changes = vec![ConfChange::add(
         exists_node_id,
         vec!["http://127.0.0.1:4567".to_owned()],
@@ -757,7 +752,7 @@ fn remove_node_should_remove_node_from_curp() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
     let old_cluster = curp.cluster().clone();
-    let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let follower_id = curp.get_id_by_name("S1").unwrap();
     let changes = vec![ConfChange::remove(follower_id)];
     assert!(curp.check_new_config(&changes).is_ok());
     let infos = curp.apply_conf_change(changes.clone()).unwrap();
@@ -794,7 +789,7 @@ fn update_node_should_update_the_address_of_node() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     let old_cluster = curp.cluster().clone();
-    let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let follower_id = curp.get_id_by_name("S1").unwrap();
     let mut mock_connect = MockInnerConnectApi::new();
     mock_connect.expect_update_addrs().returning(|_| Ok(()));
     curp.set_connect(
@@ -835,7 +830,7 @@ fn update_node_should_update_the_address_of_node() {
 fn leader_handle_propose_conf_change() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
-    let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let follower_id = curp.get_id_by_name("S1").unwrap();
     assert_eq!(
         curp.cluster().peer_urls(follower_id),
         Some(vec!["S1".to_owned()])
@@ -856,7 +851,7 @@ fn follower_handle_propose_conf_change() {
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
 
-    let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let follower_id = curp.get_id_by_name("S1").unwrap();
     assert_eq!(
         curp.cluster().peer_urls(follower_id),
         Some(vec!["S1".to_owned()])
@@ -889,7 +884,7 @@ fn leader_handle_move_leader() {
     let res = curp.handle_move_leader(12345);
     assert!(res.is_err());
 
-    let target_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let target_id = curp.get_id_by_name("S1").unwrap();
     let res = curp.handle_move_leader(target_id);
     // need to send try become leader now after handle_move_leader
     assert!(res.is_ok_and(|b| b));
@@ -906,7 +901,7 @@ fn follower_handle_move_leader() {
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
 
-    let target_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let target_id = curp.get_id_by_name("S1").unwrap();
     let res = curp.handle_move_leader(target_id);
     assert!(matches!(res, Err(CurpError::Redirect(_))));
 }
@@ -918,7 +913,7 @@ fn leader_will_reset_transferee_after_remove_node() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
 
-    let target_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let target_id = curp.get_id_by_name("S1").unwrap();
     let res = curp.handle_move_leader(target_id);
     assert!(res.is_ok_and(|b| b));
     assert_eq!(curp.get_transferee(), Some(target_id));
@@ -935,7 +930,7 @@ fn leader_will_reject_propose_when_transferring() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
 
-    let target_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let target_id = curp.get_id_by_name("S1").unwrap();
     let res = curp.handle_move_leader(target_id);
     assert!(res.is_ok_and(|b| b));
 
@@ -951,7 +946,7 @@ fn leader_will_reset_transferee_after_it_become_follower() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
 
-    let target_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let target_id = curp.get_id_by_name("S1").unwrap();
     let res = curp.handle_move_leader(target_id);
     assert!(res.is_ok_and(|b| b));
     assert_eq!(curp.get_transferee(), Some(target_id));

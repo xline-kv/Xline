@@ -41,7 +41,7 @@ use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
     member::{Membership, MembershipInfo},
-    members::{ClusterInfo, ServerId},
+    members::ServerId,
     response::ResponseSender,
     role_change::RoleChange,
     rpc::{
@@ -168,7 +168,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             return Err(CurpError::shutting_down());
         }
         self.curp.check_leader_transfer()?;
-        self.check_cluster_version(req.cluster_version)?;
         self.curp.check_term(req.term)?;
 
         if req.slow_path {
@@ -338,7 +337,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         req: ShutdownRequest,
         bypassed: bool,
     ) -> Result<ShutdownResponse, CurpError> {
-        self.check_cluster_version(req.cluster_version)?;
         if bypassed {
             self.curp.mark_client_id_bypassed(req.propose_id().0);
         }
@@ -572,7 +570,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         req: FetchReadStateRequest,
     ) -> Result<FetchReadStateResponse, CurpError> {
-        self.check_cluster_version(req.cluster_version)?;
         let cmd = req.cmd()?;
         let state = self.curp.handle_fetch_read_state(Arc::new(cmd));
         Ok(FetchReadStateResponse::new(state))
@@ -583,7 +580,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         req: MoveLeaderRequest,
     ) -> Result<MoveLeaderResponse, CurpError> {
-        self.check_cluster_version(req.cluster_version)?;
         let should_send_try_become_leader_now = self.curp.handle_move_leader(req.node_id)?;
         if should_send_try_become_leader_now {
             if let Err(e) = self
@@ -775,7 +771,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     #[allow(clippy::needless_pass_by_value)] // The value should be consumed
     pub(super) fn new(
         membership_info: MembershipInfo,
-        cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         cmd_executor: Arc<CE>,
         snapshot_allocator: Box<dyn SnapshotAllocator>,
@@ -800,18 +795,15 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 .collect(),
         ));
 
+        let peer_addrs: HashMap<_, _> = membership_info
+            .init_members
+            .clone()
+            .into_iter()
+            .map(|(id, addr)| (id, vec![addr]))
+            .collect();
         let connects =
-            rpc::inner_connects(cluster_info.peers_addrs(), client_tls_config.as_ref()).collect();
-        let member_connects = rpc::inner_connects(
-            membership_info
-                .init_members
-                .clone()
-                .into_iter()
-                .map(|(id, addr)| (id, vec![addr]))
-                .collect(),
-            client_tls_config.as_ref(),
-        )
-        .collect();
+            rpc::inner_connects(peer_addrs.clone(), client_tls_config.as_ref()).collect();
+        let member_connects = rpc::inner_connects(peer_addrs, client_tls_config.as_ref()).collect();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
         let last_applied = cmd_executor
@@ -825,7 +817,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         let (voted_for, entries) = storage.recover()?;
         let curp = Arc::new(
             RawCurp::builder()
-                .cluster_info(Arc::clone(&cluster_info))
                 .is_leader(is_leader)
                 .cmd_board(Arc::clone(&cmd_board))
                 .lease_manager(Arc::clone(&lease_manager))
@@ -1076,19 +1067,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .is_err())
     }
 
-    /// Check cluster version and return new cluster
-    fn check_cluster_version(&self, client_cluster_version: u64) -> Result<(), CurpError> {
-        let server_cluster_version = self.curp.cluster().cluster_version();
-        if client_cluster_version != server_cluster_version {
-            debug!(
-                "client cluster version({}) and server cluster version({}) not match",
-                client_cluster_version, server_cluster_version
-            );
-            return Err(CurpError::wrong_cluster_version());
-        }
-        Ok(())
-    }
-
     /// Get `RawCurp`
     pub(super) fn raw_curp(&self) -> Arc<RawCurp<C, RC>> {
         Arc::clone(&self.curp)
@@ -1229,7 +1207,7 @@ mod tests {
             .expect_append_entries()
             .times(1..)
             .returning(|_, _| Ok(tonic::Response::new(AppendEntriesResponse::new_accept(0))));
-        let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+        let s1_id = curp.get_id_by_name("S1").unwrap();
         mock_connect1.expect_id().return_const(s1_id);
         let remove_event = Arc::new(Event::new());
         task_manager.spawn(TaskName::SyncFollower, |n| {
@@ -1256,7 +1234,7 @@ mod tests {
                 Arc::clone(&task_manager),
             ))
         };
-        let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+        let s2_id = curp.get_id_by_name("S2").unwrap();
         curp.handle_append_entries(2, s2_id, 0, 0, vec![], 0, |_, _, _| {})
             .unwrap();
 
@@ -1266,7 +1244,7 @@ mod tests {
                 VoteResponse::new_accept::<TestCommand>(req.term, vec![]).unwrap(),
             ))
         });
-        let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+        let s1_id = curp.get_id_by_name("S1").unwrap();
         mock_connect1.expect_id().return_const(s1_id);
         curp.set_connect(
             s1_id,
@@ -1279,7 +1257,7 @@ mod tests {
                 VoteResponse::new_accept::<TestCommand>(req.term, vec![]).unwrap(),
             ))
         });
-        let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+        let s2_id = curp.get_id_by_name("S2").unwrap();
         mock_connect2.expect_id().return_const(s2_id);
         curp.set_connect(
             s2_id,

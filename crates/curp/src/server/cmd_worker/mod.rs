@@ -165,14 +165,9 @@ fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
                 }
                 cb.write().notify_shutdown();
             }
-            (EntryData::SetNodeState(node_id, ref name, ref client_urls), _) => {
-                info!("setting node state: {node_id}, urls: {:?}", client_urls);
-                if let Err(e) = ce.set_last_applied(entry.index) {
-                    error!("failed to set last_applied, {e}");
-                    return;
-                }
-                curp.cluster()
-                    .set_node_state(*node_id, name.clone(), client_urls.clone());
+            #[allow(clippy::todo)] // FIXME: Remove this
+            (EntryData::SetNodeState(..), _) => {
+                todo!()
             }
             // The no-op command has been applied to state machine
             (EntryData::Empty, _) => curp.set_no_op_applied(),
