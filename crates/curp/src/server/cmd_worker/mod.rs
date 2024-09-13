@@ -165,10 +165,6 @@ fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
                 }
                 cb.write().notify_shutdown();
             }
-            #[allow(clippy::todo)] // FIXME: Remove this
-            (EntryData::SetNodeState(..), _) => {
-                todo!()
-            }
             // The no-op command has been applied to state machine
             (EntryData::Empty, _) => curp.set_no_op_applied(),
             (EntryData::Member(_), _) => {}

@@ -78,7 +78,6 @@ use crate::rpc::CurpError;
 use crate::rpc::IdSet;
 use crate::rpc::PoolEntry;
 use crate::rpc::ProposeId;
-use crate::rpc::PublishRequest;
 use crate::rpc::ReadState;
 use crate::rpc::Redirect;
 use crate::server::cmd_board::CmdBoardRef;
@@ -663,34 +662,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let entry = log_w.push(st_r.term, propose_id, EntryData::Shutdown);
         debug!("{} gets new log[{}]", self.id(), entry.index);
         self.entry_process_single(&mut log_w, entry.as_ref(), true, st_r.term);
-
-        let log_r = RwLockWriteGuard::downgrade(log_w);
-        self.persistent_log_entries(&[entry.as_ref()], &log_r);
-
-        Ok(())
-    }
-
-    /// Handle `publish` request
-    pub(super) fn handle_publish(&self, req: PublishRequest) -> Result<(), CurpError> {
-        debug!(
-            "{} gets publish with propose id {}",
-            self.id(),
-            req.propose_id()
-        );
-        let st_r = self.st.read();
-        if st_r.role != Role::Leader {
-            return Err(CurpError::redirect(st_r.leader_id, st_r.term));
-        }
-        if self.lst.get_transferee().is_some() {
-            return Err(CurpError::leader_transfer("leader transferring"));
-        }
-
-        self.deduplicate(req.propose_id(), None)?;
-
-        let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, req.propose_id(), req);
-        debug!("{} gets new log[{}]", self.id(), entry.index);
-        self.entry_process_single(&mut log_w, entry.as_ref(), false, st_r.term);
 
         let log_r = RwLockWriteGuard::downgrade(log_w);
         self.persistent_log_entries(&[entry.as_ref()], &log_r);
@@ -1692,10 +1663,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 EntryData::Command(ref cmd) => {
                     let _ignore = ucp_l.insert(&PoolEntry::new(propose_id, Arc::clone(cmd)));
                 }
-                EntryData::Shutdown
-                | EntryData::Empty
-                | EntryData::SetNodeState(_, _, _)
-                | EntryData::Member(_) => {}
+                EntryData::Shutdown | EntryData::Empty | EntryData::Member(_) => {}
             }
         }
     }

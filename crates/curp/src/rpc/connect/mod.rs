@@ -40,9 +40,9 @@ use crate::{
         AddMemberRequest, AddMemberResponse, AppendEntriesRequest, AppendEntriesResponse,
         CurpError, FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
         InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse,
-        ProposeRequest, Protocol, PublishRequest, PublishResponse, RemoveMemberRequest,
-        RemoveMemberResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
-        TryBecomeLeaderNowRequest, VoteRequest, VoteResponse,
+        ProposeRequest, Protocol, RemoveMemberRequest, RemoveMemberResponse, ShutdownRequest,
+        ShutdownResponse, TriggerShutdownRequest, TryBecomeLeaderNowRequest, VoteRequest,
+        VoteResponse,
     },
     server::StreamingProtocol,
     snapshot::Snapshot,
@@ -192,13 +192,6 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         &self,
         timeout: Duration,
     ) -> Result<tonic::Response<ReadIndexResponse>, CurpError>;
-
-    /// Send `PublishRequest`
-    async fn publish(
-        &self,
-        request: PublishRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<PublishResponse>, CurpError>;
 
     /// Send `ShutdownRequest`
     async fn shutdown(
@@ -477,19 +470,6 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_current();
         with_timeout!(timeout, client.shutdown(req)).map_err(Into::into)
-    }
-
-    /// Send `PublishRequest`
-    #[instrument(skip(self), name = "client publish")]
-    async fn publish(
-        &self,
-        request: PublishRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<PublishResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_current();
-        with_timeout!(timeout, client.publish(req)).map_err(Into::into)
     }
 
     /// Send `FetchReadStateRequest`
@@ -788,18 +768,6 @@ where
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.read_index(req).await.map_err(Into::into)
-    }
-
-    /// Send `PublishRequest`
-    async fn publish(
-        &self,
-        request: PublishRequest,
-        _timeout: Duration,
-    ) -> Result<tonic::Response<PublishResponse>, CurpError> {
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_bypassed();
-        req.metadata_mut().inject_current();
-        self.server.publish(req).await.map_err(Into::into)
     }
 
     /// Send `ShutdownRequest`

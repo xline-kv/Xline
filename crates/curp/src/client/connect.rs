@@ -36,14 +36,6 @@ pub trait ClientApi {
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), Self::Error>;
 
-    /// Send propose to publish a node id and name
-    async fn propose_publish(
-        &self,
-        node_id: ServerId,
-        node_name: String,
-        node_client_urls: Vec<String>,
-    ) -> Result<(), Self::Error>;
-
     /// Send move leader request
     async fn move_leader(&self, node_id: ServerId) -> Result<(), Self::Error>;
 
@@ -101,15 +93,6 @@ pub(crate) trait RepeatableClientApi {
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self, ctx: Context) -> Result<(), Self::Error>;
-
-    /// Send propose to publish a node id and name
-    async fn propose_publish(
-        &self,
-        node_id: ServerId,
-        node_name: String,
-        node_client_urls: Vec<String>,
-        ctx: Context,
-    ) -> Result<(), Self::Error>;
 
     /// Send move leader request
     async fn move_leader(&self, node_id: u64, ctx: Context) -> Result<(), Self::Error>;

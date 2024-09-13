@@ -159,10 +159,9 @@ mod tests {
             AddLearnerRequest, AddLearnerResponse, AddMemberRequest, AddMemberResponse, CurpError,
             FetchMembershipRequest, FetchMembershipResponse, FetchReadStateRequest,
             FetchReadStateResponse, Member, MoveLeaderRequest, MoveLeaderResponse, OpResponse,
-            ProposeId, ProposeRequest, ProposeResponse, PublishRequest, PublishResponse,
-            ReadIndexResponse, RecordRequest, RecordResponse, RemoveLearnerRequest,
-            RemoveLearnerResponse, RemoveMemberRequest, RemoveMemberResponse, ResponseOp,
-            ShutdownRequest, ShutdownResponse, SyncedResponse,
+            ProposeId, ProposeRequest, ProposeResponse, ReadIndexResponse, RecordRequest,
+            RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse, RemoveMemberRequest,
+            RemoveMemberResponse, ResponseOp, ShutdownRequest, ShutdownResponse, SyncedResponse,
         },
     };
 
@@ -211,15 +210,6 @@ mod tests {
             &self,
             _timeout: Duration,
         ) -> Result<tonic::Response<ReadIndexResponse>, CurpError> {
-            unreachable!("please use MockedConnectApi")
-        }
-
-        /// Send `PublishRequest`
-        async fn publish(
-            &self,
-            _request: PublishRequest,
-            _timeout: Duration,
-        ) -> Result<tonic::Response<PublishResponse>, CurpError> {
             unreachable!("please use MockedConnectApi")
         }
 

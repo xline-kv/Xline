@@ -50,11 +50,10 @@ use crate::{
         AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchMembershipRequest,
         FetchMembershipResponse, FetchReadStateRequest, FetchReadStateResponse,
         InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
-        MoveLeaderResponse, Node, PoolEntry, ProposeId, ProposeRequest, ProposeResponse,
-        PublishRequest, PublishResponse, QuorumSet, ReadIndexResponse, RecordRequest,
-        RecordResponse, ShutdownRequest, ShutdownResponse, SyncedResponse, TriggerShutdownRequest,
-        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
-        VoteRequest, VoteResponse,
+        MoveLeaderResponse, Node, PoolEntry, ProposeId, ProposeRequest, ProposeResponse, QuorumSet,
+        ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
+        SyncedResponse, TriggerShutdownRequest, TriggerShutdownResponse, TryBecomeLeaderNowRequest,
+        TryBecomeLeaderNowResponse, VoteRequest, VoteResponse,
     },
     server::{
         cmd_worker::{after_sync, worker_reset, worker_snapshot},
@@ -343,19 +342,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         self.curp.handle_shutdown(req.propose_id())?;
         CommandBoard::wait_for_shutdown_synced(&self.cmd_board).await;
         Ok(ShutdownResponse::default())
-    }
-
-    /// Handle `Publish` requests
-    pub(super) fn publish(
-        &self,
-        req: PublishRequest,
-        bypassed: bool,
-    ) -> Result<PublishResponse, CurpError> {
-        if bypassed {
-            self.curp.mark_client_id_bypassed(req.propose_id().0);
-        }
-        self.curp.handle_publish(req)?;
-        Ok(PublishResponse::default())
     }
 
     /// Handle lease keep alive requests
