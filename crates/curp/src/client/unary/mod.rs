@@ -12,12 +12,9 @@ use super::{
     connect::{ProposeResponse, RepeatableClientApi},
     retry::Context,
 };
-use crate::{
-    members::ServerId,
-    rpc::{
-        AddLearnerRequest, AddMemberRequest, CurpError, FetchReadStateRequest, MoveLeaderRequest,
-        PublishRequest, ReadState, RemoveLearnerRequest, RemoveMemberRequest, ShutdownRequest,
-    },
+use crate::rpc::{
+    AddLearnerRequest, AddMemberRequest, CurpError, FetchReadStateRequest, MoveLeaderRequest,
+    ReadState, RemoveLearnerRequest, RemoveMemberRequest, ShutdownRequest,
 };
 
 /// The unary client
@@ -71,24 +68,6 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         let _resp = ctx
             .cluster_state()
             .map_leader(|conn| async move { conn.shutdown(req, timeout).await })
-            .await?;
-
-        Ok(())
-    }
-
-    /// Send propose to publish a node id and name
-    async fn propose_publish(
-        &self,
-        node_id: ServerId,
-        node_name: String,
-        node_client_urls: Vec<String>,
-        ctx: Context,
-    ) -> Result<(), Self::Error> {
-        let req = PublishRequest::new(ctx.propose_id(), node_id, node_name, node_client_urls);
-        let timeout = self.config.wait_synced_timeout();
-        let _resp = ctx
-            .cluster_state()
-            .map_leader(|conn| async move { conn.publish(req, timeout).await })
             .await?;
 
         Ok(())

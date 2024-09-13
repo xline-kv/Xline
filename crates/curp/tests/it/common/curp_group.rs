@@ -319,8 +319,6 @@ impl CurpGroup {
                 task_manager,
             },
         );
-        let client = self.new_client().await;
-        client.propose_publish(id, name, vec![]).await.unwrap();
     }
 
     pub fn all_addrs(&self) -> impl Iterator<Item = &String> {

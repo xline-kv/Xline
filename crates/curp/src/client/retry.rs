@@ -406,30 +406,6 @@ where
         .await
     }
 
-    /// Send propose to publish a node id and name
-    async fn propose_publish(
-        &self,
-        node_id: ServerId,
-        node_name: String,
-        node_client_urls: Vec<String>,
-    ) -> Result<(), Self::Error> {
-        self.retry::<_, _>(|client, ctx| {
-            let name_c = node_name.clone();
-            let node_client_urls_c = node_client_urls.clone();
-            async move {
-                RepeatableClientApi::propose_publish(
-                    client,
-                    node_id,
-                    name_c,
-                    node_client_urls_c,
-                    ctx,
-                )
-                .await
-            }
-        })
-        .await
-    }
-
     /// Send move leader request
     async fn move_leader(&self, node_id: u64) -> Result<(), Self::Error> {
         self.retry::<_, _>(|client, ctx| client.move_leader(node_id, ctx))

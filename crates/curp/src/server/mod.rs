@@ -40,8 +40,6 @@ use crate::rpc::MoveLeaderRequest;
 use crate::rpc::MoveLeaderResponse;
 use crate::rpc::OpResponse;
 use crate::rpc::ProposeRequest;
-use crate::rpc::PublishRequest;
-use crate::rpc::PublishResponse;
 use crate::rpc::ReadIndexRequest;
 use crate::rpc::ReadIndexResponse;
 use crate::rpc::RecordRequest;
@@ -153,18 +151,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
         request.metadata().extract_span();
         Ok(tonic::Response::new(
             self.inner.shutdown(request.into_inner(), bypassed).await?,
-        ))
-    }
-
-    #[instrument(skip_all, name = "curp_publish")]
-    async fn publish(
-        &self,
-        request: tonic::Request<PublishRequest>,
-    ) -> Result<tonic::Response<PublishResponse>, tonic::Status> {
-        let bypassed = request.metadata().is_bypassed();
-        request.metadata().extract_span();
-        Ok(tonic::Response::new(
-            self.inner.publish(request.into_inner(), bypassed)?,
         ))
     }
 

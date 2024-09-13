@@ -45,8 +45,6 @@ pub use self::proto::{
         ProposeId as PbProposeId,
         ProposeRequest,
         ProposeResponse,
-        PublishRequest,
-        PublishResponse,
         QuorumSet,
         ReadIndexRequest,
         ReadIndexResponse,
@@ -458,32 +456,6 @@ impl MoveLeaderRequest {
             node_id,
             cluster_version,
         }
-    }
-}
-
-impl PublishRequest {
-    /// Create a new `PublishRequest`
-    pub(crate) fn new(
-        id: ProposeId,
-        node_id: ServerId,
-        name: String,
-        client_urls: Vec<String>,
-    ) -> Self {
-        Self {
-            propose_id: Some(id.into()),
-            node_id,
-            name,
-            client_urls,
-        }
-    }
-
-    /// Get id of the request
-    pub(crate) fn propose_id(&self) -> ProposeId {
-        self.propose_id
-            .unwrap_or_else(|| {
-                unreachable!("propose id should be set in propose conf change request")
-            })
-            .into()
     }
 }
 

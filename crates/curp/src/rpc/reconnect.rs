@@ -10,9 +10,9 @@ use crate::{
         connect::ConnectApi, AddLearnerRequest, AddLearnerResponse, AddMemberRequest,
         AddMemberResponse, CurpError, FetchMembershipRequest, FetchMembershipResponse,
         FetchReadStateRequest, FetchReadStateResponse, MoveLeaderRequest, MoveLeaderResponse,
-        OpResponse, ProposeRequest, PublishRequest, PublishResponse, ReadIndexResponse,
-        RecordRequest, RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse,
-        RemoveMemberRequest, RemoveMemberResponse, ShutdownRequest, ShutdownResponse,
+        OpResponse, ProposeRequest, ReadIndexResponse, RecordRequest, RecordResponse,
+        RemoveLearnerRequest, RemoveLearnerResponse, RemoveMemberRequest, RemoveMemberResponse,
+        ShutdownRequest, ShutdownResponse,
     },
 };
 
@@ -117,15 +117,6 @@ impl<C: ConnectApi> ConnectApi for Reconnect<C> {
         timeout: Duration,
     ) -> Result<tonic::Response<ReadIndexResponse>, CurpError> {
         execute_with_reconnect!(self, ConnectApi::read_index, timeout)
-    }
-
-    /// Send `PublishRequest`
-    async fn publish(
-        &self,
-        request: PublishRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<PublishResponse>, CurpError> {
-        execute_with_reconnect!(self, ConnectApi::publish, request, timeout)
     }
 
     /// Send `ShutdownRequest`
