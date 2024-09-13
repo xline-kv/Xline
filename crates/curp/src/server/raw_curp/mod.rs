@@ -1549,10 +1549,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             return false;
         }
 
+        let member_ids = self.ms.map_read(|ms| ms.members_ids());
         let replicated_ids: Vec<_> = self
             .lst
-            .iter()
-            .filter_map(|f| (!f.is_learner && f.match_index >= i).then_some(*f.key()))
+            .map_status(|(id, f)| (member_ids.contains(id) && f.match_index >= i).then_some(*id))
+            .flatten()
             .chain(iter::once(self.node_id()))
             .collect();
 
