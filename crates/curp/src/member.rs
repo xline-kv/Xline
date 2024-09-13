@@ -107,6 +107,15 @@ impl NodeMembershipState {
         self.cluster().effective().contains(node_id)
     }
 
+    /// Returns all member ids
+    pub(crate) fn members_ids(&self) -> BTreeSet<u64> {
+        self.cluster()
+            .effective()
+            .members()
+            .map(|(id, _)| id)
+            .collect()
+    }
+
     /// Updates the connects
     ///
     /// Returns a pair of (removed, added) connects

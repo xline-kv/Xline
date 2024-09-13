@@ -4,17 +4,12 @@ use std::{
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
-use dashmap::{
-    mapref::{
-        multiple::RefMulti,
-        one::{Ref, RefMut},
-    },
-    DashMap,
-};
 use event_listener::Event;
 use futures::{future, Future};
 use madsim::rand::{thread_rng, Rng};
+use parking_lot::RwLock;
 use tracing::{debug, warn};
+use utils::parking_lot_lock::RwLockMap;
 
 use super::Role;
 use crate::{members::ServerId, rpc::PoolEntry, LogIndex};
@@ -54,23 +49,20 @@ pub(super) struct CandidateState<C> {
     pub(super) votes_received: HashMap<ServerId, bool>,
 }
 
-/// Status of a follower
+/// Status of a Node
 #[derive(Debug, Copy, Clone)]
-pub(super) struct FollowerStatus {
-    /// Index of the next log entry to send to that follower
+pub(super) struct NodeStatus {
+    /// Index of the next log entry to send to that node
     pub(super) next_index: LogIndex,
-    /// Index of highest log entry known to be replicated on that follower
+    /// Index of highest log entry known to be replicated on that node
     pub(super) match_index: LogIndex,
-    /// This node is a learner or not
-    pub(super) is_learner: bool,
 }
 
-impl Default for FollowerStatus {
+impl Default for NodeStatus {
     fn default() -> Self {
         Self {
             next_index: 1,
             match_index: 0,
-            is_learner: false,
         }
     }
 }
@@ -79,7 +71,7 @@ impl Default for FollowerStatus {
 #[derive(Debug)]
 pub(super) struct LeaderState {
     /// For each server, the leader maintains its status
-    statuses: DashMap<ServerId, FollowerStatus>,
+    statuses: RwLock<HashMap<ServerId, NodeStatus>>,
     /// Leader Transferee
     leader_transferee: AtomicU64,
     /// Event of the application of the no-op log, used for readIndex
@@ -149,62 +141,75 @@ impl LeaderState {
     where
         I: IntoIterator<Item = u64>,
     {
+        let statuses = others
+            .into_iter()
+            .map(|o| (o, NodeStatus::default()))
+            .collect();
+
         Self {
-            statuses: others
-                .into_iter()
-                .map(|o| (o, FollowerStatus::default()))
-                .collect(),
+            statuses: RwLock::new(statuses),
             leader_transferee: AtomicU64::new(0),
             no_op_state: NoOpState::default(),
         }
     }
 
     /// Get status for a server
-    fn get_status(&self, id: ServerId) -> Option<Ref<'_, u64, FollowerStatus>> {
-        self.statuses.get(&id)
+    fn map_status_with_id<F, R>(&self, id: ServerId, f: F) -> Option<R>
+    where
+        F: FnMut(&NodeStatus) -> R,
+    {
+        self.statuses.map_read(|statuses| statuses.get(&id).map(f))
     }
 
     /// Get status for a server
-    fn get_status_mut(&self, id: ServerId) -> Option<RefMut<'_, u64, FollowerStatus>> {
-        self.statuses.get_mut(&id)
+    fn map_status_with_id_mut<F, R>(&self, id: ServerId, f: F) -> Option<R>
+    where
+        F: FnMut(&mut NodeStatus) -> R,
+    {
+        self.statuses
+            .map_write(|mut statuses| statuses.get_mut(&id).map(f))
     }
 
     /// Get `next_index` for server
     pub(super) fn get_next_index(&self, id: ServerId) -> Option<LogIndex> {
-        self.get_status(id).map(|s| s.next_index)
+        self.map_status_with_id(id, |s| s.next_index)
     }
 
     /// Get `match_index` for server
     pub(super) fn get_match_index(&self, id: ServerId) -> Option<LogIndex> {
-        self.get_status(id).map(|s| s.match_index)
+        self.map_status_with_id(id, |s| s.match_index)
     }
 
     /// Update `next_index` for server
     pub(super) fn update_next_index(&self, id: ServerId, index: LogIndex) {
-        let Some(mut status) = self.get_status_mut(id) else {
+        let opt = self.map_status_with_id_mut(id, |status| status.next_index = index);
+        if opt.is_none() {
             warn!("follower {} is not found, it maybe has been removed", id);
-            return;
-        };
-        status.next_index = index;
+        }
     }
 
     /// Update `match_index` for server, will update `next_index` if possible
     pub(super) fn update_match_index(&self, id: ServerId, index: LogIndex) {
-        let Some(mut status) = self.get_status_mut(id) else {
+        let opt = self.map_status_with_id_mut(id, |status| {
+            if status.match_index >= index {
+                return;
+            }
+            status.match_index = index;
+            status.next_index = index + 1;
+            debug!("follower {id}'s match_index updated to {index}");
+        });
+        if opt.is_none() {
             warn!("follower {} is not found, it maybe has been removed", id);
-            return;
         };
-        if status.match_index >= index {
-            return;
-        }
-        status.match_index = index;
-        status.next_index = index + 1;
-        debug!("follower {id}'s match_index updated to {index}");
     }
 
     /// Create a `Iterator` for all statuses
-    pub(super) fn iter(&self) -> impl Iterator<Item = RefMulti<'_, ServerId, FollowerStatus>> {
-        self.statuses.iter()
+    pub(super) fn map_status<F, R>(&self, f: F) -> impl Iterator<Item = R>
+    where
+        F: FnMut((&u64, &NodeStatus)) -> R,
+    {
+        self.statuses
+            .map_read(|status| status.iter().map(f).collect::<Vec<_>>().into_iter())
     }
 
     /// Get transferee
