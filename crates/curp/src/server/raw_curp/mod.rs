@@ -140,8 +140,6 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     sync_events: DashMap<ServerId, Arc<Event>>,
     /// Followers remove event trigger
     remove_events: Arc<Mutex<HashMap<ServerId, Arc<Event>>>>,
-    /// Connects of peers
-    connects: DashMap<ServerId, InnerConnectApiWrapper>,
     /// curp storage
     curp_storage: Arc<DB<C>>,
     /// client tls config
@@ -188,7 +186,6 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             .sync_events(args.sync_events)
             .remove_events(args.remove_events)
             .role_change(args.role_change)
-            .connects(args.connects)
             .curp_storage(args.curp_storage)
             .client_tls_config(args.client_tls_config)
             .spec_pool(args.spec_pool)
@@ -345,8 +342,6 @@ struct Context<C: Command, RC: RoleChange> {
     leader_event: Arc<Event>,
     /// Leader change callback
     role_change: RC,
-    /// Connects of peers
-    connects: DashMap<ServerId, InnerConnectApiWrapper>,
     /// Curp storage
     curp_storage: Arc<DB<C>>,
     /// Speculative pool
@@ -398,10 +393,6 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
             role_change: match self.role_change.take() {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("role_change")),
-            },
-            connects: match self.connects.take() {
-                Some(value) => value,
-                None => return Err(ContextBuilderError::UninitializedField("connects")),
             },
             curp_storage: match self.curp_storage.take() {
                 Some(value) => value,
@@ -1351,8 +1342,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Get all connects
-    pub(super) fn connects(&self) -> &DashMap<ServerId, InnerConnectApiWrapper> {
-        &self.ctx.connects
+    pub(super) fn map_connects<F, R>(&self, mut f: F) -> R
+    where
+        F: FnMut(&BTreeMap<u64, InnerConnectApiWrapper>) -> R,
+    {
+        self.ms.map_read(|ms| f(ms.connects()))
     }
 
     /// Get all connects
