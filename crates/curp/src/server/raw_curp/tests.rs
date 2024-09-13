@@ -9,7 +9,7 @@ use utils::config::{
 
 use super::*;
 use crate::{
-    rpc::{connect::MockInnerConnectApi, Redirect},
+    rpc::Redirect,
     server::{
         cmd_board::CommandBoard,
         conflict::test_pools::{TestSpecPool, TestUncomPool},
@@ -46,15 +46,6 @@ impl RawCurp<TestCommand, TestRoleChange> {
             .into_iter()
             .map(|id| (id, Arc::new(Event::new())))
             .collect();
-        let connects = peer_ids
-            .into_iter()
-            .map(|id| {
-                (
-                    id,
-                    InnerConnectApiWrapper::new_from_arc(Arc::new(MockInnerConnectApi::new())),
-                )
-            })
-            .collect();
         let curp_config = CurpConfigBuilder::default()
             .log_entries_cap(10)
             .build()
@@ -84,7 +75,6 @@ impl RawCurp<TestCommand, TestRoleChange> {
             .sync_events(sync_events)
             .role_change(role_change)
             .task_manager(task_manager)
-            .connects(connects)
             .curp_storage(curp_storage)
             .spec_pool(sp)
             .uncommitted_pool(ucp)
@@ -93,11 +83,6 @@ impl RawCurp<TestCommand, TestRoleChange> {
             .id_barrier(id_barrier)
             .build_raw_curp()
             .unwrap()
-    }
-
-    /// Set connect for a server
-    pub(crate) fn set_connect(&self, id: ServerId, connect: InnerConnectApiWrapper) {
-        self.ctx.connects.entry(id).and_modify(|c| *c = connect);
     }
 
     pub(crate) fn tracker(&self, client_id: u64) -> Tracker {
