@@ -12,10 +12,7 @@ use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
 use madsim::rand::{thread_rng, Rng};
 use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock};
-use tokio::{
-    sync::{broadcast, oneshot},
-    time::MissedTickBehavior,
-};
+use tokio::{sync::oneshot, time::MissedTickBehavior};
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::{debug, error, info, trace, warn};
@@ -41,7 +38,6 @@ use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
     member::{Membership, MembershipInfo},
-    members::ServerId,
     response::ResponseSender,
     role_change::RoleChange,
     rpc::{
@@ -965,11 +961,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             };
         }
         None
-    }
-
-    /// Get a rx for leader changes
-    pub(super) fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
-        self.curp.leader_rx()
     }
 
     /// Send `append_entries` request

@@ -33,7 +33,6 @@ use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockUpgradableReadGuard;
 use parking_lot::RwLockWriteGuard;
-use tokio::sync::broadcast;
 use tokio::sync::oneshot;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
@@ -334,9 +333,6 @@ struct Context<C: Command, RC: RoleChange> {
     cb: CmdBoardRef<C>,
     /// The lease manager
     lm: LeaseManagerRef,
-    /// Tx to send leader changes
-    #[builder(setter(skip))]
-    leader_tx: broadcast::Sender<Option<ServerId>>,
     /// Election tick
     #[builder(setter(skip))]
     election_tick: AtomicU8,
@@ -389,7 +385,6 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("lm")),
             },
-            leader_tx: broadcast::channel(1).0,
             election_tick: AtomicU8::new(0),
             sync_events: match self.sync_events.take() {
                 Some(value) => value,
@@ -445,7 +440,6 @@ impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
         f.debug_struct("Context")
             .field("cfg", &self.cfg)
             .field("cb", &self.cb)
-            .field("leader_tx", &self.leader_tx)
             .field("election_tick", &self.election_tick)
             .field("cmd_tx", &"CEEventTxApi")
             .field("sync_events", &self.sync_events)
@@ -722,13 +716,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 let mut st_w = RwLockUpgradableReadGuard::upgrade(st_r);
                 self.update_to_term_and_become_follower(&mut st_w, term);
                 st_w.leader_id = Some(leader_id);
-                let _ig = self.ctx.leader_tx.send(Some(leader_id)).ok();
             }
             std::cmp::Ordering::Equal => {
                 if st_r.leader_id.is_none() {
                     let mut st_w = RwLockUpgradableReadGuard::upgrade(st_r);
                     st_w.leader_id = Some(leader_id);
-                    let _ig = self.ctx.leader_tx.send(Some(leader_id)).ok();
                 }
             }
             std::cmp::Ordering::Greater => {
@@ -1204,11 +1196,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.ms.read().node_id()
     }
 
-    /// Get a rx for leader changes
-    pub(super) fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
-        self.ctx.leader_tx.subscribe()
-    }
-
     /// Get the effective membership
     pub(super) fn effective_membership(&self) -> Membership {
         self.ms.read().cluster().effective().clone()
@@ -1436,7 +1423,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         st.role = Role::PreCandidate;
         cst.votes_received = HashMap::from([(self.id(), true)]);
         st.leader_id = None;
-        let _ig = self.ctx.leader_tx.send(None).ok();
         self.reset_election_tick();
 
         if prev_role == Role::Follower {
@@ -1479,7 +1465,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         st.role = Role::Candidate;
         st.voted_for = Some(self.id());
         st.leader_id = None;
-        let _ig = self.ctx.leader_tx.send(None).ok();
         self.reset_election_tick();
 
         let self_sp = self.ctx.spec_pool.map_lock(|sp| sp.all());
@@ -1522,7 +1507,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         metrics::get().leader_changes.add(1, &[]);
         st.role = Role::Leader;
         st.leader_id = Some(self.id());
-        let _ig = self.ctx.leader_tx.send(Some(self.id())).ok();
         let _ignore = self.ctx.leader_event.notify(usize::MAX);
         self.ctx.role_change.on_election_win();
         debug!("{} becomes the leader", self.id());
@@ -1548,7 +1532,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         st.role = Role::Follower;
         st.voted_for = None;
         st.leader_id = None;
-        let _ig = self.ctx.leader_tx.send(None).ok();
         st.randomize_timeout_ticks(); // regenerate timeout ticks
         debug!(
             "{} updates to term {term} and becomes a follower",

@@ -4,7 +4,6 @@ use std::sync::Arc;
 use engine::SnapshotAllocator;
 use flume::r#async::RecvStream;
 use futures::{Stream, StreamExt};
-use tokio::sync::broadcast;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::instrument;
@@ -21,7 +20,6 @@ pub use self::raw_curp::RawCurp;
 use crate::cmd::Command;
 use crate::cmd::CommandExecutor;
 use crate::member::MembershipInfo;
-use crate::members::ServerId;
 use crate::response::ResponseSender;
 use crate::role_change::RoleChange;
 use crate::rpc::connect::Bypass;
@@ -429,13 +427,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
             .serve_with_shutdown(addr, n.wait())
             .await?;
         Ok(())
-    }
-
-    /// Get a subscriber for leader changes
-    #[inline]
-    #[must_use]
-    pub fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
-        self.inner.leader_rx()
     }
 
     /// Get raw curp
