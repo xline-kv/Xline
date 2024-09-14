@@ -22,8 +22,6 @@ use crate::server::StorageError;
 use super::RawCurp;
 use super::Role;
 
-impl<C: Command, RC: RoleChange> RawCurp<C, RC> {}
-
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Generates new node ids
     /// TODO: makes sure that the ids are unique
