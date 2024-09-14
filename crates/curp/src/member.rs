@@ -6,7 +6,6 @@ use std::collections::HashSet;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::iter;
-use std::sync::Arc;
 
 use curp_external_api::LogIndex;
 use serde::Deserialize;
@@ -14,8 +13,6 @@ use serde::Serialize;
 
 use crate::quorum::Joint;
 use crate::quorum::QuorumSet;
-use crate::rpc::connect::InnerConnectApi;
-use crate::rpc::connect::InnerConnectApiWrapper;
 
 /// The membership info, used to build the initial states
 #[derive(Debug, Clone)]
@@ -57,17 +54,11 @@ pub(crate) struct NodeMembershipState {
     node_id: u64,
     /// The membership state of the cluster
     cluster_state: MembershipState,
-    #[allow(unused)]
-    /// The rpc connects of nodes
-    connects: BTreeMap<u64, InnerConnectApiWrapper>,
 }
 
 impl NodeMembershipState {
     /// Creates a new `NodeMembershipState` with initial state
-    pub(crate) fn new(
-        info: MembershipInfo,
-        init_connects: BTreeMap<u64, InnerConnectApiWrapper>,
-    ) -> Self {
+    pub(crate) fn new(info: MembershipInfo) -> Self {
         let node_id = info.node_id;
         let init_ms = info.into_membership();
         let cluster_state = MembershipState {
@@ -78,7 +69,6 @@ impl NodeMembershipState {
         Self {
             node_id,
             cluster_state,
-            connects: init_connects,
         }
     }
 
@@ -113,58 +103,6 @@ impl NodeMembershipState {
             .effective()
             .members()
             .map(|(id, _)| id)
-            .collect()
-    }
-
-    /// Updates the connects
-    ///
-    /// Returns a pair of (removed, added) connects
-    pub(crate) fn update_connects(
-        &mut self,
-        new_connects: &BTreeMap<u64, InnerConnectApiWrapper>,
-    ) -> (
-        BTreeMap<u64, InnerConnectApiWrapper>,
-        BTreeMap<u64, InnerConnectApiWrapper>,
-    ) {
-        /// Alias
-        type Map = BTreeMap<u64, InnerConnectApiWrapper>;
-        let diff = |x: &Map, y: &Map| {
-            x.iter()
-                .filter_map(|(k, c)| (!y.contains_key(k)).then_some((*k, c.clone())))
-                .collect::<BTreeMap<_, _>>()
-        };
-        let removed = diff(&self.connects, new_connects);
-        let added = diff(new_connects, &self.connects);
-
-        for k in removed.keys() {
-            let _ignore = self.connects.remove(k);
-        }
-        self.connects.extend(added.clone());
-
-        (removed, added)
-    }
-
-    #[allow(unused)]
-    /// Get all rpc connects
-    pub(crate) fn connects(&self) -> &BTreeMap<u64, InnerConnectApiWrapper> {
-        &self.connects
-    }
-
-    /// Get all voter connects
-    pub(crate) fn voter_connects(&self) -> BTreeMap<u64, Arc<dyn InnerConnectApi>> {
-        self.cluster()
-            .effective()
-            .members()
-            .map(|(id, _)| {
-                (
-                    id,
-                    Arc::clone(
-                        self.connects
-                            .get(&id)
-                            .unwrap_or_else(|| unreachable!("connect should always exist")),
-                    ),
-                )
-            })
             .collect()
     }
 

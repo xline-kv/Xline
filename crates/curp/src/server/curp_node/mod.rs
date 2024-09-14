@@ -566,7 +566,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         if should_send_try_become_leader_now {
             if let Err(e) = self
                 .curp
-                .map_connects(|conns| conns.get(&req.node_id).cloned())
+                .connects(Some(&req.node_id))
+                .next()
                 .unwrap_or_else(|| unreachable!("connect to {} should exist", req.node_id))
                 .try_become_leader_now(self.curp.cfg().rpc_timeout)
                 .await
@@ -763,19 +764,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         sps: Vec<SpObject<C>>,
         ucps: Vec<UcpObject<C>>,
     ) -> Result<Self, CurpError> {
-        let sync_events = membership_info
-            .init_members
-            .keys()
-            .map(|id| (*id, Arc::new(Event::new())))
-            .collect();
-        let remove_events = Arc::new(Mutex::new(
-            membership_info
-                .init_members
-                .keys()
-                .map(|id| (*id, Arc::new(Event::new())))
-                .collect(),
-        ));
-
         let peer_addrs: HashMap<_, _> = membership_info
             .init_members
             .clone()
@@ -800,8 +788,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 .cmd_board(Arc::clone(&cmd_board))
                 .lease_manager(Arc::clone(&lease_manager))
                 .cfg(Arc::clone(&curp_cfg))
-                .sync_events(sync_events)
-                .remove_events(remove_events)
                 .role_change(role_change)
                 .task_manager(Arc::clone(&task_manager))
                 .last_applied(last_applied)
@@ -865,9 +851,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
 
         curp.with_member_connects(|connects| {
             for c in connects.values() {
-                let sync_event = curp.sync_event(c.id());
-                let remove_event = curp.remove_event(c.id());
-
+                let (sync_event, remove_event) = curp.events(c.id());
                 task_manager.spawn(TaskName::SyncFollower, |n| {
                     Self::sync_follower_task(
                         Arc::clone(&curp),
