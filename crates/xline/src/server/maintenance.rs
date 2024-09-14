@@ -114,8 +114,7 @@ impl Maintenance for MaintenanceServer {
         &self,
         _request: tonic::Request<StatusRequest>,
     ) -> Result<tonic::Response<StatusResponse>, tonic::Status> {
-        // FIXME: get learner status
-        let is_learner = false;
+        let is_learner = self.raw_curp.is_learner();
         let (leader, term, _) = self.raw_curp.leader();
         let commit_index = self.raw_curp.commit_index();
         let size = self.db.file_size().map_err(|e| {

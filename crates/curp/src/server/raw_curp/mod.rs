@@ -1161,6 +1161,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.log.read().commit_index
     }
 
+    /// Retruns `true` if the current node is a learner
+    #[inline]
+    pub fn is_learner(&self) -> bool {
+        !self.ms.read().is_member()
+    }
+
     #[allow(clippy::unused_self)]
     #[cfg(test)]
     /// Get cluster id by it's name
@@ -1172,11 +1178,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Get self's id
     pub(super) fn id(&self) -> ServerId {
         self.ms.read().node_id()
-    }
-
-    /// Retruns `true` if the current node is a learner
-    pub(super) fn is_learner(&self) -> bool {
-        !self.ms.read().is_member()
     }
 
     /// Get self's node id
