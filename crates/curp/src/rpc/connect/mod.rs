@@ -302,8 +302,12 @@ impl InnerConnectApiWrapper {
     pub(crate) fn new_from_arc(connect: Arc<dyn InnerConnectApi>) -> Self {
         Self(connect)
     }
-}
 
+    /// Consume the wrapper and return the inner `Arc<dyn InnerConnectApi>`
+    pub(crate) fn into_inner(self) -> Arc<dyn InnerConnectApi> {
+        self.0
+    }
+}
 impl Debug for InnerConnectApiWrapper {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InnerConnectApiWrapper").finish()

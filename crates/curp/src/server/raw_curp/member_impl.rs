@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use curp_external_api::cmd::Command;
@@ -20,6 +21,8 @@ use crate::server::StorageError;
 
 use super::RawCurp;
 use super::Role;
+
+impl<C: Command, RC: RoleChange> RawCurp<C, RC> {}
 
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Generates new node ids
@@ -51,13 +54,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let st_r = self.st.read();
         let propose_id = ProposeId(rand::random(), 0);
         let entry = log_w.push(st_r.term, propose_id, config.clone());
-        let new_connects = self.build_connects(&config);
+        self.on_membership_update(&config, &spawn_sync);
         ms_w.cluster_mut().append(entry.index, config);
-        let (removed, added) = ms_w.update_connects(&new_connects);
         self.ctx
             .curp_storage
             .put_membership(ms_w.node_id(), ms_w.cluster())?;
-        self.update_node_sync(removed, added, spawn_sync);
 
         Ok(propose_id)
     }
@@ -86,9 +87,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             }
         });
         for (index, config) in configs {
-            let new_connects = self.build_connects(&config);
-            let (removed, added) = ms_w.update_connects(&new_connects);
-            self.update_node_sync(removed, added, &spawn_sync);
+            self.on_membership_update(&config, &spawn_sync);
             ms_w.cluster_mut().append(index, config);
             ms_w.cluster_mut().commit(commit_index.min(index));
             self.ctx
@@ -132,29 +131,22 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         inner_connects(nodes, self.client_tls_config()).collect()
     }
 
-    /// Updates the background task of node sync
-    fn update_node_sync<F>(
-        &self,
-        removed: BTreeMap<u64, InnerConnectApiWrapper>,
-        added: BTreeMap<u64, InnerConnectApiWrapper>,
-        spawn_sync: F,
-    ) where
+    /// Actions on membership update
+    fn on_membership_update<F>(&self, membership: &Membership, spawn_sync: F)
+    where
         F: Fn(Arc<Event>, Arc<Event>, InnerConnectApiWrapper),
     {
-        let mut remove_events_l = self.ctx.remove_events.lock();
-        for (id, connect) in added {
-            let sync_event = Arc::new(Event::new());
-            let remove_event = Arc::new(Event::new());
-            _ = self.ctx.sync_events.insert(id, Arc::new(Event::new()));
-            let _ignore = remove_events_l.insert(id, Arc::new(Event::new()));
+        let node_ids: BTreeSet<_> = membership.nodes.keys().copied().collect();
+        let new_connects = self.build_connects(membership);
+        let connect_to = move |ids: &BTreeSet<u64>| {
+            ids.iter()
+                .filter_map(|id| new_connects.get(id).cloned())
+                .collect::<Vec<_>>()
+        };
+        let added = self.ctx.node_states.update_with(&node_ids, connect_to);
+        for state in added.into_values() {
+            let (_, connect, sync_event, remove_event) = state.clone_parts();
             spawn_sync(sync_event, remove_event, connect);
-        }
-        for (id, _connect) in removed {
-            _ = self.ctx.sync_events.remove(&id);
-            assert!(
-                remove_events_l.remove(&id).map(|e| e.notify(1)).is_some(),
-                "id doesn't exist"
-            );
         }
     }
 }

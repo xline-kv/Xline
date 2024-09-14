@@ -38,14 +38,9 @@ impl RawCurp<TestCommand, TestRoleChange> {
         role_change: TestRoleChange,
         task_manager: Arc<TaskManager>,
     ) -> Self {
-        let peer_ids: Vec<_> = (1..n).collect();
+        let _peer_ids: Vec<_> = (1..n).collect();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
-        let sync_events = peer_ids
-            .clone()
-            .into_iter()
-            .map(|id| (id, Arc::new(Event::new())))
-            .collect();
         let curp_config = CurpConfigBuilder::default()
             .log_entries_cap(10)
             .build()
@@ -72,7 +67,6 @@ impl RawCurp<TestCommand, TestRoleChange> {
             .cmd_board(cmd_board)
             .lease_manager(lease_manager)
             .cfg(Arc::new(curp_config))
-            .sync_events(sync_events)
             .role_change(role_change)
             .task_manager(task_manager)
             .curp_storage(curp_storage)
@@ -231,7 +225,7 @@ fn heartbeat_will_calibrate_next_index() {
 
     let st_r = curp.st.read();
     assert_eq!(st_r.term, 1);
-    assert_eq!(curp.lst.get_next_index(s1_id), Some(1));
+    assert_eq!(curp.ctx.node_states.get_next_index(s1_id), Some(1));
 }
 
 #[traced_test]
@@ -658,8 +652,8 @@ fn is_synced_should_return_true_when_followers_caught_up_with_leader() {
     assert!(!curp.is_synced(s1_id));
     assert!(!curp.is_synced(s2_id));
 
-    curp.lst.update_match_index(s1_id, 3);
-    curp.lst.update_match_index(s2_id, 3);
+    curp.ctx.node_states.update_match_index(s1_id, 3);
+    curp.ctx.node_states.update_match_index(s2_id, 3);
     assert!(curp.is_synced(s1_id));
     assert!(curp.is_synced(s2_id));
 }

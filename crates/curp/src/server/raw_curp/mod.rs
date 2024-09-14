@@ -23,7 +23,6 @@ use std::sync::Arc;
 
 use clippy_utilities::NumericCast;
 use clippy_utilities::OverflowArithmetic;
-use dashmap::DashMap;
 use derive_builder::Builder;
 use event_listener::Event;
 use futures::Future;
@@ -51,6 +50,7 @@ use utils::task_manager::TaskManager;
 use utils::ClientTlsConfig;
 
 use self::log::Log;
+use self::node_state::NodeStates;
 use self::state::CandidateState;
 use self::state::LeaderState;
 use self::state::State;
@@ -98,6 +98,9 @@ mod tests;
 /// Membership implementation
 mod member_impl;
 
+/// Unified state for each node
+mod node_state;
+
 /// The curp state machine
 pub struct RawCurp<C: Command, RC: RoleChange> {
     /// Curp state
@@ -136,10 +139,6 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     role_change: RC,
     /// Task manager
     task_manager: Arc<TaskManager>,
-    /// Sync events
-    sync_events: DashMap<ServerId, Arc<Event>>,
-    /// Followers remove event trigger
-    remove_events: Arc<Mutex<HashMap<ServerId, Arc<Event>>>>,
     /// curp storage
     curp_storage: Arc<DB<C>>,
     /// client tls config
@@ -175,7 +174,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             args.cfg.follower_timeout_ticks,
             args.cfg.candidate_timeout_ticks,
         ));
-        let lst = LeaderState::new(args.membership_info.init_members.keys().copied());
+        let lst = LeaderState::new();
         let cst = Mutex::new(CandidateState::new());
         let log = RwLock::new(Log::new(args.cfg.batch_max_size, args.cfg.log_entries_cap));
 
@@ -183,8 +182,6 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             .cb(args.cmd_board)
             .lm(args.lease_manager)
             .cfg(args.cfg)
-            .sync_events(args.sync_events)
-            .remove_events(args.remove_events)
             .role_change(args.role_change)
             .curp_storage(args.curp_storage)
             .client_tls_config(args.client_tls_config)
@@ -193,6 +190,9 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             .as_tx(args.as_tx)
             .resp_txs(args.resp_txs)
             .id_barrier(args.id_barrier)
+            .node_states(Arc::new(NodeStates::new_from_connects(
+                args.member_connects,
+            )))
             .build()
             .map_err(|e| match e {
                 ContextBuilderError::UninitializedField(s) => {
@@ -208,10 +208,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             log,
             ctx,
             task_manager: args.task_manager,
-            ms: RwLock::new(NodeMembershipState::new(
-                args.membership_info,
-                args.member_connects,
-            )),
+            ms: RwLock::new(NodeMembershipState::new(args.membership_info)),
         };
 
         if args.is_leader {
@@ -333,10 +330,6 @@ struct Context<C: Command, RC: RoleChange> {
     /// Election tick
     #[builder(setter(skip))]
     election_tick: AtomicU8,
-    /// Followers sync event trigger
-    sync_events: DashMap<ServerId, Arc<Event>>,
-    /// Followers remove event trigger
-    remove_events: Arc<Mutex<HashMap<ServerId, Arc<Event>>>>,
     /// Become leader event
     #[builder(setter(skip))]
     leader_event: Arc<Event>,
@@ -355,6 +348,8 @@ struct Context<C: Command, RC: RoleChange> {
     resp_txs: Arc<Mutex<HashMap<LogIndex, Arc<ResponseSender>>>>,
     /// Barrier for waiting unsynced commands
     id_barrier: Arc<IdBarrier<ProposeId>>,
+    /// States of nodes in the cluster
+    node_states: Arc<NodeStates>,
 }
 
 impl<C: Command, RC: RoleChange> Context<C, RC> {
@@ -381,14 +376,6 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
                 None => return Err(ContextBuilderError::UninitializedField("lm")),
             },
             election_tick: AtomicU8::new(0),
-            sync_events: match self.sync_events.take() {
-                Some(value) => value,
-                None => return Err(ContextBuilderError::UninitializedField("sync_events")),
-            },
-            remove_events: match self.remove_events.take() {
-                Some(value) => value,
-                None => return Err(ContextBuilderError::UninitializedField("remove_events")),
-            },
             leader_event: Arc::new(Event::new()),
             role_change: match self.role_change.take() {
                 Some(value) => value,
@@ -422,6 +409,10 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("id_barrier")),
             },
+            node_states: match self.node_states.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("node_states")),
+            },
         })
     }
 }
@@ -433,7 +424,6 @@ impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
             .field("cb", &self.cb)
             .field("election_tick", &self.election_tick)
             .field("cmd_tx", &"CEEventTxApi")
-            .field("sync_events", &self.sync_events)
             .field("leader_event", &self.leader_event)
             .finish()
     }
@@ -763,7 +753,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
 
         if !success {
-            self.lst.update_next_index(follower_id, hint_index);
+            self.ctx
+                .node_states
+                .update_next_index(follower_id, hint_index);
             debug!(
                 "{} updates follower {}'s next_index to {hint_index} because it rejects ae",
                 self.id(),
@@ -777,7 +769,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             return Ok(true);
         };
 
-        self.lst.update_match_index(follower_id, last_sent_index);
+        self.ctx
+            .node_states
+            .update_match_index(follower_id, last_sent_index);
 
         // check if commit_index needs to be updated
         let log_r = self.log.upgradable_read();
@@ -973,13 +967,13 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .members()
             .filter_map(|(id, _)| (id != ms_r.node_id()).then_some(id));
         for other in peers {
-            self.lst.update_next_index(other, last_log_index + 1); // iter from the end to front is more likely to match the follower
+            self.ctx
+                .node_states
+                .update_next_index(other, last_log_index + 1); // iter from the end to front is more likely to match the follower
         }
         if prev_last_log_index < last_log_index {
             // if some entries are recovered, sync with followers immediately
-            self.ctx.sync_events.iter().for_each(|event| {
-                let _ignore = event.notify(1);
-            });
+            self.ctx.node_states.notify_sync_events(|_| true);
         }
 
         Ok(true)
@@ -1066,7 +1060,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         if cur_role != Role::Leader {
             return Err(());
         }
-        self.lst
+        self.ctx
+            .node_states
             .update_match_index(follower_id, meta.last_included_index.numeric_cast());
         Ok(())
     }
@@ -1116,13 +1111,15 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
         self.reset_election_tick();
         let match_index = self
-            .lst
+            .ctx
+            .node_states
             .get_match_index(target_id)
             .unwrap_or_else(|| unreachable!("node should exist,checked before"));
         if match_index == self.log.read().last_log_index() {
             Ok(true)
         } else {
-            let _ignore = self.sync_event(target_id).notify(1);
+            let (sync_event, _) = self.events(target_id);
+            let _ignore = sync_event.notify(1);
             Ok(false)
         }
     }
@@ -1203,7 +1200,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             st_r.term
         };
 
-        let Some(next_index) = self.lst.get_next_index(follower_id) else {
+        let Some(next_index) = self.ctx.node_states.get_next_index(follower_id) else {
             warn!(
                 "follower {} is not found, it maybe has been removed",
                 follower_id
@@ -1294,27 +1291,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         &self.ctx.uncommitted_pool
     }
 
-    /// Get sync event
-    pub(super) fn sync_event(&self, id: ServerId) -> Arc<Event> {
-        Arc::clone(
-            self.ctx
-                .sync_events
-                .get(&id)
-                .unwrap_or_else(|| unreachable!("server id {id} not found"))
-                .value(),
-        )
-    }
-
-    // TODO: we could directly abort the sync task instead of signal it manually
-    /// Get remove event
-    pub(super) fn remove_event(&self, id: ServerId) -> Arc<Event> {
-        Arc::clone(
-            self.ctx
-                .remove_events
-                .lock()
-                .get(&id)
-                .unwrap_or_else(|| unreachable!("server id {id} not found")),
-        )
+    /// Get (`sync_event`, `remove_event`)
+    pub(super) fn events(&self, id: u64) -> (Arc<Event>, Arc<Event>) {
+        let t = self.ctx.node_states.clone_events(Some(id));
+        t.into_iter()
+            .next()
+            .unwrap_or_else(|| unreachable!("server id {id} not found"))
     }
 
     /// Check if the current node is shutting down
@@ -1336,17 +1318,18 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     pub(super) fn is_synced(&self, node_id: ServerId) -> bool {
         let log_r = self.log.read();
         let leader_commit_index = log_r.commit_index;
-        self.lst
+        self.ctx
+            .node_states
             .get_match_index(node_id)
             .is_some_and(|match_index| match_index == leader_commit_index)
     }
 
-    /// Get all connects
-    pub(super) fn map_connects<F, R>(&self, mut f: F) -> R
-    where
-        F: FnMut(&BTreeMap<u64, InnerConnectApiWrapper>) -> R,
-    {
-        self.ms.map_read(|ms| f(ms.connects()))
+    /// Get rpc connect connects by ids
+    pub(super) fn connects<'a, Ids: IntoIterator<Item = &'a u64>>(
+        &self,
+        ids: Ids,
+    ) -> impl Iterator<Item = InnerConnectApiWrapper> {
+        self.ctx.node_states.connects(ids)
     }
 
     /// Get all connects
@@ -1354,13 +1337,18 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     where
         F: FnMut(&BTreeMap<u64, InnerConnectApiWrapper>) -> R,
     {
-        op(self.ms.read().connects())
+        op(&self.ctx.node_states.all_connects())
     }
 
     /// Get voters connects
     pub(super) fn voters_connects(&self) -> BTreeMap<u64, Arc<dyn InnerConnectApi>> {
-        let ms_r = self.ms.read();
-        ms_r.voter_connects()
+        let voters = self.ms.map_read(|ms| ms.members_ids());
+        let connects = self
+            .ctx
+            .node_states
+            .connects(voters.iter())
+            .map(InnerConnectApiWrapper::into_inner);
+        voters.iter().copied().zip(connects).collect()
     }
 
     /// Get transferee
@@ -1370,7 +1358,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Get match index of a node
     pub(super) fn get_match_index(&self, id: ServerId) -> Option<u64> {
-        self.lst.get_match_index(id)
+        self.ctx.node_states.get_match_index(id)
     }
 
     /// Get last log index
@@ -1551,7 +1539,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
         let member_ids = self.ms.map_read(|ms| ms.members_ids());
         let replicated_ids: Vec<_> = self
-            .lst
+            .ctx
+            .node_states
             .map_status(|(id, f)| (member_ids.contains(id) && f.match_index >= i).then_some(*id))
             .flatten()
             .chain(iter::once(self.node_id()))
@@ -1686,13 +1675,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Notify sync events
     fn notify_sync_events(&self, log: &Log<C>) {
-        self.ctx.sync_events.iter().for_each(|e| {
-            if let Some(next) = self.lst.get_next_index(*e.key()) {
-                if next > log.base_index && log.has_next_batch(next) {
-                    let _ignore = e.notify(1);
-                }
-            }
-        });
+        self.ctx
+            .node_states
+            .notify_sync_events(|next| next > log.base_index && log.has_next_batch(next));
     }
 
     /// Update index in single node cluster
