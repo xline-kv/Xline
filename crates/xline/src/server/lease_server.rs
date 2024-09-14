@@ -307,8 +307,12 @@ impl Lease for LeaseServer {
             // a follower when it lost the election. Therefore we need to double check here.
             // We can directly invoke leader_keep_alive when a candidate becomes a leader.
             if !self.lease_storage.is_primary() {
-                // FIXME: get leader address
-                let leader_addrs = vec![];
+                let cluster = self.client.fetch_cluster(true).await?;
+                let leader_addrs: Vec<_> = cluster
+                    .nodes
+                    .into_iter()
+                    .filter_map(|node| (node.node_id == cluster.leader_id).then_some(node.addr))
+                    .collect();
                 break self
                     .follower_keep_alive(request_stream, &leader_addrs)
                     .await?;
@@ -346,8 +350,12 @@ impl Lease for LeaseServer {
                 };
                 return Ok(tonic::Response::new(res));
             }
-            let _leader_id = self.client.fetch_leader_id(false).await?;
-            let leader_addrs = vec![]; // FIXME: get leader address
+            let cluster = self.client.fetch_cluster(true).await?;
+            let leader_addrs: Vec<_> = cluster
+                .nodes
+                .into_iter()
+                .filter_map(|node| (node.node_id == cluster.leader_id).then_some(node.addr))
+                .collect();
             if !self.lease_storage.is_primary() {
                 let endpoints = build_endpoints(&leader_addrs, self.client_tls_config.as_ref())?;
                 let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
