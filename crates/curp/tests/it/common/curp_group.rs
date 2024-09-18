@@ -15,7 +15,7 @@ use curp::{
     client::{ClientApi, ClientBuilder},
     error::ServerError,
     member::MembershipInfo,
-    members::{ClusterInfo, ServerId},
+    members::ServerId,
     rpc::{InnerProtocolServer, Member, ProtocolServer},
     server::{
         conflict::test_pools::{TestSpecPool, TestUncomPool},
@@ -116,28 +116,23 @@ impl CurpGroup {
         assert!(n_nodes >= 3, "the number of nodes must >= 3");
         let mut listeners = Self::gen_listeners(configs.keys()).await;
         let all_members_addrs = Self::listeners_to_all_members_addrs(&listeners);
+        let init_members: BTreeMap<_, _> = all_members_addrs
+            .into_iter()
+            .enumerate()
+            .map(|(id, (_, addrs))| (id as u64, addrs[0].clone()))
+            .collect();
 
         let mut nodes = HashMap::new();
         let client_tls_config = None;
         let server_tls_config = None;
         for (node_id, (name, (config, xline_storage_config))) in configs.into_iter().enumerate() {
+            let node_id = node_id as u64;
             let task_manager = Arc::new(TaskManager::new());
             let snapshot_allocator = Self::get_snapshot_allocator_from_cfg(&config);
-            let cluster_info = Arc::new(ClusterInfo::from_members_map(
-                all_members_addrs.clone(),
-                [],
-                &name,
-            ));
-            let init_members = all_members_addrs
-                .values()
-                .map(|addrs| addrs[0].clone())
-                .enumerate()
-                .map(|(id, addr)| (id as u64, addr))
-                .collect();
-            let membership_info = MembershipInfo::new(node_id as u64, init_members);
+
+            let self_addr = init_members.get(&node_id).unwrap().clone();
+            let membership_info = MembershipInfo::new(node_id, init_members.clone());
             let listener = listeners.remove(&name).unwrap();
-            let id = cluster_info.self_id();
-            let addr = cluster_info.self_peer_urls().pop().unwrap();
 
             let (exe_tx, exe_rx) = mpsc::unbounded_channel();
             let (as_tx, as_rx) = mpsc::unbounded_channel();
@@ -168,8 +163,8 @@ impl CurpGroup {
                 let ig = Self::run(server, listener, n).await;
             });
             let curp_node = CurpNode {
-                id,
-                addr,
+                id: node_id,
+                addr: self_addr,
                 exe_rx,
                 as_rx,
                 role_change_arc,
@@ -243,12 +238,12 @@ impl CurpGroup {
         &mut self,
         listener: TcpListener,
         name: String,
-        cluster_info: Arc<ClusterInfo>,
+        membership_info: MembershipInfo,
     ) {
         self.run_node_with_config(
             listener,
             name,
-            cluster_info,
+            membership_info,
             Arc::new(CurpConfig::default()),
             EngineConfig::default(),
         )
@@ -259,7 +254,7 @@ impl CurpGroup {
         &mut self,
         listener: TcpListener,
         name: String,
-        cluster_info: Arc<ClusterInfo>,
+        membership_info: MembershipInfo,
         config: Arc<CurpConfig>,
         xline_storage_config: EngineConfig,
     ) {
@@ -276,19 +271,12 @@ impl CurpGroup {
             xline_storage_config,
         ));
 
-        let id = cluster_info.self_id();
+        let id = membership_info.node_id;
         let role_change_cb = TestRoleChange::default();
         let role_change_arc = role_change_cb.get_inner_arc();
         let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
 
-        // TODO: remove cluster info and build the membership info from start
-        let init_members: BTreeMap<_, _> = cluster_info
-            .all_members_peer_urls()
-            .values()
-            .map(|addrs| addrs[0].clone())
-            .enumerate()
-            .map(|(id, addr)| (id as u64, addr))
-            .collect();
+        let init_members = membership_info.init_members;
         let node_id = init_members.len();
         let membership_info = MembershipInfo::new(node_id as u64, init_members);
         let server = Arc::new(Rpc::new(
