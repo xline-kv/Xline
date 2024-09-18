@@ -40,6 +40,7 @@ pub use self::proto::{
         MoveLeaderRequest,
         MoveLeaderResponse,
         Node,
+        NodeMetadata,
         OpResponse,
         OptionalU64,
         ProposeId as PbProposeId,
@@ -803,7 +804,66 @@ impl FetchMembershipResponse {
                 .into_iter()
                 .map(|m| m.set.into_iter().collect())
                 .collect(),
-            nodes: nodes.into_iter().map(|n| (n.node_id, n.addr)).collect(),
+            nodes: nodes.into_iter().map(Node::into_parts).collect(),
         }
+    }
+}
+
+impl Node {
+    /// Unwraps self
+    #[allow(clippy::unwrap_used, clippy::missing_panics_doc)] // convert rpc types
+    #[inline]
+    #[must_use]
+    pub fn into_parts(self) -> (u64, NodeMetadata) {
+        let Node { node_id, meta } = self;
+        (node_id, meta.unwrap())
+    }
+}
+
+impl NodeMetadata {
+    /// Creates a new `NodeMetadata`
+    #[inline]
+    #[must_use]
+    pub fn new(name: String, peer_urls: Vec<String>, client_urls: Vec<String>) -> Self {
+        Self {
+            name,
+            peer_urls,
+            client_urls,
+        }
+    }
+
+    /// Returns the name of the learner node.
+    #[inline]
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns a reference to the list of peer URLs.
+    #[inline]
+    #[must_use]
+    pub fn peer_urls(&self) -> &[String] {
+        &self.peer_urls
+    }
+
+    /// Returns a reference to the list of client URLs.
+    #[inline]
+    #[must_use]
+    pub fn client_urls(&self) -> &[String] {
+        &self.client_urls
+    }
+
+    /// Converts the `self` instance into a vector of peer URLs.
+    #[inline]
+    #[must_use]
+    pub fn into_peer_urls(self) -> Vec<String> {
+        self.peer_urls
+    }
+
+    /// Converts the `self` instance into a vector of client URLs.
+    #[inline]
+    #[must_use]
+    pub fn into_client_urls(self) -> Vec<String> {
+        self.client_urls
     }
 }

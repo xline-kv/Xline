@@ -5,7 +5,7 @@ use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp::{
     client::ClientBuilder as CurpClientBuilder,
     member::{ClusterId, MembershipInfo},
-    rpc::{InnerProtocolServer, ProtocolServer},
+    rpc::{InnerProtocolServer, NodeMetadata, ProtocolServer},
     server::{Rpc, DB as CurpDB},
 };
 use dashmap::DashMap;
@@ -110,10 +110,18 @@ impl XlineServer {
         #[cfg(madsim)]
         let (client_tls_config, server_tls_config) = (None, None);
         let curp_storage = Arc::new(CurpDB::open(&cluster_config.curp_config().engine_cfg)?);
-        let membership_info = MembershipInfo::new(
-            *cluster_config.node_id(),
-            cluster_config.initial_membership_info().clone(),
-        );
+
+        let init_members = cluster_config
+            .initial_membership_info()
+            .clone()
+            .into_iter()
+            .map(|(name, conf)| {
+                let meta =
+                    NodeMetadata::new(name, conf.peer_urls().clone(), conf.client_urls().clone());
+                (*conf.id(), meta)
+            })
+            .collect();
+        let membership_info = MembershipInfo::new(*cluster_config.node_id(), init_members);
 
         Ok(Self {
             cluster_config,
@@ -474,7 +482,7 @@ impl XlineServer {
                         .init_members
                         .values()
                         .cloned()
-                        .map(|addr| vec![addr]),
+                        .map(NodeMetadata::into_peer_urls),
                 )
                 .bypass(self.membership_info.node_id, curp_server.clone())
                 .build::<Command>()?,
@@ -497,7 +505,9 @@ impl XlineServer {
             .init_members
             .get(&self.membership_info.node_id)
             .cloned()
+            .map(NodeMetadata::into_peer_urls)
             .into_iter()
+            .flatten()
             .collect();
         Ok((
             KvServer::new(

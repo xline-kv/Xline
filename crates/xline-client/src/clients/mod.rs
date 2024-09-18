@@ -5,7 +5,7 @@ pub use kv::KvClient;
 pub use lease::LeaseClient;
 pub use lock::{LockClient, Session, Xutex};
 pub use maintenance::MaintenanceClient;
-pub use member::MemberClient;
+pub use member::{MemberClient, Node};
 pub use watch::WatchClient;
 
 /// Auth client.

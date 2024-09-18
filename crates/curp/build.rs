@@ -4,6 +4,10 @@ fn main() {
             "ProposeConfChangeRequest.ConfChange",
             "#[derive(serde::Deserialize, serde::Serialize)]",
         )
+        .type_attribute(
+            "NodeMetadata",
+            "#[derive(serde::Deserialize, serde::Serialize, Eq, Hash)]",
+        )
         .compile(
             &[
                 "./proto/common/src/curp-command.proto",

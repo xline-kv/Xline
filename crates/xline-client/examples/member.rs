@@ -1,5 +1,5 @@
 use anyhow::Result;
-use xline_client::{Client, ClientOptions};
+use xline_client::{clients::Node, Client, ClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -10,9 +10,9 @@ async fn main() -> Result<()> {
         .await?
         .member_client();
 
-    let ids = client
-        .add_learner(vec!["10.0.0.4:2379".to_owned(), "10.0.0.5:2379".to_owned()])
-        .await?;
+    let node1 = Node::new("n1", vec!["10.0.0.4:2380"], vec!["10.0.0.4.2379"]);
+    let node2 = Node::new("n2", vec!["10.0.0.5:2380"], vec!["10.0.0.5.2379"]);
+    let ids = client.add_learner(vec![node1, node2]).await?;
 
     println!("got node ids of new learners: {ids:?}");
 

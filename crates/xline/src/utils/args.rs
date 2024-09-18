@@ -1,9 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    env,
-    path::PathBuf,
-    time::Duration,
-};
+use std::{collections::HashMap, env, path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use clap::Parser;
@@ -22,8 +17,8 @@ use utils::{
         default_sync_victims_interval, default_watch_progress_notify_interval, AuthConfig,
         AutoCompactConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder,
         EngineConfig, InitialClusterState, LevelConfig, LogConfig, MetricsConfig,
-        MetricsPushProtocol, RotationConfig, ServerTimeout, StorageConfig, TlsConfig, TraceConfig,
-        XlineServerConfig,
+        MetricsPushProtocol, NodeMetaConfig, RotationConfig, ServerTimeout, StorageConfig,
+        TlsConfig, TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_file, parse_log_level, parse_members,
     parse_membership, parse_metrics_push_protocol, parse_rotation, parse_state, ConfigFileError,
@@ -220,7 +215,7 @@ pub struct ServerArgs {
     client_key_path: Option<PathBuf>,
     /// Cluster membership. eg: 0=192.168.x.x:8080,1=192.168.x.x:8081
     #[clap(long, value_parser = parse_membership)]
-    membership_info: BTreeMap<u64, String>,
+    membership_info: HashMap<String, NodeMetaConfig>,
     /// The id of current node
     #[clap(long)]
     node_id: u64,

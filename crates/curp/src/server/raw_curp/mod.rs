@@ -1167,12 +1167,13 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         !self.ms.read().is_member()
     }
 
-    #[allow(clippy::unused_self)]
     #[cfg(test)]
     /// Get cluster id by it's name
-    pub(super) fn get_id_by_name(&self, _name: impl AsRef<str>) -> Option<u64> {
-        // FIXME: implement logic
-        None
+    pub(super) fn get_id_by_name(&self, name: impl AsRef<str>) -> Option<u64> {
+        self.effective_membership()
+            .nodes
+            .into_iter()
+            .find_map(|(id, n)| (n.name() == name.as_ref()).then_some(id))
     }
 
     /// Get self's id

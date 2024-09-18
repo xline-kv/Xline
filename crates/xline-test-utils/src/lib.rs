@@ -1,10 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    env::temp_dir,
-    iter,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashMap, env::temp_dir, iter, path::PathBuf, sync::Arc};
 
 use futures::future::join_all;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
@@ -17,7 +11,8 @@ use tokio::{
 use tonic::transport::ClientTlsConfig;
 use utils::config::{
     default_quota, AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState,
-    LogConfig, MetricsConfig, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
+    LogConfig, MetricsConfig, NodeMetaConfig, StorageConfig, TlsConfig, TraceConfig,
+    XlineServerConfig,
 };
 use xline::server::XlineServer;
 use xline_client::types::{auth::PermissionType, range_end::RangeOption};
@@ -96,6 +91,19 @@ impl Cluster {
             let (xline_listener, curp_listener) = self.listeners.remove(0);
             let self_client_url = self.get_client_url(i);
             let self_peer_url = self.get_peer_url(i);
+
+            let node_meta_config = self
+                .all_members_peer_urls
+                .clone()
+                .into_iter()
+                .zip(self.all_members_client_urls.clone())
+                .enumerate()
+                .map(|(id, (peer_url, client_url))| {
+                    let name = format!("server{id}");
+                    let config = NodeMetaConfig::new(id as u64, vec![peer_url], vec![client_url]);
+                    (name, config)
+                })
+                .collect();
             let config = Self::merge_config(
                 config,
                 name,
@@ -109,12 +117,7 @@ impl Cluster {
                     .collect(),
                 i == 0,
                 InitialClusterState::New,
-                self.all_members_peer_urls
-                    .clone()
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, addr)| (i as u64, addr))
-                    .collect(),
+                node_meta_config,
                 i as u64,
             );
 
@@ -176,6 +179,19 @@ impl Cluster {
         self.configs.push(base_config);
 
         let base_config = self.configs.last().unwrap();
+        let node_meta_config = self
+            .all_members_peer_urls
+            .clone()
+            .into_iter()
+            .zip(self.all_members_client_urls.clone())
+            .enumerate()
+            .map(|(id, (peer_url, client_url))| {
+                let name = format!("server{id}");
+                let config = NodeMetaConfig::new(id as u64, vec![peer_url], vec![client_url]);
+                (name, config)
+            })
+            .collect();
+
         let config = Self::merge_config(
             base_config,
             name,
@@ -184,12 +200,7 @@ impl Cluster {
             peers,
             false,
             InitialClusterState::Existing,
-            self.all_members_peer_urls
-                .clone()
-                .into_iter()
-                .enumerate()
-                .map(|(i, addr)| (i as u64, addr))
-                .collect(),
+            node_meta_config,
             idx as u64,
         );
 
@@ -294,7 +305,7 @@ impl Cluster {
         peers: HashMap<String, Vec<String>>,
         is_leader: bool,
         initial_cluster_state: InitialClusterState,
-        initial_membership_info: BTreeMap<u64, String>,
+        initial_membership_info: HashMap<String, NodeMetaConfig>,
         node_id: u64,
     ) -> XlineServerConfig {
         let old_cluster = base_config.cluster();

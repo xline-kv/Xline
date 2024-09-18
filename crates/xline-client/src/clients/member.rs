@@ -49,9 +49,9 @@ impl MemberClient {
     /// }
     /// ```
     #[inline]
-    pub async fn add_learner(&self, addrs: Vec<String>) -> Result<Vec<u64>> {
+    pub async fn add_learner(&self, nodes: Vec<Node>) -> Result<Vec<u64>> {
         self.curp_client
-            .add_learner(addrs)
+            .add_learner(nodes.into_iter().map(Into::into).collect())
             .await
             .map_err(Into::into)
     }
@@ -95,5 +95,52 @@ impl std::fmt::Debug for MemberClient {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemberClient").finish()
+    }
+}
+
+/// Represents a node in the cluster with its associated metadata.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct Node {
+    /// Name of the node.
+    pub name: String,
+    /// List of URLs used for peer-to-peer communication.
+    pub peer_urls: Vec<String>,
+    /// List of URLs used for client communication.
+    pub client_urls: Vec<String>,
+}
+
+impl Node {
+    /// Creates a new `Node`
+    #[inline]
+    #[must_use]
+    pub fn new<N, A, AS>(name: N, peer_urls: AS, client_urls: AS) -> Self
+    where
+        N: AsRef<str>,
+        A: AsRef<str>,
+        AS: IntoIterator<Item = A>,
+    {
+        Self {
+            name: name.as_ref().to_owned(),
+            peer_urls: peer_urls
+                .into_iter()
+                .map(|s| s.as_ref().to_owned())
+                .collect(),
+            client_urls: client_urls
+                .into_iter()
+                .map(|s| s.as_ref().to_owned())
+                .collect(),
+        }
+    }
+}
+
+impl From<Node> for curp::rpc::NodeMetadata {
+    #[inline]
+    fn from(node: Node) -> Self {
+        curp::rpc::NodeMetadata {
+            name: node.name,
+            peer_urls: node.peer_urls,
+            client_urls: node.client_urls,
+        }
     }
 }

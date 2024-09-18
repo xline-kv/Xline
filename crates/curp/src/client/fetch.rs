@@ -151,7 +151,10 @@ mod test {
 
     use crate::{
         client::{cluster_state::ForEachServer, config::Config, tests::init_mocked_connects},
-        rpc::{self, connect::ConnectApi, CurpError, FetchMembershipResponse, Member, Node},
+        rpc::{
+            self, connect::ConnectApi, CurpError, FetchMembershipResponse, Member, Node,
+            NodeMetadata,
+        },
     };
 
     use super::Fetch;
@@ -183,7 +186,7 @@ mod test {
             .into_iter()
             .map(|node_id| Node {
                 node_id,
-                addr: String::new(),
+                meta: Some(NodeMetadata::default()),
             })
             .collect();
         let qs = rpc::QuorumSet { set: members };

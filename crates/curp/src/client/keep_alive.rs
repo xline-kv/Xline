@@ -158,10 +158,11 @@ mod tests {
             connect::{ConnectApi, MockConnectApi},
             AddLearnerRequest, AddLearnerResponse, AddMemberRequest, AddMemberResponse, CurpError,
             FetchMembershipRequest, FetchMembershipResponse, FetchReadStateRequest,
-            FetchReadStateResponse, Member, MoveLeaderRequest, MoveLeaderResponse, OpResponse,
-            ProposeId, ProposeRequest, ProposeResponse, ReadIndexResponse, RecordRequest,
-            RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse, RemoveMemberRequest,
-            RemoveMemberResponse, ResponseOp, ShutdownRequest, ShutdownResponse, SyncedResponse,
+            FetchReadStateResponse, Member, MoveLeaderRequest, MoveLeaderResponse, NodeMetadata,
+            OpResponse, ProposeId, ProposeRequest, ProposeResponse, ReadIndexResponse,
+            RecordRequest, RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse,
+            RemoveMemberRequest, RemoveMemberResponse, ResponseOp, ShutdownRequest,
+            ShutdownResponse, SyncedResponse,
         },
     };
 
@@ -331,7 +332,15 @@ mod tests {
         term: u64,
     ) -> KeepAliveHandle {
         let members = (0..5).collect::<BTreeSet<_>>();
-        let nodes = members.iter().map(|id| (*id, format!("{id}"))).collect();
+        let nodes = members
+            .iter()
+            .map(|id| {
+                (
+                    *id,
+                    NodeMetadata::new(format!("{id}"), vec!["addr"], vec!["addr"]),
+                )
+            })
+            .collect();
         let state = ClusterState::Ready(ClusterStateReady::new(
             leader,
             term,

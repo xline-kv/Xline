@@ -26,8 +26,8 @@ use crate::{
     rpc::{
         self,
         connect::{ConnectApi, MockConnectApi},
-        CurpError, FetchMembershipResponse, Node, OpResponse, ProposeId, ProposeResponse,
-        ReadIndexResponse, RecordResponse, ResponseOp, SyncedResponse,
+        CurpError, FetchMembershipResponse, Node, NodeMetadata, OpResponse, ProposeId,
+        ProposeResponse, ReadIndexResponse, RecordResponse, ResponseOp, SyncedResponse,
     },
 };
 
@@ -87,7 +87,15 @@ fn build_empty_response() -> OpResponse {
 
 fn build_default_membership() -> Membership {
     let members = (0..5).collect::<BTreeSet<_>>();
-    let nodes = members.iter().map(|id| (*id, format!("{id}"))).collect();
+    let nodes = members
+        .iter()
+        .map(|id| {
+            (
+                *id,
+                NodeMetadata::new(format!("{id}"), vec!["addr"], vec!["addr"]),
+            )
+        })
+        .collect();
     Membership::new(vec![members], nodes)
 }
 
@@ -104,7 +112,7 @@ fn build_membership_resp(
         .into_iter()
         .map(|node_id| Node {
             node_id,
-            addr: String::new(),
+            meta: Some(NodeMetadata::default()),
         })
         .collect();
     let qs = rpc::QuorumSet { set: members };

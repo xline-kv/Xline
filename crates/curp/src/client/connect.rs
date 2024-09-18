@@ -3,7 +3,7 @@ use curp_external_api::cmd::Command;
 
 use crate::{
     members::ServerId,
-    rpc::{FetchMembershipResponse, ReadState},
+    rpc::{FetchMembershipResponse, NodeMetadata, ReadState},
 };
 
 use super::retry::Context;
@@ -60,7 +60,7 @@ pub trait ClientApi {
     }
 
     /// Add some learners to the cluster.
-    async fn add_learner(&self, addrs: Vec<String>) -> Result<Vec<u64>, Self::Error>;
+    async fn add_learner(&self, nodes: Vec<NodeMetadata>) -> Result<Vec<u64>, Self::Error>;
 
     /// Remove some learners from the cluster.
     async fn remove_learner(&self, ids: Vec<u64>) -> Result<(), Self::Error>;
@@ -105,7 +105,11 @@ pub(crate) trait RepeatableClientApi {
     ) -> Result<ReadState, Self::Error>;
 
     /// Add some learners to the cluster.
-    async fn add_learner(&self, addrs: Vec<String>, ctx: Context) -> Result<Vec<u64>, Self::Error>;
+    async fn add_learner(
+        &self,
+        nodes: Vec<NodeMetadata>,
+        ctx: Context,
+    ) -> Result<Vec<u64>, Self::Error>;
 
     /// Remove some learners from the cluster.
     async fn remove_learner(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error>;
