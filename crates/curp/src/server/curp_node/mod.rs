@@ -386,7 +386,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .collect();
         let nodes = nodes
             .into_iter()
-            .map(|(node_id, addr)| Node { node_id, addr })
+            .map(|(node_id, meta)| Node {
+                node_id,
+                meta: Some(meta),
+            })
             .collect();
 
         let leader_id =
@@ -768,7 +771,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .init_members
             .clone()
             .into_iter()
-            .map(|(id, addr)| (id, vec![addr]))
+            .map(|(id, meta)| (id, meta.into_peer_urls()))
             .collect();
         let member_connects = rpc::inner_connects(peer_addrs, client_tls_config.as_ref()).collect();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));

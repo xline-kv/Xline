@@ -308,13 +308,13 @@ impl Lease for LeaseServer {
             // We can directly invoke leader_keep_alive when a candidate becomes a leader.
             if !self.lease_storage.is_primary() {
                 let cluster = self.client.fetch_cluster(true).await?;
-                let leader_addrs: Vec<_> = cluster
-                    .nodes
-                    .into_iter()
-                    .filter_map(|node| (node.node_id == cluster.leader_id).then_some(node.addr))
-                    .collect();
+                let Some(leader_meta) = cluster.nodes.into_iter().find_map(|node| {
+                    (node.node_id == cluster.leader_id).then_some(node.into_parts().1)
+                }) else {
+                    return Err(tonic::Status::internal("Leader not exist"));
+                };
                 break self
-                    .follower_keep_alive(request_stream, &leader_addrs)
+                    .follower_keep_alive(request_stream, leader_meta.peer_urls())
                     .await?;
             }
         };
@@ -351,13 +351,14 @@ impl Lease for LeaseServer {
                 return Ok(tonic::Response::new(res));
             }
             let cluster = self.client.fetch_cluster(true).await?;
-            let leader_addrs: Vec<_> = cluster
-                .nodes
-                .into_iter()
-                .filter_map(|node| (node.node_id == cluster.leader_id).then_some(node.addr))
-                .collect();
+            let Some(leader_meta) = cluster.nodes.into_iter().find_map(|node| {
+                (node.node_id == cluster.leader_id).then_some(node.into_parts().1)
+            }) else {
+                return Err(tonic::Status::internal("leader not found"));
+            };
             if !self.lease_storage.is_primary() {
-                let endpoints = build_endpoints(&leader_addrs, self.client_tls_config.as_ref())?;
+                let endpoints =
+                    build_endpoints(leader_meta.client_urls(), self.client_tls_config.as_ref())?;
                 let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
                 let mut lease_client = LeaseClient::new(channel);
                 return lease_client.lease_time_to_live(request).await;

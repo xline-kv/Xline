@@ -13,6 +13,7 @@ use serde::Serialize;
 
 use crate::quorum::Joint;
 use crate::quorum::QuorumSet;
+use crate::rpc::NodeMetadata;
 
 /// The membership info, used to build the initial states
 #[derive(Debug, Clone)]
@@ -21,14 +22,14 @@ pub struct MembershipInfo {
     /// The id of current node
     pub node_id: u64,
     /// The initial cluster members
-    pub init_members: BTreeMap<u64, String>,
+    pub init_members: BTreeMap<u64, NodeMetadata>,
 }
 
 impl MembershipInfo {
     /// Creates a new `MembershipInfo`
     #[inline]
     #[must_use]
-    pub fn new(node_id: u64, init_members: BTreeMap<u64, String>) -> Self {
+    pub fn new(node_id: u64, init_members: BTreeMap<u64, NodeMetadata>) -> Self {
         Self {
             node_id,
             init_members,
@@ -173,13 +174,13 @@ pub(crate) struct Membership {
     /// Member of the cluster
     pub(crate) members: Vec<BTreeSet<u64>>,
     /// All Nodes, including members and learners
-    pub(crate) nodes: BTreeMap<u64, String>,
+    pub(crate) nodes: BTreeMap<u64, NodeMetadata>,
 }
 
 impl Membership {
     #[cfg(test)]
     /// Creates a new `Membership`
-    pub(crate) fn new(members: Vec<BTreeSet<u64>>, nodes: BTreeMap<u64, String>) -> Self {
+    pub(crate) fn new(members: Vec<BTreeSet<u64>>, nodes: BTreeMap<u64, NodeMetadata>) -> Self {
         Self { members, nodes }
     }
 
@@ -191,11 +192,11 @@ impl Membership {
             Change::AddLearner(learners) => {
                 let members = self.members.clone();
                 let mut nodes = self.nodes.clone();
-                for (id, addr) in learners {
+                for (id, meta) in learners {
                     match nodes.entry(id) {
                         Entry::Occupied(_) => return vec![],
                         Entry::Vacant(e) => {
-                            let _ignore = e.insert(addr);
+                            let _ignore = e.insert(meta);
                         }
                     }
                 }
@@ -291,7 +292,7 @@ impl Membership {
     }
 
     /// Gets the addresses of all members
-    pub(crate) fn members(&self) -> impl Iterator<Item = (u64, &String)> {
+    pub(crate) fn members(&self) -> impl Iterator<Item = (u64, &NodeMetadata)> {
         self.nodes.iter().filter_map(|(id, addr)| {
             self.members
                 .iter()
@@ -311,7 +312,7 @@ impl Membership {
 #[derive(Clone)]
 pub(crate) enum Change {
     /// Adds learners
-    AddLearner(Vec<(u64, String)>),
+    AddLearner(Vec<(u64, NodeMetadata)>),
     /// Removes learners
     RemoveLearner(Vec<u64>),
     /// Adds members

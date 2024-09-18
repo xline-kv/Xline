@@ -1,5 +1,5 @@
 use test_macros::abort_on_panic;
-use xline_client::error::Result;
+use xline_client::{clients::Node, error::Result};
 
 use super::common::get_cluster_client;
 
@@ -9,8 +9,10 @@ async fn learner_add_and_remove_are_ok() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await.unwrap();
     let client = client.member_client();
 
+    let node1 = Node::new("n1", vec!["10.0.0.4:2380"], vec!["10.0.0.4.2379"]);
+    let node2 = Node::new("n2", vec!["10.0.0.5:2380"], vec!["10.0.0.5.2379"]);
     let ids = client
-        .add_learner(vec!["10.0.0.4:2379".to_owned(), "10.0.0.5:2379".to_owned()])
+        .add_learner(vec![node1, node2])
         .await
         .expect("failed to add learners");
 

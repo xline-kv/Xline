@@ -9,7 +9,8 @@ use regex::Regex;
 use thiserror::Error;
 
 use crate::config::{
-    ClusterRange, InitialClusterState, LevelConfig, MetricsPushProtocol, RotationConfig,
+    ClusterRange, InitialClusterState, LevelConfig, MetricsPushProtocol, NodeMetaConfig,
+    RotationConfig,
 };
 
 /// seconds per minute
@@ -80,20 +81,22 @@ pub fn parse_members(s: &str) -> Result<HashMap<String, Vec<String>>, ConfigPars
 ///
 /// Return error when pass wrong args
 #[inline]
-pub fn parse_membership(s: &str) -> Result<BTreeMap<u64, String>, ConfigParseError> {
-    // TODO: currently reuse `parse_members`. Rewrite this after the old membership change is
-    // removed.
-    let ms = parse_members(s)?;
-    ms.into_iter()
-        .map(|(k, v)| {
-            k.parse()
-                .ok()
-                .zip(v.into_iter().next())
-                .ok_or(ConfigParseError::InvalidValue(
-                    "parese membership error".to_owned(),
-                ))
-        })
-        .collect::<Result<_, _>>()
+#[allow(clippy::todo)]
+pub fn parse_membership(_s: &str) -> Result<BTreeMap<u64, NodeMetaConfig>, ConfigParseError> {
+    todo!()
+    //// TODO: currently reuse `parse_members`. Rewrite this after the old membership change is
+    //// removed.
+    //let ms = parse_members(s)?;
+    //ms.into_iter()
+    //    .map(|(k, v)| {
+    //        k.parse()
+    //            .ok()
+    //            .zip(v.into_iter().next())
+    //            .ok_or(ConfigParseError::InvalidValue(
+    //                "parese membership error".to_owned(),
+    //            ))
+    //    })
+    //    .collect::<Result<_, _>>()
 }
 
 /// Parse `ClusterRange` from the given string

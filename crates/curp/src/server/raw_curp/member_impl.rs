@@ -123,7 +123,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let nodes = config
             .nodes
             .iter()
-            .map(|(id, addr)| (*id, vec![addr.clone()]))
+            .map(|(id, meta)| (*id, meta.peer_urls().to_vec()))
             .collect();
 
         inner_connects(nodes, self.client_tls_config()).collect()

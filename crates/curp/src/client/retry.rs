@@ -19,7 +19,7 @@ use super::{
 };
 use crate::{
     members::ServerId,
-    rpc::{CurpError, ReadState, Redirect, ProposeId, FetchMembershipResponse}, tracker::Tracker,
+    rpc::{CurpError, ReadState, Redirect, ProposeId, FetchMembershipResponse, NodeMetadata}, tracker::Tracker,
 };
 
 /// Backoff config
@@ -434,8 +434,8 @@ where
     }
 
     /// Add some learners to the cluster.
-    async fn add_learner(&self, addrs: Vec<String>) -> Result<Vec<u64>, Self::Error> {
-        self.retry::<_, _>(|client, ctx| client.add_learner(addrs.clone(), ctx))
+    async fn add_learner(&self, nodes: Vec<NodeMetadata>) -> Result<Vec<u64>, Self::Error> {
+        self.retry::<_, _>(|client, ctx| client.add_learner(nodes.clone(), ctx))
             .await
     }
 

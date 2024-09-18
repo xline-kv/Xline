@@ -1,8 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    path::PathBuf,
-    time::Duration,
-};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use derive_builder::Builder;
 use getset::Getters;
@@ -125,10 +121,38 @@ pub struct ClusterConfig {
     initial_cluster_state: InitialClusterState,
     /// Initial cluster members
     #[getset(get = "pub")]
-    initial_membership_info: BTreeMap<u64, String>,
+    initial_membership_info: HashMap<String, NodeMetaConfig>,
     /// Node id
     #[getset(get = "pub")]
     node_id: u64,
+}
+
+/// Inital node metadata config
+#[allow(clippy::module_name_repetitions)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+pub struct NodeMetaConfig {
+    /// The id of the node
+    #[getset(get = "pub")]
+    id: u64,
+    /// URLs of the peers in the cluster
+    #[getset(get = "pub")]
+    peer_urls: Vec<String>,
+    /// URLs of the clients connected to the cluster
+    #[getset(get = "pub")]
+    client_urls: Vec<String>,
+}
+
+impl NodeMetaConfig {
+    /// Creates a new `NodeMetaConfig`.
+    #[inline]
+    #[must_use]
+    pub fn new(id: u64, peer_urls: Vec<String>, client_urls: Vec<String>) -> Self {
+        Self {
+            id,
+            peer_urls,
+            client_urls,
+        }
+    }
 }
 
 impl Default for ClusterConfig {
@@ -149,7 +173,14 @@ impl Default for ClusterConfig {
             client_config: ClientConfig::default(),
             server_timeout: ServerTimeout::default(),
             initial_cluster_state: InitialClusterState::default(),
-            initial_membership_info: BTreeMap::from([(0, "http://127.0.0.1:2379".to_owned())]),
+            initial_membership_info: HashMap::from([(
+                "default".to_owned(),
+                NodeMetaConfig::new(
+                    0,
+                    vec!["http://127.0.0.1:2380".to_owned()],
+                    vec!["http://127.0.0.1:2379".to_owned()],
+                ),
+            )]),
             node_id: 0,
         }
     }
@@ -201,7 +232,7 @@ impl ClusterConfig {
         client_config: ClientConfig,
         server_timeout: ServerTimeout,
         initial_cluster_state: InitialClusterState,
-        initial_membership_info: BTreeMap<u64, String>,
+        initial_membership_info: HashMap<String, NodeMetaConfig>,
         node_id: u64,
     ) -> Self {
         Self {
@@ -1241,10 +1272,20 @@ mod tests {
             node2 = ['127.0.0.1:2380']
             node3 = ['127.0.0.1:2381']
 
-            [cluster.initial_membership_info]
-            1 = '127.0.0.1:2379'
-            2 = '127.0.0.1:2380'
-            3 = '127.0.0.1:2381'
+            [cluster.initial_membership_info.node1]
+            id = 1
+            peer_urls = ['127.0.0.1:2380']
+            client_urls = ['127.0.0.1:2379']
+
+            [cluster.initial_membership_info.node2]
+            id = 2
+            peer_urls = ['127.0.0.1:2480']
+            client_urls = ['127.0.0.1:2479']
+
+            [cluster.initial_membership_info.node3]
+            id = 3
+            peer_urls = ['127.0.0.1:2580']
+            client_urls = ['127.0.0.1:2579']
 
             [cluster.curp_config]
             heartbeat_interval = '200ms'
@@ -1343,10 +1384,31 @@ mod tests {
                 client_config,
                 server_timeout,
                 InitialClusterState::New,
-                BTreeMap::from([
-                    (1, "127.0.0.1:2379".to_owned()),
-                    (2, "127.0.0.1:2380".to_owned()),
-                    (3, "127.0.0.1:2381".to_owned()),
+                HashMap::from([
+                    (
+                        "node1".to_owned(),
+                        NodeMetaConfig::new(
+                            1,
+                            vec!["127.0.0.1:2380".to_owned()],
+                            vec!["127.0.0.1:2379".to_owned()]
+                        )
+                    ),
+                    (
+                        "node2".to_owned(),
+                        NodeMetaConfig::new(
+                            2,
+                            vec!["127.0.0.1:2480".to_owned()],
+                            vec!["127.0.0.1:2479".to_owned()]
+                        )
+                    ),
+                    (
+                        "node3".to_owned(),
+                        NodeMetaConfig::new(
+                            3,
+                            vec!["127.0.0.1:2580".to_owned()],
+                            vec!["127.0.0.1:2579".to_owned()]
+                        )
+                    ),
                 ]),
                 1,
             )
@@ -1434,10 +1496,20 @@ mod tests {
                 node2 = ['127.0.0.1:2380']
                 node3 = ['127.0.0.1:2381']
 
-                [cluster.initial_membership_info]
-                1 = '127.0.0.1:2379'
-                2 = '127.0.0.1:2380'
-                3 = '127.0.0.1:2381'
+                [cluster.initial_membership_info.node1]
+                id = 1
+                peer_urls = ['127.0.0.1:2380']
+                client_urls = ['127.0.0.1:2379']
+
+                [cluster.initial_membership_info.node2]
+                id = 2
+                peer_urls = ['127.0.0.1:2480']
+                client_urls = ['127.0.0.1:2479']
+
+                [cluster.initial_membership_info.node3]
+                id = 3
+                peer_urls = ['127.0.0.1:2580']
+                client_urls = ['127.0.0.1:2579']
 
                 [cluster.storage]
 
@@ -1480,10 +1552,31 @@ mod tests {
                 ClientConfig::default(),
                 ServerTimeout::default(),
                 InitialClusterState::default(),
-                BTreeMap::from([
-                    (1, "127.0.0.1:2379".to_owned()),
-                    (2, "127.0.0.1:2380".to_owned()),
-                    (3, "127.0.0.1:2381".to_owned()),
+                HashMap::from([
+                    (
+                        "node1".to_owned(),
+                        NodeMetaConfig::new(
+                            1,
+                            vec!["127.0.0.1:2380".to_owned()],
+                            vec!["127.0.0.1:2379".to_owned()]
+                        )
+                    ),
+                    (
+                        "node2".to_owned(),
+                        NodeMetaConfig::new(
+                            2,
+                            vec!["127.0.0.1:2480".to_owned()],
+                            vec!["127.0.0.1:2479".to_owned()]
+                        )
+                    ),
+                    (
+                        "node3".to_owned(),
+                        NodeMetaConfig::new(
+                            3,
+                            vec!["127.0.0.1:2580".to_owned()],
+                            vec!["127.0.0.1:2579".to_owned()]
+                        )
+                    ),
                 ]),
                 1,
             )

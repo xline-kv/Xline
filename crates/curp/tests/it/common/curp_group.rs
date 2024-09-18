@@ -16,7 +16,7 @@ use curp::{
     error::ServerError,
     member::MembershipInfo,
     members::ServerId,
-    rpc::{InnerProtocolServer, Member, ProtocolServer},
+    rpc::{InnerProtocolServer, Member, NodeMetadata, ProtocolServer},
     server::{
         conflict::test_pools::{TestSpecPool, TestUncomPool},
         Rpc, DB,
@@ -119,7 +119,12 @@ impl CurpGroup {
         let init_members: BTreeMap<_, _> = all_members_addrs
             .into_iter()
             .enumerate()
-            .map(|(id, (_, addrs))| (id as u64, addrs[0].clone()))
+            .map(|(id, (name, addrs))| {
+                (
+                    id as u64,
+                    NodeMetadata::new(name, addrs.clone(), addrs.clone()),
+                )
+            })
             .collect();
 
         let mut nodes = HashMap::new();
@@ -130,7 +135,7 @@ impl CurpGroup {
             let task_manager = Arc::new(TaskManager::new());
             let snapshot_allocator = Self::get_snapshot_allocator_from_cfg(&config);
 
-            let self_addr = init_members.get(&node_id).unwrap().clone();
+            let meta = init_members.get(&node_id).unwrap().clone();
             let membership_info = MembershipInfo::new(node_id, init_members.clone());
             let listener = listeners.remove(&name).unwrap();
 
@@ -164,7 +169,7 @@ impl CurpGroup {
             });
             let curp_node = CurpNode {
                 id: node_id,
-                addr: self_addr,
+                addr: meta.peer_urls()[0].clone(),
                 exe_rx,
                 as_rx,
                 role_change_arc,

@@ -30,12 +30,11 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         request: AddLearnerRequest,
     ) -> Result<AddLearnerResponse, CurpError> {
-        let node_addrs = request.node_addrs;
-        let node_ids = self.curp.new_node_ids(node_addrs.len());
-        self.update_and_wait(Change::AddLearner(
-            node_ids.clone().into_iter().zip(node_addrs).collect(),
-        ))
-        .await?;
+        let node_ids = self.curp.new_node_ids(request.nodes.len());
+        let ids_with_meta = node_ids.clone().into_iter().zip(request.nodes).collect();
+
+        self.update_and_wait(Change::AddLearner(ids_with_meta))
+            .await?;
 
         Ok(AddLearnerResponse { node_ids })
     }
