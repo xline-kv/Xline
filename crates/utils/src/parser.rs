@@ -1,8 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    path::PathBuf,
-    time::Duration,
-};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use clippy_utilities::OverflowArithmetic;
 use regex::Regex;
@@ -75,28 +71,47 @@ pub fn parse_members(s: &str) -> Result<HashMap<String, Vec<String>>, ConfigPars
     Ok(map)
 }
 
-/// Parse members from string like "0=addr1,1=addr2,2=addr3"
+/// Parse members from string like:
+/// "`node1=id1#peer_url1,peer_url2#client_url1,client_url2;node2=id2#peer_url3,peer_url4#client_url3,client_url4`"
 ///
 /// # Errors
 ///
 /// Return error when pass wrong args
 #[inline]
-#[allow(clippy::todo)]
-pub fn parse_membership(_s: &str) -> Result<BTreeMap<u64, NodeMetaConfig>, ConfigParseError> {
-    todo!()
-    //// TODO: currently reuse `parse_members`. Rewrite this after the old membership change is
-    //// removed.
-    //let ms = parse_members(s)?;
-    //ms.into_iter()
-    //    .map(|(k, v)| {
-    //        k.parse()
-    //            .ok()
-    //            .zip(v.into_iter().next())
-    //            .ok_or(ConfigParseError::InvalidValue(
-    //                "parese membership error".to_owned(),
-    //            ))
-    //    })
-    //    .collect::<Result<_, _>>()
+pub fn parse_membership(s: &str) -> Result<HashMap<String, NodeMetaConfig>, ConfigParseError> {
+    let parse_urls = |urls_str: &str| urls_str.split(',').map(str::to_owned).collect::<Vec<_>>();
+    let parse_meta = |meta_str: &str| {
+        let mut fields = meta_str.split('#');
+        let id: u64 = fields
+            .next()
+            .ok_or_else(|| ConfigParseError::InvalidValue("node id not found".to_owned()))?
+            .parse()
+            .map_err(|e| ConfigParseError::InvalidValue(format!("node id parse failed: {e}")))?;
+        let peer_urls: Vec<_> = fields
+            .next()
+            .map(parse_urls)
+            .ok_or_else(|| ConfigParseError::InvalidValue("node peer_urls not found".to_owned()))?;
+        let client_urls: Vec<_> = fields.next().map(parse_urls).ok_or_else(|| {
+            ConfigParseError::InvalidValue("node client_urls not found".to_owned())
+        })?;
+
+        Ok::<_, ConfigParseError>((id, peer_urls, client_urls))
+    };
+    let parse_node = |node_str: &str| {
+        let mut node_split = node_str.split('=');
+        let name = node_split
+            .next()
+            .ok_or_else(|| ConfigParseError::InvalidValue("node name not found".to_owned()))?
+            .to_owned();
+        let (id, peer_urls, client_urls) =
+            node_split.next().map(parse_meta).ok_or_else(|| {
+                ConfigParseError::InvalidValue("node metadata not found".to_owned())
+            })??;
+
+        Ok::<_, ConfigParseError>((name, NodeMetaConfig::new(id, peer_urls, client_urls)))
+    };
+
+    s.split(';').map(parse_node).collect::<Result<_, _>>()
 }
 
 /// Parse `ClusterRange` from the given string
@@ -471,5 +486,32 @@ mod test {
 
         assert!(parse_log_file(".../path/with-spaces/log_file.log-123.456-789").is_err());
         assert!(parse_log_file("~~/path/with-spaces/log_file.log-123.456-789").is_err());
+    }
+
+    #[test]
+    fn test_parse_membership() {
+        let arg = "node1=1#10.0.0.1:2380,10.0.0.1:2480#10.0.0.1:2379,10.0.0.2:2379;node2=2#10.0.0.3:2380#10.0.0.3:2379";
+        let result = parse_membership(arg).unwrap();
+        assert_eq!(
+            result,
+            HashMap::from([
+                (
+                    "node1".to_owned(),
+                    NodeMetaConfig::new(
+                        1,
+                        vec!["10.0.0.1:2380".to_owned(), "10.0.0.1:2480".to_owned()],
+                        vec!["10.0.0.1:2379".to_owned(), "10.0.0.2:2379".to_owned()],
+                    )
+                ),
+                (
+                    "node2".to_owned(),
+                    NodeMetaConfig::new(
+                        2,
+                        vec!["10.0.0.3:2380".to_owned()],
+                        vec!["10.0.0.3:2379".to_owned()],
+                    )
+                )
+            ])
+        );
     }
 }
