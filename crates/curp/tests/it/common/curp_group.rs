@@ -109,7 +109,7 @@ impl CurpGroup {
     }
 
     async fn new_with_configs(
-        configs: HashMap<String, (Arc<CurpConfig>, EngineConfig)>,
+        configs: BTreeMap<String, (Arc<CurpConfig>, EngineConfig)>,
         leader_name: String,
     ) -> Self {
         let n_nodes = configs.len();
@@ -188,7 +188,7 @@ impl CurpGroup {
         }
     }
 
-    async fn gen_listeners(keys: impl Iterator<Item = &String>) -> HashMap<String, TcpListener> {
+    async fn gen_listeners(keys: impl Iterator<Item = &String>) -> BTreeMap<String, TcpListener> {
         join_all(
             keys.cloned()
                 .map(|name| async { (name, TcpListener::bind("0.0.0.0:0").await.unwrap()) }),
@@ -199,8 +199,8 @@ impl CurpGroup {
     }
 
     fn listeners_to_all_members_addrs(
-        listeners: &HashMap<String, TcpListener>,
-    ) -> HashMap<String, Vec<String>> {
+        listeners: &BTreeMap<String, TcpListener>,
+    ) -> BTreeMap<String, Vec<String>> {
         listeners
             .iter()
             .map(|(name, listener)| {
