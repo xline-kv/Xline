@@ -63,9 +63,10 @@ impl NodeMembershipState {
         let node_id = info.node_id;
         let init_ms = info.into_membership();
         let cluster_state = MembershipState {
-            effective: init_ms,
-            index_effective: 1,
-            committed: Membership::default(),
+            effective: init_ms.clone(),
+            index_effective: 0,
+            // The initial configuration considered as committed
+            committed: init_ms,
         };
         Self {
             node_id,
