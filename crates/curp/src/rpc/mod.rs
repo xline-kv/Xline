@@ -824,11 +824,22 @@ impl NodeMetadata {
     /// Creates a new `NodeMetadata`
     #[inline]
     #[must_use]
-    pub fn new(name: String, peer_urls: Vec<String>, client_urls: Vec<String>) -> Self {
+    pub fn new<N, A, AS>(name: N, peer_urls: AS, client_urls: AS) -> Self
+    where
+        N: AsRef<str>,
+        A: AsRef<str>,
+        AS: IntoIterator<Item = A>,
+    {
         Self {
-            name,
-            peer_urls,
-            client_urls,
+            name: name.as_ref().to_owned(),
+            peer_urls: peer_urls
+                .into_iter()
+                .map(|s| s.as_ref().to_owned())
+                .collect(),
+            client_urls: client_urls
+                .into_iter()
+                .map(|s| s.as_ref().to_owned())
+                .collect(),
         }
     }
 
