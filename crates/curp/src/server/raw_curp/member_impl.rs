@@ -61,6 +61,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         Ok(propose_id)
     }
 
+    /// Updates the role if the node is leader
+    pub(crate) fn update_role_leader(&self) {
+        let ms_r = self.ms.read();
+        self.update_role(&ms_r);
+    }
+
     /// Append membership entries
     pub(crate) fn append_membership<E, I, F>(
         &self,
@@ -107,12 +113,17 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Updates the role of the node based on the current membership state
     fn update_role(&self, current: &NodeMembershipState) {
         let mut st_w = self.st.write();
-        if current.is_member() {
+        if current.is_self_member() {
             if matches!(st_w.role, Role::Learner) {
                 st_w.role = Role::Follower;
             }
         } else {
             st_w.role = Role::Learner;
+        }
+
+        // updates leader id
+        if st_w.leader_id.map_or(false, |id| !current.is_member(id)) {
+            st_w.leader_id = None;
         }
     }
 

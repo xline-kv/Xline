@@ -1133,7 +1133,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         if st_w.role == Role::Leader {
             return None;
         }
-        if !self.ms.read().is_member() {
+        if !self.ms.read().is_self_member() {
             return None;
         }
         let mut cst_l = self.cst.lock();
@@ -1166,7 +1166,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Retruns `true` if the current node is a learner
     #[inline]
     pub fn is_learner(&self) -> bool {
-        !self.ms.read().is_member()
+        !self.ms.read().is_self_member()
     }
 
     #[cfg(test)]
