@@ -57,26 +57,71 @@ impl BytesAffine {
     pub fn new_unbounded() -> Self {
         Self::Unbounded
     }
+
+    pub fn to_ref<'a>(&'a self) -> BytesAffineRef<'a> {
+        match self {
+            BytesAffine::Bytes(k) => BytesAffineRef::Bytes(k),
+            BytesAffine::Unbounded => BytesAffineRef::Unbounded,
+        }
+    }
 }
 
 impl PartialOrd for BytesAffine {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        match (self, other) {
-            (BytesAffine::Bytes(x), BytesAffine::Bytes(y)) => x.partial_cmp(y),
-            (BytesAffine::Bytes(_), BytesAffine::Unbounded) => Some(cmp::Ordering::Less),
-            (BytesAffine::Unbounded, BytesAffine::Bytes(_)) => Some(cmp::Ordering::Greater),
-            (BytesAffine::Unbounded, BytesAffine::Unbounded) => Some(cmp::Ordering::Equal),
-        }
+        return self.to_ref().partial_cmp(&other.to_ref());
     }
 }
 
 impl Ord for BytesAffine {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
+        return self.to_ref().cmp(&other.to_ref());
+    }
+}
+
+/// A Ref of a [`BytesAffine`]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub enum BytesAffineRef<'a> {
+    /// Bytes bound, could be either Included or Excluded
+    Bytes(&'a [u8]),
+    /// Unbounded
+    Unbounded,
+}
+
+impl<'a> BytesAffineRef<'a> {
+    pub fn new_key(bytes: &'a [u8]) -> Self {
+        Self::Bytes(bytes)
+    }
+
+    pub fn new_unbounded() -> Self {
+        Self::Unbounded
+    }
+
+    pub fn to_owned(&self) -> BytesAffine {
+        match self {
+            Self::Bytes(k) => BytesAffine::Bytes(k.to_vec()),
+            Self::Unbounded => BytesAffine::Unbounded,
+        }
+    }
+}
+
+impl PartialOrd for BytesAffineRef<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         match (self, other) {
-            (BytesAffine::Bytes(x), BytesAffine::Bytes(y)) => x.cmp(y),
-            (BytesAffine::Bytes(_), BytesAffine::Unbounded) => cmp::Ordering::Less,
-            (BytesAffine::Unbounded, BytesAffine::Bytes(_)) => cmp::Ordering::Greater,
-            (BytesAffine::Unbounded, BytesAffine::Unbounded) => cmp::Ordering::Equal,
+            (BytesAffineRef::Bytes(x), BytesAffineRef::Bytes(y)) => x.partial_cmp(y),
+            (BytesAffineRef::Bytes(_), BytesAffineRef::Unbounded) => Some(cmp::Ordering::Less),
+            (BytesAffineRef::Unbounded, BytesAffineRef::Bytes(_)) => Some(cmp::Ordering::Greater),
+            (BytesAffineRef::Unbounded, BytesAffineRef::Unbounded) => Some(cmp::Ordering::Equal),
+        }
+    }
+}
+
+impl Ord for BytesAffineRef<'_> {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        match (self, other) {
+            (BytesAffineRef::Bytes(x), BytesAffineRef::Bytes(y)) => x.cmp(y),
+            (BytesAffineRef::Bytes(_), BytesAffineRef::Unbounded) => cmp::Ordering::Less,
+            (BytesAffineRef::Unbounded, BytesAffineRef::Bytes(_)) => cmp::Ordering::Greater,
+            (BytesAffineRef::Unbounded, BytesAffineRef::Unbounded) => cmp::Ordering::Equal,
         }
     }
 }
@@ -171,24 +216,13 @@ impl KeyRange {
     #[must_use]
     #[inline]
     pub fn contains_key(&self, key: &[u8]) -> bool {
-        match self {
-            Self::OneKey(k) => k == key,
-            Self::Range(r) => {
-                let key_aff = BytesAffine::Bytes(key.to_vec());
-                r.low <= key_aff && key_aff < r.high
-            }
-        }
+        self.to_ref().contains_key(key)
     }
 
     /// Check if `KeyRange` overlaps with another `KeyRange`
     #[inline]
     pub fn overlaps(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::OneKey(k1), Self::OneKey(k2)) => k1 == k2,
-            (Self::Range(r1), Self::Range(r2)) => r1.overlaps(r2),
-            (Self::OneKey(k), Self::Range(_)) => other.contains_key(k),
-            (Self::Range(_), Self::OneKey(k)) => self.contains_key(&k),
-        }
+        self.to_ref().overlaps(&other.to_ref())
     }
 
     /// Get end of range with prefix
@@ -204,12 +238,7 @@ impl KeyRange {
     #[must_use]
     #[inline]
     pub fn is_all_keys(&self) -> bool {
-        match self {
-            Self::OneKey(_) => false,
-            Self::Range(r) => {
-                r.low == BytesAffine::Bytes(UNBOUNDED.into()) && r.high == BytesAffine::Unbounded
-            }
-        }
+        return self.to_ref().is_all_keys();
     }
 
     /// unpack `KeyRange` to `BytesAffine` tuple
@@ -270,6 +299,13 @@ impl KeyRange {
                 BytesAffine::Bytes(ref k) => k.as_slice(),
                 BytesAffine::Unbounded => &[0],
             },
+        }
+    }
+
+    pub fn to_ref<'a>(&'a self) -> KeyRangeRef<'a> {
+        match self {
+            Self::OneKey(k) => KeyRangeRef::OneKey(k),
+            Self::Range(r) => KeyRangeRef::Range(Interval::new(r.low.to_ref(), r.high.to_ref())),
         }
     }
 }
@@ -372,6 +408,80 @@ impl ConflictCheck for KeyRange {
     #[inline]
     fn is_conflict(&self, other: &Self) -> bool {
         self.overlaps(&other)
+    }
+}
+
+/// A Ref of a [`KeyRange`].
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub enum KeyRangeRef<'a> {
+    /// OneKey, to distinguish from `Prefix` because they all have [a, a+1) form
+    OneKey(&'a [u8]),
+    /// A [start, end) range.
+    ///
+    /// Note: The `low` of [`KeyRange::Range`] Interval must be Bytes, because a Interval `low`
+    /// must less than `high`, but [`BytesAffine::Unbounded`] is always greater than any Bytes.
+    Range(Interval<BytesAffineRef<'a>>),
+}
+
+impl<'a> KeyRangeRef<'a> {
+    /// convert to owned [`KeyRange`], this will clone the inner key.
+    pub fn to_owned(&self) -> KeyRange {
+        match self {
+            Self::OneKey(k) => KeyRange::OneKey(k.to_vec()),
+            Self::Range(r) => KeyRange::Range(Interval::new(r.low.to_owned(), r.high.to_owned())),
+        }
+    }
+
+    /// create a new `KeyRangeRef` from `start` and `end` in etcd form
+    pub fn new_etcd(start: &'a [u8], end: &'a [u8]) -> Self {
+        let range_end = match end {
+            ONE_KEY => return Self::OneKey(start),
+            UNBOUNDED => BytesAffineRef::Unbounded,
+            _ => BytesAffineRef::Bytes(end),
+        };
+        let key = BytesAffineRef::Bytes(start); // `low` must be Bytes
+        debug_assert!(
+            key < range_end,
+            "key `{key:?}` must be less than range_end `{range_end:?}`"
+        );
+        Self::Range(Interval::new(key, range_end))
+    }
+
+    /// if this range contains all keys
+    #[must_use]
+    #[inline]
+    pub fn is_all_keys(&self) -> bool {
+        match self {
+            Self::OneKey(_) => false,
+            Self::Range(r) => {
+                r.low == BytesAffineRef::Bytes(UNBOUNDED.into())
+                    && r.high == BytesAffineRef::Unbounded
+            }
+        }
+    }
+
+    /// Check if `KeyRangeRef` contains a key
+    #[must_use]
+    #[inline]
+    pub fn contains_key(&self, key: &[u8]) -> bool {
+        match self {
+            Self::OneKey(k) => *k == key,
+            Self::Range(r) => {
+                let key_aff = BytesAffineRef::Bytes(key);
+                r.low <= key_aff && key_aff < r.high
+            }
+        }
+    }
+
+    /// Check if `KeyRangeRef` overlaps with another `KeyRangeRef`
+    #[inline]
+    pub fn overlaps(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::OneKey(k1), Self::OneKey(k2)) => k1 == k2,
+            (Self::Range(r1), Self::Range(r2)) => r1.overlaps(r2),
+            (Self::OneKey(k), Self::Range(_)) => other.contains_key(k),
+            (Self::Range(_), Self::OneKey(k)) => self.contains_key(&k),
+        }
     }
 }
 

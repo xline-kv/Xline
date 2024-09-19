@@ -17,7 +17,7 @@ use utils::table_names::{KV_TABLE, META_TABLE};
 use xlineapi::{
     command::{CommandResponse, SyncResponse},
     execute_error::ExecuteError,
-    keyrange::KeyRange,
+    keyrange::{KeyRange, KeyRangeRef},
 };
 
 use super::{
@@ -109,7 +109,7 @@ impl KvStoreInner {
     fn get_range<T>(
         txn_db: &T,
         index: &dyn IndexOperate,
-        keyrange: KeyRange,
+        keyrange: KeyRangeRef,
         revision: i64,
     ) -> Result<Vec<KeyValue>, ExecuteError>
     where
@@ -124,7 +124,7 @@ impl KvStoreInner {
     fn get_range_with_opts<T>(
         txn_db: &T,
         index: &dyn IndexOperate,
-        keyrange: KeyRange,
+        keyrange: KeyRangeRef,
         revision: i64,
         limit: usize,
         count_only: bool,
@@ -149,7 +149,7 @@ impl KvStoreInner {
         Self::get_range(
             self.db.as_ref(),
             self.index.as_ref(),
-            KeyRange::OneKey(kv.key.clone()),
+            KeyRangeRef::OneKey(&kv.key),
             kv.mod_revision.overflow_sub(1),
         )
         .ok()?
@@ -473,7 +473,7 @@ impl KvStore {
         let kvs = KvStoreInner::get_range(
             txn_db,
             index,
-            KeyRange::new_etcd(cmp.key.clone(), cmp.range_end.clone()),
+            KeyRangeRef::new_etcd(&cmp.key, &cmp.range_end),
             0,
         )
         .unwrap_or_default();
@@ -628,7 +628,7 @@ impl KvStore {
         let (mut kvs, total) = KvStoreInner::get_range_with_opts(
             tnx_db,
             index,
-            KeyRange::new_etcd(req.key.clone(), req.range_end.clone()),
+            KeyRangeRef::new_etcd(&req.key, &req.range_end),
             req.revision,
             storage_fetch_limit.numeric_cast(),
             req.count_only,
@@ -767,7 +767,7 @@ impl KvStore {
         let prev_kvs = KvStoreInner::get_range(
             txn_db,
             index,
-            KeyRange::new_etcd(req.key.clone(), req.range_end.clone()),
+            KeyRangeRef::new_etcd(&req.key, &req.range_end),
             0,
         )?;
         let mut response = DeleteRangeResponse {
@@ -1692,14 +1692,14 @@ mod test {
         let txn_db = store.inner.db.transaction();
         let index = store.inner.index.state();
         assert_eq!(
-            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a"), 2)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a").to_ref(), 2)
                 .unwrap()
                 .len(),
             1,
             "(a, 1) should not be removed"
         );
         assert_eq!(
-            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("b"), 3)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("b").to_ref(), 3)
                 .unwrap()
                 .len(),
             1,
@@ -1709,20 +1709,20 @@ mod test {
         let target_revisions = index_compact(&store, 4);
         store.compact(target_revisions.as_ref())?;
         assert!(
-            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a"), 2)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a").to_ref(), 2)
                 .unwrap()
                 .is_empty(),
             "(a, 1) should be removed"
         );
         assert_eq!(
-            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("b"), 3)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("b").to_ref(), 3)
                 .unwrap()
                 .len(),
             1,
             "(b, 2) should not be removed"
         );
         assert_eq!(
-            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a"), 4)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a").to_ref(), 4)
                 .unwrap()
                 .len(),
             1,
@@ -1732,26 +1732,26 @@ mod test {
         let target_revisions = index_compact(&store, 5);
         store.compact(target_revisions.as_ref())?;
         assert!(
-            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a"), 2)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a").to_ref(), 2)
                 .unwrap()
                 .is_empty(),
             "(a, 1) should be removed"
         );
         assert_eq!(
-            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("b"), 3)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("b").to_ref(), 3)
                 .unwrap()
                 .len(),
             1,
             "(b, 2) should not be removed"
         );
         assert!(
-            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a"), 4)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a").to_ref(), 4)
                 .unwrap()
                 .is_empty(),
             "(a, 3) should be removed"
         );
         assert!(
-            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a"), 5)
+            KvStoreInner::get_range(&txn_db, &index, KeyRange::new_one_key("a").to_ref(), 5)
                 .unwrap()
                 .is_empty(),
             "(a, 4) should be removed"

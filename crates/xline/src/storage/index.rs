@@ -8,14 +8,14 @@ use crossbeam_skiplist::{map::Entry, SkipMap};
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
 use utils::parking_lot_lock::RwLockMap;
-use xlineapi::keyrange::{BytesAffine, EtcdKeyRange, KeyRange, StdBoundRange};
+use xlineapi::keyrange::{BytesAffine, EtcdKeyRange, KeyRange, KeyRangeRef, StdBoundRange};
 
 use super::revision::{KeyRevision, Revision};
 
 /// Operations for `Index`
 pub(crate) trait IndexOperate {
     /// Get `Revision` of keys, get the latest `Revision` when revision <= 0
-    fn get(&self, keyrange: KeyRange, revision: i64) -> Vec<Revision>;
+    fn get(&self, keyrange: KeyRangeRef, revision: i64) -> Vec<Revision>;
 
     /// Register a new `KeyRevision` of the given key
     ///
@@ -258,22 +258,22 @@ where
 }
 
 impl IndexOperate for Index {
-    fn get(&self, keyrange: KeyRange, revision: i64) -> Vec<Revision> {
+    fn get(&self, keyrange: KeyRangeRef, revision: i64) -> Vec<Revision> {
         match keyrange {
-            KeyRange::OneKey(key) => self
+            KeyRangeRef::OneKey(key) => self
                 .inner
-                .get(&key)
+                .get(key)
                 .and_then(fmap_value(|revs| Index::get_revision(revs, revision)))
                 .map(|rev| vec![rev])
                 .unwrap_or_default(),
-            KeyRange::Range(_) if keyrange.is_all_keys() => self
+            KeyRangeRef::Range(_) if keyrange.is_all_keys() => self
                 .inner
                 .iter()
                 .filter_map(fmap_value(|revs| Index::get_revision(revs, revision)))
                 .collect(),
-            KeyRange::Range(_) => self
+            KeyRangeRef::Range(_) => self
                 .inner
-                .range(keyrange)
+                .range(keyrange.to_owned())
                 .filter_map(fmap_value(|revs| Index::get_revision(revs, revision)))
                 .collect(),
         }
@@ -504,20 +504,20 @@ impl IndexState<'_> {
 }
 
 impl IndexOperate for IndexState<'_> {
-    fn get(&self, keyrange: KeyRange, revision: i64) -> Vec<Revision> {
+    fn get(&self, keyrange: KeyRangeRef, revision: i64) -> Vec<Revision> {
         match keyrange {
-            KeyRange::OneKey(key) => {
-                Index::get_revision(&self.one_key_revisions(&key, &self.state.lock()), revision)
+            KeyRangeRef::OneKey(key) => {
+                Index::get_revision(&self.one_key_revisions(key, &self.state.lock()), revision)
                     .map(|rev| vec![rev])
                     .unwrap_or_default()
             }
-            KeyRange::Range(_) if keyrange.is_all_keys() => self
+            KeyRangeRef::Range(_) if keyrange.is_all_keys() => self
                 .all_key_revisions()
                 .into_iter()
                 .filter_map(|(_, revs)| Index::get_revision(revs.as_ref(), revision))
                 .collect(),
-            KeyRange::Range(_) => self
-                .range_key_revisions(keyrange)
+            KeyRangeRef::Range(_) => self
+                .range_key_revisions(keyrange.to_owned())
                 .into_iter()
                 .filter_map(|(_, revs)| Index::get_revision(revs.as_ref(), revision))
                 .collect(),
@@ -674,11 +674,11 @@ mod test {
         let index = init_and_test_insert();
         let txn = index.state();
         assert_eq!(
-            txn.get(KeyRange::new_one_key("key"), 0),
+            txn.get(KeyRange::new_one_key("key").to_ref(), 0),
             vec![Revision::new(3, 1)]
         );
         assert_eq!(
-            txn.get(KeyRange::new_one_key("key"), 1),
+            txn.get(KeyRange::new_one_key("key").to_ref(), 1),
             vec![Revision::new(1, 3)]
         );
         txn.commit();
