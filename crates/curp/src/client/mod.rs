@@ -245,13 +245,15 @@ impl ClientBuilder {
     }
 
     /// Connect to members
+    #[allow(clippy::as_conversions)] // convert usize to u64 is legal
     fn connect_members(&self, tls_config: Option<&ClientTlsConfig>) -> ClusterStateInit {
         let all_members = self
             .init_nodes
             .clone()
             .unwrap_or_else(|| unreachable!("requires members"))
             .into_iter()
-            .map(|addrs| (0, addrs))
+            .enumerate()
+            .map(|(dummy_id, addrs)| (dummy_id as u64, addrs))
             .collect();
         let connects = rpc::connects(all_members, tls_config)
             .map(|(_id, conn)| conn)
