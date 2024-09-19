@@ -2,7 +2,6 @@ use std::collections::btree_map::Entry;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::collections::HashSet;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::iter;
@@ -244,26 +243,16 @@ impl Membership {
             let next = Self::next_coherent(current, target.clone());
             (current != &next).then_some(next)
         })
+        .skip(1)
         .collect()
     }
 
     /// Generates a new coherent membership from a quorum set
     fn next_coherent(ms: &Self, set: BTreeSet<u64>) -> Self {
         let next = ms.as_joint_owned().coherent(set).into_inner();
-        let original_ids = ms
-            .members
-            .iter()
-            .flat_map(BTreeSet::iter)
-            .collect::<HashSet<_>>();
-        let next_ids = next.iter().flat_map(BTreeSet::iter).collect::<HashSet<_>>();
-        let mut nodes = ms.nodes.clone();
-        for id in original_ids.difference(&next_ids) {
-            let _ignore = nodes.remove(id);
-        }
-
         Self {
             members: next,
-            nodes,
+            nodes: ms.nodes.clone(),
         }
     }
 
