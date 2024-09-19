@@ -691,21 +691,23 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
 
         // validate term and set leader id
-        let st_r = self.st.upgradable_read();
-        match st_r.term.cmp(&term) {
-            std::cmp::Ordering::Less => {
-                let mut st_w = RwLockUpgradableReadGuard::upgrade(st_r);
-                self.update_to_term_and_become_follower(&mut st_w, term);
-                st_w.leader_id = Some(leader_id);
-            }
-            std::cmp::Ordering::Equal => {
-                if st_r.leader_id.is_none() {
+        {
+            let st_r = self.st.upgradable_read();
+            match st_r.term.cmp(&term) {
+                std::cmp::Ordering::Less => {
                     let mut st_w = RwLockUpgradableReadGuard::upgrade(st_r);
+                    self.update_to_term_and_become_follower(&mut st_w, term);
                     st_w.leader_id = Some(leader_id);
                 }
-            }
-            std::cmp::Ordering::Greater => {
-                return Err((st_r.term, self.log.read().commit_index + 1))
+                std::cmp::Ordering::Equal => {
+                    if st_r.leader_id.is_none() {
+                        let mut st_w = RwLockUpgradableReadGuard::upgrade(st_r);
+                        st_w.leader_id = Some(leader_id);
+                    }
+                }
+                std::cmp::Ordering::Greater => {
+                    return Err((st_r.term, self.log.read().commit_index + 1))
+                }
             }
         }
         self.reset_election_tick();
