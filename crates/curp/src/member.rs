@@ -183,7 +183,6 @@ pub(crate) struct Membership {
 }
 
 impl Membership {
-    #[cfg(test)]
     /// Creates a new `Membership`
     pub(crate) fn new(members: Vec<BTreeSet<u64>>, nodes: BTreeMap<u64, NodeMetadata>) -> Self {
         Self { members, nodes }
