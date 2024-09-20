@@ -52,6 +52,7 @@ pbkdf2 = { version = "0.12.2", features = ["simple"] }
 priority-queue = "2.0.2"
 prometheus = "0.13.4"
 prost = "0.13.3"
+rand = "0.8.5"
 real_tokio = { version = "1", package = "tokio" }
 serde = { version = "1.0.204", features = ["derive"] }
 sha2 = "0.10.6"
