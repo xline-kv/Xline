@@ -60,11 +60,12 @@ use self::{
     unary::Unary,
 };
 use crate::{
+    member::Membership,
     members::ServerId,
     rpc::{
         self,
         connect::{BypassedConnect, ConnectApi},
-        FetchMembershipResponse, ProposeId, Protocol,
+        FetchMembershipResponse, NodeMetadata, ProposeId, Protocol,
     },
     server::StreamingProtocol,
     tracker::Tracker,
@@ -102,12 +103,28 @@ impl Drop for ProposeIdGuard<'_> {
     }
 }
 
+/// Sets the initial cluster for the client builder
+#[derive(Debug, Clone)]
+enum SetCluster {
+    /// Some nodes, used for discovery
+    Nodes(Vec<Vec<String>>),
+    /// Full cluster metadata
+    Full {
+        /// The leader id
+        leader_id: u64,
+        /// The term of current cluster
+        term: u64,
+        /// The cluster members
+        members: HashMap<u64, Vec<String>>,
+    },
+}
+
 /// Client builder to build a client
 #[derive(Debug, Clone, Default)]
 #[allow(clippy::module_name_repetitions)] // better than just Builder
 pub struct ClientBuilder {
     /// initial cluster members
-    init_nodes: Option<Vec<Vec<String>>>,
+    init_cluster: Option<SetCluster>,
     /// is current client send request to raw curp server
     is_raw_curp: bool,
     /// client configuration
@@ -155,11 +172,28 @@ impl ClientBuilder {
         }
     }
 
+    /// Set the initial cluster
+    #[inline]
+    #[must_use]
+    pub fn init_cluster(
+        mut self,
+        leader_id: u64,
+        term: u64,
+        members: impl IntoIterator<Item = (u64, Vec<String>)>,
+    ) -> Self {
+        self.init_cluster = Some(SetCluster::Full {
+            leader_id,
+            term,
+            members: members.into_iter().collect(),
+        });
+        self
+    }
+
     /// Set the initial nodes
     #[inline]
     #[must_use]
     pub fn init_nodes(mut self, nodes: impl IntoIterator<Item = Vec<String>>) -> Self {
-        self.init_nodes = Some(nodes.into_iter().collect());
+        self.init_cluster = Some(SetCluster::Nodes(nodes.into_iter().collect()));
         self
     }
 
@@ -226,20 +260,43 @@ impl ClientBuilder {
 
     /// Connect to members
     #[allow(clippy::as_conversions)] // convert usize to u64 is legal
-    fn connect_members(&self, tls_config: Option<&ClientTlsConfig>) -> ClusterStateInit {
-        let all_members = self
-            .init_nodes
+    fn connect_members(&self, tls_config: Option<&ClientTlsConfig>) -> ClusterState {
+        match self
+            .init_cluster
             .clone()
-            .unwrap_or_else(|| unreachable!("requires members"))
-            .into_iter()
-            .enumerate()
-            .map(|(dummy_id, addrs)| (dummy_id as u64, addrs))
-            .collect();
-        let connects = rpc::connects(all_members, tls_config)
-            .map(|(_id, conn)| conn)
-            .collect();
+            .unwrap_or_else(|| unreachable!("requires cluster to be set"))
+        {
+            SetCluster::Nodes(nodes) => {
+                let nodes = nodes
+                    .into_iter()
+                    .enumerate()
+                    .map(|(dummy_id, addrs)| (dummy_id as u64, addrs))
+                    .collect();
+                let connects = rpc::connects(nodes, tls_config)
+                    .map(|(_id, conn)| conn)
+                    .collect();
 
-        ClusterStateInit::new(connects)
+                ClusterState::Init(ClusterStateInit::new(connects))
+            }
+            SetCluster::Full {
+                leader_id,
+                term,
+                members,
+            } => {
+                let connects = rpc::connects(members.clone(), tls_config).collect();
+                let member_ids = members.keys().copied().collect();
+                let metas = members
+                    .clone()
+                    .into_iter()
+                    .map(|(id, addrs)| (id, NodeMetadata::new("", addrs.clone(), addrs)))
+                    .collect();
+                let membership = Membership::new(vec![member_ids], metas);
+                let cluster_state =
+                    cluster_state::ClusterStateReady::new(leader_id, term, connects, membership);
+
+                ClusterState::Ready(cluster_state)
+            }
+        }
     }
 
     /// Build the client
@@ -258,13 +315,13 @@ impl ClientBuilder {
             *self.config.wait_synced_timeout(),
             self.build_connect_to(None),
         );
-        let cluster_state_init = self.connect_members(self.tls_config.as_ref());
+        let cluster_state = self.connect_members(self.tls_config.as_ref());
         let client = Retry::new(
             Unary::new(config),
             self.init_retry_config(),
             keep_alive,
             fetch,
-            ClusterState::Init(cluster_state_init),
+            cluster_state,
         );
 
         Ok(client)
@@ -328,13 +385,13 @@ impl<P: Protocol + StreamingProtocol> ClientBuilderWithBypass<P> {
             *self.inner.config.wait_synced_timeout(),
             self.inner.build_connect_to(Some(bypassed)),
         );
-        let cluster_state_init = self.inner.connect_members(self.inner.tls_config.as_ref());
+        let cluster_state = self.inner.connect_members(self.inner.tls_config.as_ref());
         let client = Retry::new(
             Unary::new(config),
             self.inner.init_retry_config(),
             keep_alive,
             fetch,
-            ClusterState::Init(cluster_state_init),
+            cluster_state,
         );
 
         Ok(client)
