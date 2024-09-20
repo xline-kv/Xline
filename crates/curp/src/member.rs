@@ -90,17 +90,12 @@ impl NodeMembershipState {
 
     /// Returns `true` if the current node is a member of the cluster
     pub(crate) fn is_self_member(&self) -> bool {
-        self.cluster().effective().contains(self.node_id())
+        self.cluster().effective().contains_member(self.node_id())
     }
 
     /// Returns `true` if the given node is a member of the cluster
     pub(crate) fn is_member(&self, id: u64) -> bool {
-        self.cluster().effective().contains(id)
-    }
-
-    /// Returns `true` if the given node is a member of the cluster
-    pub(crate) fn check_membership(&self, node_id: u64) -> bool {
-        self.cluster().effective().contains(node_id)
+        self.cluster().effective().contains_member(id)
     }
 
     /// Returns all member ids
@@ -295,9 +290,9 @@ impl Membership {
         })
     }
 
-    /// Returns `true` if the membership contains the given node id
-    pub(crate) fn contains(&self, node_id: u64) -> bool {
-        self.nodes.contains_key(&node_id)
+    /// Returns `true` if the given node id is present in `members`.
+    pub(crate) fn contains_member(&self, node_id: u64) -> bool {
+        self.members.iter().any(|s| s.contains(&node_id))
     }
 }
 
