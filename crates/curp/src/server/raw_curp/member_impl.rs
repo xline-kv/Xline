@@ -104,11 +104,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         for (index, config) in configs {
             self.on_membership_update(&config, &spawn_sync);
             ms_w.cluster_mut().append(index, config);
-            ms_w.cluster_mut().commit(commit_index.min(index));
             self.ctx
                 .curp_storage
                 .put_membership(ms_w.node_id(), ms_w.cluster())?;
         }
+        ms_w.cluster_mut().commit(commit_index);
 
         self.update_role(&ms_w);
 
