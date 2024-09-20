@@ -7,6 +7,7 @@ use curp_external_api::role_change::RoleChange;
 use curp_external_api::LogIndex;
 use event_listener::Event;
 use rand::Rng;
+use utils::parking_lot_lock::RwLockMap;
 
 use crate::log_entry::EntryData;
 use crate::log_entry::LogEntry;
@@ -65,6 +66,16 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     pub(crate) fn update_role_leader(&self) {
         let ms_r = self.ms.read();
         self.update_role(&ms_r);
+    }
+
+    /// Updates the role if the node is leader
+    pub(crate) fn update_transferee(&self) {
+        let Some(transferee) = self.lst.get_transferee() else {
+            return;
+        };
+        if !self.ms.map_read(|ms| ms.is_member(transferee)) {
+            self.lst.reset_transferee();
+        }
     }
 
     /// Append membership entries
