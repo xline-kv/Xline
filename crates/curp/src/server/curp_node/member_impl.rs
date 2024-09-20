@@ -100,6 +100,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             self.curp.wait_propose_ids(Some(propose_id)).await;
         }
         self.curp.update_role_leader();
+        self.curp.update_transferee();
 
         Ok(())
     }
