@@ -106,14 +106,10 @@ impl Drop for ProposeIdGuard<'_> {
 #[derive(Debug, Clone, Default)]
 #[allow(clippy::module_name_repetitions)] // better than just Builder
 pub struct ClientBuilder {
-    /// initial cluster version
-    cluster_version: Option<u64>,
     /// initial cluster members
     init_nodes: Option<Vec<Vec<String>>>,
     /// is current client send request to raw curp server
     is_raw_curp: bool,
-    /// initial leader state
-    leader_state: Option<(ServerId, u64)>,
     /// client configuration
     config: ClientConfig,
     /// Client tls config
@@ -159,27 +155,11 @@ impl ClientBuilder {
         }
     }
 
-    /// Set the initial cluster version
-    #[inline]
-    #[must_use]
-    pub fn cluster_version(mut self, cluster_version: u64) -> Self {
-        self.cluster_version = Some(cluster_version);
-        self
-    }
-
     /// Set the initial nodes
     #[inline]
     #[must_use]
     pub fn init_nodes(mut self, nodes: impl IntoIterator<Item = Vec<String>>) -> Self {
         self.init_nodes = Some(nodes.into_iter().collect());
-        self
-    }
-
-    /// Set the initial leader state
-    #[inline]
-    #[must_use]
-    pub fn leader_state(mut self, leader_id: ServerId, term: u64) -> Self {
-        self.leader_state = Some((leader_id, term));
         self
     }
 
