@@ -871,7 +871,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
         let st_r = self.st.read();
         let log_r = self.log.read();
-        let contains_candidate = self.ms.map_read(|ms| ms.check_membership(candidate_id));
+        let contains_candidate = self.ms.map_read(|ms| ms.is_member(candidate_id));
         // extra check to shutdown removed node
         if !contains_candidate {
             debug!(
@@ -1095,7 +1095,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         if st_r.role != Role::Leader {
             return Err(CurpError::redirect(st_r.leader_id, st_r.term));
         }
-        if !self.ms.map_read(|ms| ms.check_membership(target_id)) {
+        if !self.ms.map_read(|ms| ms.is_member(target_id)) {
             return Err(CurpError::LeaderTransfer(
                 "target node does not exist or it is a learner".to_owned(),
             ));
