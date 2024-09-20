@@ -17,6 +17,7 @@ use crate::rpc::AddLearnerResponse;
 use crate::rpc::AddMemberRequest;
 use crate::rpc::AddMemberResponse;
 use crate::rpc::CurpError;
+use crate::rpc::Redirect;
 use crate::rpc::RemoveLearnerRequest;
 use crate::rpc::RemoveLearnerResponse;
 use crate::rpc::RemoveMemberRequest;
@@ -30,6 +31,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         request: AddLearnerRequest,
     ) -> Result<AddLearnerResponse, CurpError> {
+        self.ensure_leader()?;
         let node_ids = self.curp.new_node_ids(request.nodes.len());
         let ids_with_meta = node_ids.clone().into_iter().zip(request.nodes).collect();
 
@@ -44,6 +46,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         request: RemoveLearnerRequest,
     ) -> Result<RemoveLearnerResponse, CurpError> {
+        self.ensure_leader()?;
         self.update_and_wait(Change::RemoveLearner(request.node_ids))
             .await?;
 
@@ -55,6 +58,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         request: AddMemberRequest,
     ) -> Result<AddMemberResponse, CurpError> {
+        self.ensure_leader()?;
         self.update_and_wait(Change::AddMember(request.node_ids))
             .await?;
 
@@ -66,6 +70,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         request: RemoveMemberRequest,
     ) -> Result<RemoveMemberResponse, CurpError> {
+        self.ensure_leader()?;
         self.update_and_wait(Change::RemoveMember(request.node_ids))
             .await?;
 
@@ -97,5 +102,17 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         self.curp.update_role_leader();
 
         Ok(())
+    }
+
+    /// Ensures that the current node is the leader
+    fn ensure_leader(&self) -> Result<(), CurpError> {
+        let (leader_id, term, is_leader) = self.curp.leader();
+        if is_leader {
+            return Ok(());
+        }
+        Err(CurpError::Redirect(Redirect {
+            leader_id: leader_id.map(Into::into),
+            term,
+        }))
     }
 }
