@@ -9,7 +9,8 @@ use utils::config::{
 
 use super::*;
 use crate::{
-    rpc::Redirect,
+    member::Change,
+    rpc::{self, NodeMetadata, Redirect},
     server::{
         cmd_board::CommandBoard,
         conflict::test_pools::{TestSpecPool, TestUncomPool},
@@ -61,6 +62,17 @@ impl RawCurp<TestCommand, TestRoleChange> {
         std::mem::forget(as_rx);
         let resp_txs = Arc::new(Mutex::default());
         let id_barrier = Arc::new(IdBarrier::new());
+        let init_members = (0..n)
+            .map(|id| (id, NodeMetadata::new(format!("S{id}"), ["addr"], ["addr"])))
+            .collect();
+        let membership_info = MembershipInfo::new(0, init_members);
+        let peer_addrs: HashMap<_, _> = membership_info
+            .init_members
+            .clone()
+            .into_iter()
+            .map(|(id, meta)| (id, meta.into_peer_urls()))
+            .collect();
+        let member_connects = rpc::inner_connects(peer_addrs, None).collect();
 
         Self::builder()
             .is_leader(true)
@@ -75,6 +87,8 @@ impl RawCurp<TestCommand, TestRoleChange> {
             .as_tx(as_tx)
             .resp_txs(resp_txs)
             .id_barrier(id_barrier)
+            .membership_info(membership_info)
+            .member_connects(member_connects)
             .build_raw_curp()
             .unwrap()
     }
@@ -658,204 +672,142 @@ fn is_synced_should_return_true_when_followers_caught_up_with_leader() {
     assert!(curp.is_synced(s2_id));
 }
 
-#[cfg(ignore)] // TODO: rewrite config change tests
 #[traced_test]
-#[test]
-fn add_node_should_add_new_node_to_curp() {
+#[tokio::test] // TODO: use sync context
+async fn add_node_should_add_new_node_to_curp() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
-    let old_cluster = curp.cluster().clone();
-    let changes = vec![ConfChange::add(1, vec!["http://127.0.0.1:4567".to_owned()])];
-    assert!(curp.check_new_config(&changes).is_ok());
-    let infos = curp.apply_conf_change(changes.clone()).unwrap();
-    assert!(curp.contains(1));
-    curp.fallback_conf_change(changes, infos.0, infos.1, infos.2);
-    let cluster_after_fallback = curp.cluster();
-    assert_eq!(
-        old_cluster.cluster_id(),
-        cluster_after_fallback.cluster_id()
-    );
-    assert_eq!(old_cluster.self_id(), cluster_after_fallback.self_id());
-    assert_eq!(
-        old_cluster.all_members(),
-        cluster_after_fallback.all_members()
-    );
-    assert_eq!(
-        cluster_after_fallback.cluster_version(),
-        old_cluster.cluster_version()
-    );
+    let original_membership = Membership::new(vec![(0..3).collect()], BTreeMap::default());
+    let membership = Membership::new(vec![(0..4).collect()], BTreeMap::default());
+    let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
+    assert!(curp
+        .effective_membership()
+        .members
+        .iter()
+        .flatten()
+        .any(|id| *id == 3));
+    let _ignore = curp
+        .update_membership(original_membership, |_, _, _| {})
+        .unwrap();
+    assert!(!curp
+        .effective_membership()
+        .members
+        .iter()
+        .flatten()
+        .any(|id| *id == 3));
 }
 
-#[cfg(ignore)] // TODO: rewrite config change tests
 #[traced_test]
-#[test]
-fn add_learner_node_and_promote_should_success() {
+#[tokio::test] // TODO: use sync context
+async fn add_learner_node_and_promote_should_success() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
-    let changes = vec![ConfChange::add_learner(
-        1,
-        vec!["http://127.0.0.1:4567".to_owned()],
-    )];
-    assert!(curp.check_new_config(&changes).is_ok());
-    curp.apply_conf_change(changes);
-    assert!(curp.check_learner(1, true));
-
-    let changes = vec![ConfChange::promote(1)];
-    assert!(curp.check_new_config(&changes).is_ok());
-    let infos = curp.apply_conf_change(changes.clone()).unwrap();
-    assert!(curp.check_learner(1, false));
-    curp.fallback_conf_change(changes, infos.0, infos.1, infos.2);
-    assert!(curp.check_learner(1, true));
+    let membership = curp
+        .generate_membership(Change::AddLearner(vec![(3, NodeMetadata::default())]))
+        .pop()
+        .unwrap();
+    let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
+    assert!(!curp
+        .effective_membership()
+        .members
+        .iter()
+        .flatten()
+        .any(|id| *id == 3));
+    curp.membership_commit_to(1);
+    let membership = curp
+        .generate_membership(Change::AddMember(vec![3]))
+        .pop()
+        .unwrap();
+    let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
+    assert!(curp
+        .effective_membership()
+        .members
+        .iter()
+        .flatten()
+        .any(|id| *id == 3));
 }
 
-#[cfg(ignore)] // TODO: rewrite config change tests
 #[traced_test]
 #[test]
-fn add_exists_node_should_return_node_already_exists_error() {
+fn add_exists_node_should_have_no_effect() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     let exists_node_id = curp.get_id_by_name("S1").unwrap();
-    let changes = vec![ConfChange::add(
-        exists_node_id,
-        vec!["http://127.0.0.1:4567".to_owned()],
-    )];
-    let resp = curp.check_new_config(&changes);
-    let error_match = matches!(resp, Err(CurpError::NodeAlreadyExists(())));
-    assert!(error_match);
+    assert!(curp
+        .generate_membership(Change::AddLearner(vec![(
+            exists_node_id,
+            NodeMetadata::default(),
+        )]))
+        .is_empty());
+    assert!(curp
+        .generate_membership(Change::AddMember(vec![exists_node_id]))
+        .is_empty());
 }
 
-#[cfg(ignore)] // TODO: rewrite config change tests
 #[traced_test]
-#[test]
-fn remove_node_should_remove_node_from_curp() {
+#[tokio::test] // TODO: use sync context
+async fn remove_node_should_remove_node_from_curp() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
-    let old_cluster = curp.cluster().clone();
     let follower_id = curp.get_id_by_name("S1").unwrap();
-    let changes = vec![ConfChange::remove(follower_id)];
-    assert!(curp.check_new_config(&changes).is_ok());
-    let infos = curp.apply_conf_change(changes.clone()).unwrap();
-    assert_eq!(infos, (vec!["S1".to_owned()], "S1".to_owned(), false));
-    assert!(!curp.contains(follower_id));
-    curp.fallback_conf_change(changes, infos.0, infos.1, infos.2);
-    let cluster_after_fallback = curp.cluster();
-    assert_eq!(
-        old_cluster.cluster_id(),
-        cluster_after_fallback.cluster_id()
-    );
-    assert_eq!(old_cluster.self_id(), cluster_after_fallback.self_id());
-    assert_eq!(
-        old_cluster.all_members(),
-        cluster_after_fallback.all_members()
-    );
-}
-
-#[cfg(ignore)] // TODO: rewrite config change tests
-#[traced_test]
-#[test]
-fn remove_non_exists_node_should_return_node_not_exists_error() {
-    let task_manager = Arc::new(TaskManager::new());
-    let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
-    let changes = vec![ConfChange::remove(1)];
-    let resp = curp.check_new_config(&changes);
-    assert!(matches!(resp, Err(CurpError::NodeNotExists(()))));
-}
-
-#[cfg(ignore)] // TODO: rewrite config change tests
-#[traced_test]
-#[test]
-fn update_node_should_update_the_address_of_node() {
-    let task_manager = Arc::new(TaskManager::new());
-    let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
-    let old_cluster = curp.cluster().clone();
-    let follower_id = curp.get_id_by_name("S1").unwrap();
-    let mut mock_connect = MockInnerConnectApi::new();
-    mock_connect.expect_update_addrs().returning(|_| Ok(()));
-    curp.set_connect(
-        follower_id,
-        InnerConnectApiWrapper::new_from_arc(Arc::new(mock_connect)),
-    );
-    assert_eq!(
-        curp.cluster().peer_urls(follower_id),
-        Some(vec!["S1".to_owned()])
-    );
-    let changes = vec![ConfChange::update(
-        follower_id,
-        vec!["http://127.0.0.1:4567".to_owned()],
-    )];
-    assert!(curp.check_new_config(&changes).is_ok());
-    let infos = curp.apply_conf_change(changes.clone()).unwrap();
-    assert_eq!(infos, (vec!["S1".to_owned()], String::new(), false));
-    assert_eq!(
-        curp.cluster().peer_urls(follower_id),
-        Some(vec!["http://127.0.0.1:4567".to_owned()])
-    );
-    curp.fallback_conf_change(changes, infos.0, infos.1, infos.2);
-    let cluster_after_fallback = curp.cluster();
-    assert_eq!(
-        old_cluster.cluster_id(),
-        cluster_after_fallback.cluster_id()
-    );
-    assert_eq!(old_cluster.self_id(), cluster_after_fallback.self_id());
-    assert_eq!(
-        old_cluster.all_members(),
-        cluster_after_fallback.all_members()
-    );
-}
-
-#[cfg(ignore)] // TODO: rewrite config change tests
-#[traced_test]
-#[test]
-fn leader_handle_propose_conf_change() {
-    let task_manager = Arc::new(TaskManager::new());
-    let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
-    let follower_id = curp.get_id_by_name("S1").unwrap();
-    assert_eq!(
-        curp.cluster().peer_urls(follower_id),
-        Some(vec!["S1".to_owned()])
-    );
-    let changes = vec![ConfChange::update(
-        follower_id,
-        vec!["http://127.0.0.1:4567".to_owned()],
-    )];
-    curp.handle_propose_conf_change(ProposeId(TEST_CLIENT_ID, 0), changes)
+    let membership = curp
+        .generate_membership(Change::RemoveMember(vec![follower_id]))
+        .pop()
         .unwrap();
+    let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
+    assert!(!curp
+        .effective_membership()
+        .members
+        .iter()
+        .flatten()
+        .any(|id| *id == follower_id));
+    assert!(curp.effective_membership().nodes.contains_key(&follower_id));
 }
 
-#[cfg(ignore)] // TODO: rewrite config change tests
 #[traced_test]
 #[test]
-fn follower_handle_propose_conf_change() {
+fn remove_non_exists_node_should_have_no_effect() {
+    let task_manager = Arc::new(TaskManager::new());
+    let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
+    assert!(curp
+        .generate_membership(Change::RemoveLearner(vec![10]))
+        .is_empty());
+    assert!(curp
+        .generate_membership(Change::RemoveMember(vec![10]))
+        .is_empty());
+}
+
+#[traced_test]
+#[tokio::test] // TODO: use sync context
+async fn follower_append_membership_change() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
+    let membership = curp
+        .generate_membership(Change::AddLearner(vec![(3, NodeMetadata::default())]))
+        .pop()
+        .unwrap();
+
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
-
-    let follower_id = curp.get_id_by_name("S1").unwrap();
-    assert_eq!(
-        curp.cluster().peer_urls(follower_id),
-        Some(vec!["S1".to_owned()])
-    );
-    let changes = vec![ConfChange::update(
-        follower_id,
-        vec!["http://127.0.0.1:4567".to_owned()],
-    )];
-    let result = curp.handle_propose_conf_change(ProposeId(TEST_CLIENT_ID, 0), changes);
-    assert!(matches!(
-        result,
-        Err(CurpError::Redirect(Redirect {
-            leader_id: None,
-            term: 2,
-        }))
-    ));
+    let log = LogEntry::new(1, 1, ProposeId::default(), membership.clone());
+    let _ignore = curp.append_membership([log], 1, 0, |_, _, _| {}).unwrap();
+    assert_eq!(curp.effective_membership(), membership);
+    assert_ne!(curp.committed_membership(), membership);
+    let log1 = LogEntry::new(2, 1, ProposeId::default(), EntryData::<TestCommand>::Empty);
+    let _ignore = curp.append_membership([log1], 1, 1, |_, _, _| {}).unwrap();
+    assert_eq!(curp.effective_membership(), membership);
+    assert_eq!(curp.committed_membership(), membership);
 }
 
-#[cfg(ignore)] // TODO: rewrite config change tests
 #[traced_test]
-#[test]
-fn leader_handle_move_leader() {
+#[tokio::test] // TODO: use sync context
+async fn leader_handle_move_leader() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
-    curp.switch_config(ConfChange::add_learner(1234, vec!["address".to_owned()]));
+    let membership = curp
+        .generate_membership(Change::AddLearner(vec![(1234, NodeMetadata::default())]))
+        .pop()
+        .unwrap();
+    let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
 
     let res = curp.handle_move_leader(1234);
     assert!(res.is_err());
@@ -864,6 +816,9 @@ fn leader_handle_move_leader() {
     assert!(res.is_err());
 
     let target_id = curp.get_id_by_name("S1").unwrap();
+    let _ignore = curp
+        .handle_append_entries_resp(target_id, Some(1), 1, true, 1)
+        .unwrap();
     let res = curp.handle_move_leader(target_id);
     // need to send try become leader now after handle_move_leader
     assert!(res.is_ok_and(|b| b));
@@ -885,10 +840,9 @@ fn follower_handle_move_leader() {
     assert!(matches!(res, Err(CurpError::Redirect(_))));
 }
 
-#[cfg(ignore)] // TODO: rewrite config change tests
 #[traced_test]
-#[test]
-fn leader_will_reset_transferee_after_remove_node() {
+#[tokio::test]
+async fn leader_will_reset_transferee_after_remove_node() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
 
@@ -897,7 +851,12 @@ fn leader_will_reset_transferee_after_remove_node() {
     assert!(res.is_ok_and(|b| b));
     assert_eq!(curp.get_transferee(), Some(target_id));
 
-    curp.switch_config(ConfChange::remove(target_id));
+    let membership = Membership::new(
+        vec![(0..5).filter(|id| *id != target_id).collect()],
+        BTreeMap::default(),
+    );
+    let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
+    curp.update_transferee();
     assert!(curp.get_transferee().is_none());
 }
 

@@ -1193,6 +1193,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.ms.read().cluster().effective().clone()
     }
 
+    /// Get the committed membership
+    #[cfg(test)]
+    pub(super) fn committed_membership(&self) -> Membership {
+        self.ms.read().cluster().committed().clone()
+    }
+
     /// Get `append_entries` request for `follower_id` that contains the latest
     /// log entries
     pub(super) fn sync(&self, follower_id: ServerId) -> Option<SyncAction<C>> {
