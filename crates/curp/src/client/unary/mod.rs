@@ -13,8 +13,8 @@ use super::{
     retry::Context,
 };
 use crate::rpc::{
-    AddLearnerRequest, AddMemberRequest, CurpError, FetchReadStateRequest, MoveLeaderRequest,
-    NodeMetadata, ReadState, RemoveLearnerRequest, RemoveMemberRequest, ShutdownRequest,
+    AddLearnerRequest, AddMemberRequest, CurpError, FetchReadStateRequest, MoveLeaderRequest, Node,
+    ReadState, RemoveLearnerRequest, RemoveMemberRequest, ShutdownRequest,
 };
 
 /// The unary client
@@ -110,19 +110,15 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
     }
 
     /// Add some learners to the cluster.
-    async fn add_learner(
-        &self,
-        nodes: Vec<NodeMetadata>,
-        ctx: Context,
-    ) -> Result<Vec<u64>, Self::Error> {
+    async fn add_learner(&self, nodes: Vec<Node>, ctx: Context) -> Result<(), Self::Error> {
         let req = AddLearnerRequest { nodes };
         let timeout = self.config.wait_synced_timeout();
-        let resp = ctx
+        let _ignore = ctx
             .cluster_state()
             .map_leader(|conn| async move { conn.add_learner(req, timeout).await })
             .await?;
 
-        Ok(resp.into_inner().node_ids)
+        Ok(())
     }
 
     /// Remove some learners from the cluster.

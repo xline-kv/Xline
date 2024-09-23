@@ -810,6 +810,16 @@ impl FetchMembershipResponse {
 }
 
 impl Node {
+    /// Creates a new `Node`
+    #[inline]
+    #[must_use]
+    pub fn new(node_id: u64, meta: NodeMetadata) -> Self {
+        Self {
+            node_id,
+            meta: Some(meta),
+        }
+    }
+
     /// Unwraps self
     #[allow(clippy::unwrap_used, clippy::missing_panics_doc)] // convert rpc types
     #[inline]

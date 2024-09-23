@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, sync::Arc};
 
-use curp::rpc::{CurpError, NodeMetadata};
+use curp::rpc::{Node, NodeMetadata};
 use rand::Rng;
 use tonic::{Request, Response, Status};
 use xlineapi::{
@@ -51,6 +51,11 @@ impl ClusterServer {
         let suffix_num: u32 = rng.gen();
         format!("xline_{suffix_num:08x}")
     }
+
+    /// Generates a random node ID.
+    fn gen_rand_node_id() -> u64 {
+        rand::thread_rng().gen()
+    }
 }
 
 #[tonic::async_trait]
@@ -62,13 +67,10 @@ impl Cluster for ClusterServer {
         let header = self.header_gen.gen_header();
         let request = request.into_inner();
         let name = Self::gen_rand_node_name();
-        let node = NodeMetadata::new(name, request.peer_ur_ls, vec![]);
-        let ids = self.client.add_learner(vec![node]).await?;
-        let id = ids
-            .into_iter()
-            .next()
-            .ok_or(tonic::Status::internal("invalid member added"))?;
-
+        let id = Self::gen_rand_node_id();
+        let meta = NodeMetadata::new(name, request.peer_ur_ls, vec![]);
+        let node = Node::new(id, meta);
+        self.client.add_learner(vec![node]).await?;
         if !request.is_learner {
             self.client.add_member(vec![id]).await?;
         }
