@@ -108,9 +108,37 @@ impl Cluster for ClusterServer {
 
     async fn member_update(
         &self,
-        _request: Request<MemberUpdateRequest>,
+        request: Request<MemberUpdateRequest>,
     ) -> Result<Response<MemberUpdateResponse>, Status> {
-        unimplemented!()
+        let header = self.header_gen.gen_header();
+        let request = request.into_inner();
+        let id = request.id;
+        let mut members = self.fetch_members(true).await?;
+        let member = members
+            .iter_mut()
+            .find(|m| m.id == id)
+            .ok_or(tonic::Status::internal("invalid member id"))?;
+
+        if !member.is_learner {
+            self.client.remove_member(vec![id]).await?;
+        }
+        self.client.remove_learner(vec![id]).await?;
+
+        let meta = NodeMetadata::new(
+            member.name.clone(),
+            request.peer_ur_ls.clone(),
+            member.client_ur_ls.clone(),
+        );
+        let node = Node::new(id, meta);
+        self.client.add_learner(vec![node]).await?;
+        self.client.add_member(vec![id]).await?;
+
+        member.peer_ur_ls = request.peer_ur_ls;
+
+        Ok(tonic::Response::new(MemberUpdateResponse {
+            header: Some(header),
+            members,
+        }))
     }
 
     async fn member_list(
