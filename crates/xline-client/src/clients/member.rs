@@ -49,7 +49,7 @@ impl MemberClient {
     /// }
     /// ```
     #[inline]
-    pub async fn add_learner(&self, nodes: Vec<Node>) -> Result<Vec<u64>> {
+    pub async fn add_learner(&self, nodes: Vec<Node>) -> Result<()> {
         self.curp_client
             .add_learner(nodes.into_iter().map(Into::into).collect())
             .await
@@ -102,6 +102,8 @@ impl std::fmt::Debug for MemberClient {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct Node {
+    /// The id of the node
+    pub node_id: u64,
     /// Name of the node.
     pub name: String,
     /// List of URLs used for peer-to-peer communication.
@@ -114,13 +116,14 @@ impl Node {
     /// Creates a new `Node`
     #[inline]
     #[must_use]
-    pub fn new<N, A, AS>(name: N, peer_urls: AS, client_urls: AS) -> Self
+    pub fn new<N, A, AS>(id: u64, name: N, peer_urls: AS, client_urls: AS) -> Self
     where
         N: AsRef<str>,
         A: AsRef<str>,
         AS: IntoIterator<Item = A>,
     {
         Self {
+            node_id: id,
             name: name.as_ref().to_owned(),
             peer_urls: peer_urls
                 .into_iter()
@@ -134,13 +137,17 @@ impl Node {
     }
 }
 
-impl From<Node> for curp::rpc::NodeMetadata {
+impl From<Node> for curp::rpc::Node {
     #[inline]
     fn from(node: Node) -> Self {
-        curp::rpc::NodeMetadata {
+        let meta = curp::rpc::NodeMetadata {
             name: node.name,
             peer_urls: node.peer_urls,
             client_urls: node.client_urls,
+        };
+        Self {
+            node_id: node.node_id,
+            meta: Some(meta),
         }
     }
 }

@@ -17,6 +17,7 @@ use crate::rpc::AddLearnerResponse;
 use crate::rpc::AddMemberRequest;
 use crate::rpc::AddMemberResponse;
 use crate::rpc::CurpError;
+use crate::rpc::Node;
 use crate::rpc::Redirect;
 use crate::rpc::RemoveLearnerRequest;
 use crate::rpc::RemoveLearnerResponse;
@@ -32,13 +33,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         request: AddLearnerRequest,
     ) -> Result<AddLearnerResponse, CurpError> {
         self.ensure_leader()?;
-        let node_ids = self.curp.new_node_ids(request.nodes.len());
-        let ids_with_meta = node_ids.clone().into_iter().zip(request.nodes).collect();
+        let nodes = request.nodes.into_iter().map(Node::into_parts).collect();
+        self.update_and_wait(Change::AddLearner(nodes)).await?;
 
-        self.update_and_wait(Change::AddLearner(ids_with_meta))
-            .await?;
-
-        Ok(AddLearnerResponse { node_ids })
+        Ok(AddLearnerResponse {})
     }
 
     /// Removes a learner from the cluster

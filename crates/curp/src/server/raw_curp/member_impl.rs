@@ -6,7 +6,6 @@ use curp_external_api::cmd::Command;
 use curp_external_api::role_change::RoleChange;
 use curp_external_api::LogIndex;
 use event_listener::Event;
-use rand::Rng;
 use utils::parking_lot_lock::RwLockMap;
 
 use crate::log_entry::EntryData;
@@ -24,14 +23,6 @@ use super::RawCurp;
 use super::Role;
 
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
-    /// Generates new node ids
-    /// TODO: makes sure that the ids are unique
-    #[allow(clippy::unused_self)] // it should be used after the previous TODO
-    pub(crate) fn new_node_ids(&self, n: usize) -> Vec<u64> {
-        let mut rng = rand::thread_rng();
-        (0..n).map(|_| rng.gen()).collect()
-    }
-
     /// Generate memberships based on the provided change
     pub(crate) fn generate_membership(&self, change: Change) -> Vec<Membership> {
         let ms_r = self.ms.read();

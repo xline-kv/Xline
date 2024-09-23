@@ -10,14 +10,12 @@ async fn main() -> Result<()> {
         .await?
         .member_client();
 
-    let node1 = Node::new("n1", vec!["10.0.0.4:2380"], vec!["10.0.0.4.2379"]);
-    let node2 = Node::new("n2", vec!["10.0.0.5:2380"], vec!["10.0.0.5.2379"]);
-    let ids = client.add_learner(vec![node1, node2]).await?;
-
-    println!("got node ids of new learners: {ids:?}");
+    let node1 = Node::new(1, "n1", vec!["10.0.0.4:2380"], vec!["10.0.0.4.2379"]);
+    let node2 = Node::new(2, "n2", vec!["10.0.0.5:2380"], vec!["10.0.0.5.2379"]);
+    client.add_learner(vec![node1, node2]).await?;
 
     // Remove the previously added learners
-    client.remove_learner(ids).await?;
+    client.remove_learner(vec![1, 2]).await?;
 
     Ok(())
 }
