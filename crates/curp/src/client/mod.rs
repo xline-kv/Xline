@@ -304,7 +304,7 @@ impl ClientBuilder {
             match self.try_discover_from(&addrs).await {
                 Ok(()) => return Ok(self),
                 Err(e) if matches!(e.code(), tonic::Code::Unavailable) => {
-                    warn!("cluster is starting, sleep for {DISCOVER_SLEEP_DURATION} secs");
+                    warn!("cluster is unavailable, sleep for {DISCOVER_SLEEP_DURATION} secs");
                     tokio::time::sleep(Duration::from_secs(DISCOVER_SLEEP_DURATION)).await;
                 }
                 Err(e) => return Err(e),
