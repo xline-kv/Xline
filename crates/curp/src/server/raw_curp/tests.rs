@@ -249,7 +249,7 @@ fn handle_ae_will_calibrate_term() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
     let s2_id = curp.get_id_by_name("S2").unwrap();
 
-    let result = curp.handle_append_entries(2, s2_id, 0, 0, vec![], 0, |_, _, _| {});
+    let result = curp.handle_append_entries(2, s2_id, 0, 0, vec![], 0);
     assert!(result.is_ok());
 
     let st_r = curp.st.read();
@@ -266,7 +266,7 @@ fn handle_ae_will_set_leader_id() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
     let s2_id = curp.get_id_by_name("S2").unwrap();
-    let result = curp.handle_append_entries(1, s2_id, 0, 0, vec![], 0, |_, _, _| {});
+    let result = curp.handle_append_entries(1, s2_id, 0, 0, vec![], 0);
     assert!(result.is_ok());
 
     let st_r = curp.st.read();
@@ -283,7 +283,7 @@ fn handle_ae_will_reject_wrong_term() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
     let s2_id = curp.get_id_by_name("S2").unwrap();
-    let result = curp.handle_append_entries(0, s2_id, 0, 0, vec![], 0, |_, _, _| {});
+    let result = curp.handle_append_entries(0, s2_id, 0, 0, vec![], 0);
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().0, 1);
 }
@@ -308,9 +308,8 @@ fn handle_ae_will_reject_wrong_log() {
             Arc::new(TestCommand::default()),
         )],
         0,
-        |_, _, _| {},
     );
-    assert_eq!(result, Err((1, 1)));
+    assert_eq!(result.unwrap_err(), (1, 1));
 }
 
 /*************** tests for election **************/
@@ -425,7 +424,6 @@ fn handle_vote_will_reject_outdated_candidate() {
             Arc::new(TestCommand::default()),
         )],
         0,
-        |_, _, _| {},
     );
     assert!(result.is_ok());
     curp.st.write().leader_id = None;
@@ -672,22 +670,20 @@ fn is_synced_should_return_true_when_followers_caught_up_with_leader() {
 }
 
 #[traced_test]
-#[tokio::test] // TODO: use sync context
-async fn add_node_should_add_new_node_to_curp() {
+#[test]
+fn add_node_should_add_new_node_to_curp() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     let original_membership = Membership::new(vec![(0..3).collect()], BTreeMap::default());
     let membership = Membership::new(vec![(0..4).collect()], BTreeMap::default());
-    let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
+    let _ignore = curp.update_membership(membership).unwrap();
     assert!(curp
         .effective_membership()
         .members
         .iter()
         .flatten()
         .any(|id| *id == 3));
-    let _ignore = curp
-        .update_membership(original_membership, |_, _, _| {})
-        .unwrap();
+    let _ignore = curp.update_membership(original_membership).unwrap();
     assert!(!curp
         .effective_membership()
         .members
@@ -697,15 +693,15 @@ async fn add_node_should_add_new_node_to_curp() {
 }
 
 #[traced_test]
-#[tokio::test] // TODO: use sync context
-async fn add_learner_node_and_promote_should_success() {
+#[test]
+fn add_learner_node_and_promote_should_success() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     let membership = curp
         .generate_membership(Some(Change::Add(Node::new(3, NodeMetadata::default()))))
         .pop()
         .unwrap();
-    let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
+    let _ignore = curp.update_membership(membership).unwrap();
     assert!(!curp
         .effective_membership()
         .members
@@ -717,7 +713,7 @@ async fn add_learner_node_and_promote_should_success() {
         .generate_membership(Some(Change::Promote(3)))
         .pop()
         .unwrap();
-    let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
+    let _ignore = curp.update_membership(membership).unwrap();
     assert!(curp
         .effective_membership()
         .members
@@ -744,8 +740,8 @@ fn add_exists_node_should_have_no_effect() {
 }
 
 #[traced_test]
-#[tokio::test] // TODO: use sync context
-async fn remove_node_should_remove_node_from_curp() {
+#[test]
+fn remove_node_should_remove_node_from_curp() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
     let follower_id = curp.get_id_by_name("S1").unwrap();
@@ -753,7 +749,7 @@ async fn remove_node_should_remove_node_from_curp() {
         .generate_membership(Some(Change::Demote(follower_id)))
         .pop()
         .unwrap();
-    let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
+    let _ignore = curp.update_membership(membership).unwrap();
     assert!(!curp
         .effective_membership()
         .members
@@ -777,8 +773,8 @@ fn remove_non_exists_node_should_have_no_effect() {
 }
 
 #[traced_test]
-#[tokio::test] // TODO: use sync context
-async fn follower_append_membership_change() {
+#[test]
+fn follower_append_membership_change() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     let membership = curp
@@ -788,25 +784,25 @@ async fn follower_append_membership_change() {
 
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
     let log = LogEntry::new(1, 1, ProposeId::default(), membership.clone());
-    let _ignore = curp.append_membership([log], 1, 0, |_, _, _| {}).unwrap();
+    let _ignore = curp.append_membership([log], 1, 0).unwrap();
     assert_eq!(curp.effective_membership(), membership);
     assert_ne!(curp.committed_membership(), membership);
     let log1 = LogEntry::new(2, 1, ProposeId::default(), EntryData::<TestCommand>::Empty);
-    let _ignore = curp.append_membership([log1], 1, 1, |_, _, _| {}).unwrap();
+    let _ignore = curp.append_membership([log1], 1, 1).unwrap();
     assert_eq!(curp.effective_membership(), membership);
     assert_eq!(curp.committed_membership(), membership);
 }
 
 #[traced_test]
-#[tokio::test] // TODO: use sync context
-async fn leader_handle_move_leader() {
+#[test]
+fn leader_handle_move_leader() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     let membership = curp
         .generate_membership(Some(Change::Add(Node::new(1234, NodeMetadata::default()))))
         .pop()
         .unwrap();
-    let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
+    let _ignore = curp.update_membership(membership).unwrap();
 
     let res = curp.handle_move_leader(1234);
     assert!(res.is_err());
@@ -840,8 +836,8 @@ fn follower_handle_move_leader() {
 }
 
 #[traced_test]
-#[tokio::test]
-async fn leader_will_reset_transferee_after_remove_node() {
+#[test]
+fn leader_will_reset_transferee_after_remove_node() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
 
@@ -854,7 +850,7 @@ async fn leader_will_reset_transferee_after_remove_node() {
         vec![(0..5).filter(|id| *id != target_id).collect()],
         BTreeMap::default(),
     );
-    let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
+    let _ignore = curp.update_membership(membership).unwrap();
     curp.update_transferee();
     assert!(curp.get_transferee().is_none());
 }

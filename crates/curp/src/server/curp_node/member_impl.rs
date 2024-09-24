@@ -4,6 +4,7 @@
     clippy::needless_pass_by_value
 )] // TODO: remove this after implemented
 
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -20,6 +21,7 @@ use crate::rpc::ChangeMembershipResponse;
 use crate::rpc::CurpError;
 use crate::rpc::MembershipChange;
 use crate::rpc::Redirect;
+use crate::server::raw_curp::node_state::NodeState;
 
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Performs a membership change to the cluster
@@ -64,25 +66,33 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         if configs.is_empty() {
             return Err(CurpError::invalid_member_change());
         }
-        let spawn_sync = |sync_event, remove_event, connect| {
-            self.curp.task_manager().spawn(TaskName::SyncFollower, |n| {
-                Self::sync_follower_task(
-                    Arc::clone(&self.curp),
-                    connect,
-                    sync_event,
-                    Arc::clone(&remove_event),
-                    n,
-                )
-            });
-        };
         for config in configs {
-            let propose_id = self.curp.update_membership(config, spawn_sync)?;
+            let (new_nodes, propose_id) = self.curp.update_membership(config)?;
+            self.spawn_sync_follower_tasks(new_nodes);
             self.curp.wait_propose_ids(Some(propose_id)).await;
         }
         self.curp.update_role_leader();
         self.curp.update_transferee();
 
         Ok(())
+    }
+
+    /// Spawns background follower sync tasks
+    pub(super) fn spawn_sync_follower_tasks(&self, new_nodes: BTreeMap<u64, NodeState>) {
+        let task_manager = self.curp.task_manager();
+        for (connect, sync_event, remove_event) in
+            new_nodes.into_values().map(NodeState::into_parts)
+        {
+            task_manager.spawn(TaskName::SyncFollower, |n| {
+                Self::sync_follower_task(
+                    Arc::clone(&self.curp),
+                    connect,
+                    sync_event,
+                    remove_event,
+                    n,
+                )
+            });
+        }
     }
 
     /// Ensures that the current node is the leader
