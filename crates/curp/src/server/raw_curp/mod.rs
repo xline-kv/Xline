@@ -50,6 +50,7 @@ use utils::task_manager::TaskManager;
 use utils::ClientTlsConfig;
 
 use self::log::Log;
+use self::node_state::NodeState;
 use self::node_state::NodeStates;
 use self::state::CandidateState;
 use self::state::LeaderState;
@@ -99,7 +100,7 @@ mod tests;
 mod member_impl;
 
 /// Unified state for each node
-mod node_state;
+pub(crate) mod node_state;
 
 /// The curp state machine
 pub struct RawCurp<C: Command, RC: RoleChange> {
@@ -462,7 +463,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 }
 
 /// Term, entries
-type AppendEntriesSuccess<C> = (u64, Vec<Arc<LogEntry<C>>>);
+type AppendEntriesSuccess<C> = (u64, Vec<Arc<LogEntry<C>>>, BTreeMap<u64, NodeState>);
 /// Term, index
 type AppendEntriesFailure = (u64, LogIndex);
 
@@ -665,7 +666,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Return `Err(term, hint_index)` if fails
     #[allow(clippy::needless_pass_by_value)] // TODO: avoid cloning of `entries`
     #[allow(clippy::too_many_arguments)] // FIXME: reduce the number of arguments
-    pub(super) fn handle_append_entries<F>(
+    pub(super) fn handle_append_entries(
         &self,
         term: u64,
         leader_id: ServerId,
@@ -673,11 +674,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         prev_log_term: u64,
         entries: Vec<LogEntry<C>>,
         leader_commit: LogIndex,
-        spawn_sync: F,
-    ) -> Result<AppendEntriesSuccess<C>, AppendEntriesFailure>
-    where
-        F: Fn(Arc<Event>, Arc<Event>, InnerConnectApiWrapper),
-    {
+    ) -> Result<AppendEntriesSuccess<C>, AppendEntriesFailure> {
         if entries.is_empty() {
             trace!(
                 "{} received heartbeat from {}: term({}), commit({}), prev_log_index({}), prev_log_term({})",
@@ -717,7 +714,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let (to_persist, truncate_at) = log_w
             .try_append_entries(entries.clone(), prev_log_index, prev_log_term)
             .map_err(|_ig| (term, log_w.commit_index + 1))?;
-        self.append_membership(&entries, truncate_at, leader_commit, spawn_sync)
+        let new_nodes = self
+            .append_membership(&entries, truncate_at, leader_commit)
             .map_err(|err| {
                 error!("append memebrship entires failed: {err}");
                 (term, log_w.commit_index + 1)
@@ -729,7 +727,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             self.apply(&mut *log_w);
         }
 
-        Ok((term, to_persist))
+        Ok((term, to_persist, new_nodes))
     }
 
     /// Handle `append_entries` response

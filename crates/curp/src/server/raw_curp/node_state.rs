@@ -235,22 +235,4 @@ impl NodeState {
 
         (connect, sync_event, remove_event)
     }
-
-    /// Clone parts of self
-    pub(super) fn clone_parts(
-        &self,
-    ) -> (NodeStatus, InnerConnectApiWrapper, Arc<Event>, Arc<Event>) {
-        let NodeState {
-            ref status,
-            ref connect,
-            ref sync_event,
-            ref remove_event,
-        } = *self;
-        (
-            *status,
-            connect.clone(),
-            Arc::clone(sync_event),
-            Arc::clone(remove_event),
-        )
-    }
 }

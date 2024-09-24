@@ -412,17 +412,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         req: &AppendEntriesRequest,
     ) -> Result<AppendEntriesResponse, CurpError> {
         let entries = req.entries()?;
-        let sync_spawner = |sync_event, remove_event, connect| {
-            self.curp.task_manager().spawn(TaskName::SyncFollower, |n| {
-                Self::sync_follower_task(
-                    Arc::clone(&self.curp),
-                    connect,
-                    sync_event,
-                    Arc::clone(&remove_event),
-                    n,
-                )
-            });
-        };
         let result = self.curp.handle_append_entries(
             req.term,
             req.leader_id,
@@ -430,12 +419,12 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             req.prev_log_term,
             entries,
             req.leader_commit,
-            sync_spawner,
         );
         let resp = match result {
-            Ok((term, to_persist)) => {
+            Ok((term, to_persist, new_nodes)) => {
                 self.storage
                     .put_log_entries(&to_persist.iter().map(Arc::as_ref).collect::<Vec<_>>())?;
+                self.spawn_sync_follower_tasks(new_nodes);
                 AppendEntriesResponse::new_accept(term)
             }
             Err((term, hint)) => AppendEntriesResponse::new_reject(term, hint),
