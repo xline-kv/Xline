@@ -50,8 +50,9 @@ impl MemberClient {
     /// ```
     #[inline]
     pub async fn add_learner(&self, nodes: Vec<Node>) -> Result<()> {
+        let changes = nodes.into_iter().map(Change::Add).map(Into::into).collect();
         self.curp_client
-            .add_learner(nodes.into_iter().map(Into::into).collect())
+            .change_membership(changes)
             .await
             .map_err(Into::into)
     }
@@ -84,8 +85,13 @@ impl MemberClient {
     /// ```
     #[inline]
     pub async fn remove_learner(&self, ids: Vec<u64>) -> Result<()> {
+        let changes = ids
+            .into_iter()
+            .map(Change::Remove)
+            .map(Into::into)
+            .collect();
         self.curp_client
-            .remove_learner(ids)
+            .change_membership(changes)
             .await
             .map_err(Into::into)
     }
@@ -148,6 +154,33 @@ impl From<Node> for curp::rpc::Node {
         Self {
             node_id: node.node_id,
             meta: Some(meta),
+        }
+    }
+}
+
+/// Represents a change in cluster membership.
+#[allow(variant_size_differences)]
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum Change {
+    /// Adds a new learner.
+    Add(Node),
+    /// Removes a learner by its id.
+    Remove(u64),
+    /// Promotes a learner to voter
+    Promote(u64),
+    /// Demotes a voter to learner.
+    Demote(u64),
+}
+
+impl From<Change> for curp::rpc::Change {
+    #[inline]
+    fn from(change: Change) -> Self {
+        match change {
+            Change::Add(node) => curp::rpc::Change::Add(node.into()),
+            Change::Remove(id) => curp::rpc::Change::Remove(id),
+            Change::Promote(id) => curp::rpc::Change::Promote(id),
+            Change::Demote(id) => curp::rpc::Change::Demote(id),
         }
     }
 }

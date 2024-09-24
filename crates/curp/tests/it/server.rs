@@ -9,7 +9,7 @@ use clippy_utilities::NumericCast;
 use curp::{
     client::{ClientApi, ClientBuilder},
     member::MembershipInfo,
-    rpc::{CurpError, Node, NodeMetadata},
+    rpc::{Change, CurpError, Node, NodeMetadata},
 };
 use curp_test_utils::{
     init_logger, sleep_millis,
@@ -396,7 +396,10 @@ async fn propose_add_node_should_success() {
     let node_meta = NodeMetadata::new("new_node", ["addr"], ["addr"]);
     let node_id = 5;
     let node = Node::new(node_id, node_meta.clone());
-    client.add_learner(vec![node]).await.unwrap();
+    client
+        .change_membership(vec![Change::Add(node)])
+        .await
+        .unwrap();
     assert_cluster(&client, 4, 3, [NodeAssert::new(node_id, node_meta, false)]).await;
 }
 
@@ -411,10 +414,16 @@ async fn propose_remove_node_should_success() {
     let node_meta = NodeMetadata::new("new_node", ["addr"], ["addr"]);
     let node_id = 5;
     let node = Node::new(node_id, node_meta.clone());
-    client.add_learner(vec![node]).await.unwrap();
+    client
+        .change_membership(vec![Change::Add(node)])
+        .await
+        .unwrap();
     assert_cluster(&client, 4, 3, [NodeAssert::new(node_id, node_meta, false)]).await;
 
-    client.remove_learner(vec![node_id]).await.unwrap();
+    client
+        .change_membership(vec![Change::Remove(node_id)])
+        .await
+        .unwrap();
     assert_cluster(&client, 3, 3, []).await;
 }
 
@@ -429,10 +438,16 @@ async fn propose_add_member_should_success() {
     let node_meta = NodeMetadata::new("new_node", ["addr"], ["addr"]);
     let node_id = 5;
     let node = Node::new(node_id, node_meta.clone());
-    client.add_learner(vec![node]).await.unwrap();
+    client
+        .change_membership(vec![Change::Add(node)])
+        .await
+        .unwrap();
     assert_cluster(&client, 4, 3, [NodeAssert::new(node_id, node_meta, false)]).await;
 
-    client.add_member(vec![node_id]).await.unwrap();
+    client
+        .change_membership(vec![Change::Promote(node_id)])
+        .await
+        .unwrap();
     assert_cluster(&client, 4, 4, []).await;
 }
 
@@ -447,16 +462,28 @@ async fn propose_remove_member_should_success() {
     let node_meta = NodeMetadata::new("new_node", ["addr"], ["addr"]);
     let node_id = 5;
     let node = Node::new(node_id, node_meta.clone());
-    client.add_learner(vec![node]).await.unwrap();
+    client
+        .change_membership(vec![Change::Add(node)])
+        .await
+        .unwrap();
     assert_cluster(&client, 4, 3, [NodeAssert::new(node_id, node_meta, false)]).await;
 
-    client.add_member(vec![node_id]).await.unwrap();
+    client
+        .change_membership(vec![Change::Promote(node_id)])
+        .await
+        .unwrap();
     assert_cluster(&client, 4, 4, []).await;
 
-    client.remove_member(vec![node_id]).await.unwrap();
+    client
+        .change_membership(vec![Change::Demote(node_id)])
+        .await
+        .unwrap();
     assert_cluster(&client, 4, 3, []).await;
 
-    client.remove_learner(vec![node_id]).await.unwrap();
+    client
+        .change_membership(vec![Change::Remove(node_id)])
+        .await
+        .unwrap();
     assert_cluster(&client, 3, 3, []).await;
 }
 
@@ -470,10 +497,16 @@ async fn propose_remove_leader_should_success() {
 
     let id = client.fetch_leader_id(true).await.unwrap();
 
-    client.remove_member(vec![id]).await.unwrap();
+    client
+        .change_membership(vec![Change::Demote(id)])
+        .await
+        .unwrap();
     assert_cluster(&client, 3, 2, []).await;
 
-    client.remove_learner(vec![id]).await.unwrap();
+    client
+        .change_membership(vec![Change::Remove(id)])
+        .await
+        .unwrap();
     assert_cluster(&client, 2, 2, []).await;
 
     let new_id = client.fetch_leader_id(true).await.unwrap();
@@ -519,7 +552,10 @@ async fn propose_conf_change_to_follower() {
     let node_meta = NodeMetadata::new("new_node", ["addr"], ["addr"]);
     let node_id = 5;
     let node = Node::new(node_id, node_meta.clone());
-    client.add_learner(vec![node]).await.unwrap();
+    client
+        .change_membership(vec![Change::Add(node)])
+        .await
+        .unwrap();
     assert_cluster(&client, 4, 3, [NodeAssert::new(node_id, node_meta, false)]).await;
 }
 
@@ -539,7 +575,10 @@ async fn new_node_should_apply_old_cluster_logs() {
     let node_meta = NodeMetadata::new("new_node", addrs.clone(), addrs);
     let node_id = 5;
     let node = Node::new(node_id, node_meta.clone());
-    client.add_learner(vec![node]).await.unwrap();
+    client
+        .change_membership(vec![Change::Add(node)])
+        .await
+        .unwrap();
 
     /*******  start new node *******/
 
@@ -606,7 +645,10 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_cluster(
     let node_meta = NodeMetadata::new("new_node", addrs.clone(), addrs);
     let node_id = 5;
     let node = Node::new(node_id, node_meta);
-    client.add_learner(vec![node]).await.unwrap();
+    client
+        .change_membership(vec![Change::Add(node)])
+        .await
+        .unwrap();
     group
         .run_node(
             listener,
@@ -635,7 +677,10 @@ async fn propose_conf_change_rpc_should_work_when_client_has_wrong_cluster() {
     let node_meta = NodeMetadata::new("new_node", addrs.clone(), addrs);
     let node_id = 5;
     let node = Node::new(node_id, node_meta);
-    client.add_learner(vec![node]).await.unwrap();
+    client
+        .change_membership(vec![Change::Add(node)])
+        .await
+        .unwrap();
     group
         .run_node(
             listener,
@@ -643,7 +688,10 @@ async fn propose_conf_change_rpc_should_work_when_client_has_wrong_cluster() {
             MembershipInfo::new(node_id, BTreeMap::default()),
         )
         .await;
-    client.remove_member(vec![node_id]).await.unwrap();
+    client
+        .change_membership(vec![Change::Remove(node_id)])
+        .await
+        .unwrap();
     group
         .wait_for_node_shutdown(node_id, DEFAULT_SHUTDOWN_TIMEOUT)
         .await;

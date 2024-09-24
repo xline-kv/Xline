@@ -10,11 +10,11 @@ use utils::parking_lot_lock::RwLockMap;
 
 use crate::log_entry::EntryData;
 use crate::log_entry::LogEntry;
-use crate::member::Change;
 use crate::member::Membership;
 use crate::member::NodeMembershipState;
 use crate::rpc::connect::InnerConnectApiWrapper;
 use crate::rpc::inner_connects;
+use crate::rpc::Change;
 use crate::rpc::ProposeId;
 use crate::server::StorageApi;
 use crate::server::StorageError;
@@ -24,9 +24,12 @@ use super::Role;
 
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Generate memberships based on the provided change
-    pub(crate) fn generate_membership(&self, change: Change) -> Vec<Membership> {
+    pub(crate) fn generate_membership<Changes>(&self, changes: Changes) -> Vec<Membership>
+    where
+        Changes: IntoIterator<Item = Change>,
+    {
         let ms_r = self.ms.read();
-        ms_r.cluster().committed().change(change)
+        ms_r.cluster().committed().changes(changes)
     }
 
     /// Updates the membership config

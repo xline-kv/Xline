@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, sync::Arc};
 
-use curp::rpc::{Node, NodeMetadata};
+use curp::rpc::{Change, Node, NodeMetadata};
 use rand::Rng;
 use tonic::{Request, Response, Status};
 use xlineapi::{
@@ -70,9 +70,13 @@ impl Cluster for ClusterServer {
         let id = Self::gen_rand_node_id();
         let meta = NodeMetadata::new(name, request.peer_ur_ls, vec![]);
         let node = Node::new(id, meta);
-        self.client.add_learner(vec![node]).await?;
+        self.client
+            .change_membership(vec![Change::Add(node)])
+            .await?;
         if !request.is_learner {
-            self.client.add_member(vec![id]).await?;
+            self.client
+                .change_membership(vec![Change::Promote(id)])
+                .await?;
         }
         let members = self.fetch_members(true).await?;
         let added = members
@@ -96,8 +100,13 @@ impl Cluster for ClusterServer {
         let id = request.into_inner().id;
         // In etcd a member could be a learner, and could return CurpError::InvalidMemberChange
         // TODO: handle other errors that may returned
-        let _ignore = self.client.remove_member(vec![id]).await;
-        self.client.remove_learner(vec![id]).await?;
+        let _ignore = self
+            .client
+            .change_membership(vec![Change::Demote(id)])
+            .await;
+        self.client
+            .change_membership(vec![Change::Remove(id)])
+            .await?;
         let members = self.fetch_members(true).await?;
 
         Ok(tonic::Response::new(MemberRemoveResponse {
@@ -120,9 +129,13 @@ impl Cluster for ClusterServer {
             .ok_or(tonic::Status::internal("invalid member id"))?;
 
         if !member.is_learner {
-            self.client.remove_member(vec![id]).await?;
+            self.client
+                .change_membership(vec![Change::Demote(id)])
+                .await?;
         }
-        self.client.remove_learner(vec![id]).await?;
+        self.client
+            .change_membership(vec![Change::Remove(id)])
+            .await?;
 
         let meta = NodeMetadata::new(
             member.name.clone(),
@@ -130,8 +143,12 @@ impl Cluster for ClusterServer {
             member.client_ur_ls.clone(),
         );
         let node = Node::new(id, meta);
-        self.client.add_learner(vec![node]).await?;
-        self.client.add_member(vec![id]).await?;
+        self.client
+            .change_membership(vec![Change::Add(node)])
+            .await?;
+        self.client
+            .change_membership(vec![Change::Promote(id)])
+            .await?;
 
         member.peer_ur_ls = request.peer_ur_ls;
 
@@ -161,7 +178,7 @@ impl Cluster for ClusterServer {
     ) -> Result<Response<MemberPromoteResponse>, Status> {
         let header = self.header_gen.gen_header();
         self.client
-            .add_member(vec![request.into_inner().id])
+            .change_membership(vec![Change::Promote(request.into_inner().id)])
             .await?;
         let members = self.fetch_members(true).await?;
         Ok(tonic::Response::new(MemberPromoteResponse {

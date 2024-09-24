@@ -155,14 +155,11 @@ mod tests {
     use crate::{
         member::Membership,
         rpc::{
-            connect::{ConnectApi, MockConnectApi},
-            AddLearnerRequest, AddLearnerResponse, AddMemberRequest, AddMemberResponse, CurpError,
+            connect::ConnectApi, ChangeMembershipRequest, ChangeMembershipResponse,
             FetchMembershipRequest, FetchMembershipResponse, FetchReadStateRequest,
-            FetchReadStateResponse, Member, MoveLeaderRequest, MoveLeaderResponse, NodeMetadata,
-            OpResponse, ProposeId, ProposeRequest, ProposeResponse, ReadIndexResponse,
-            RecordRequest, RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse,
-            RemoveMemberRequest, RemoveMemberResponse, ResponseOp, ShutdownRequest,
-            ShutdownResponse, SyncedResponse,
+            FetchReadStateResponse, MoveLeaderRequest, MoveLeaderResponse, NodeMetadata,
+            OpResponse, ProposeRequest, ReadIndexResponse, RecordRequest, RecordResponse,
+            ShutdownRequest, ShutdownResponse,
         },
     };
 
@@ -258,37 +255,11 @@ mod tests {
             unreachable!("please use MockedConnectApi")
         }
 
-        async fn add_learner(
+        async fn change_membership(
             &self,
-            _request: AddLearnerRequest,
+            _request: ChangeMembershipRequest,
             _timeout: Duration,
-        ) -> Result<tonic::Response<AddLearnerResponse>, CurpError> {
-            unreachable!("please use MockedConnectApi")
-        }
-
-        async fn remove_learner(
-            &self,
-            _request: RemoveLearnerRequest,
-            _timeout: Duration,
-        ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
-            unreachable!("please use MockedConnectApi")
-        }
-
-        /// Add a learner to the cluster.
-        async fn add_member(
-            &self,
-            request: AddMemberRequest,
-            timeout: Duration,
-        ) -> Result<tonic::Response<AddMemberResponse>, CurpError> {
-            unreachable!("please use MockedConnectApi")
-        }
-
-        /// Remove a learner from the cluster.
-        async fn remove_member(
-            &self,
-            request: RemoveMemberRequest,
-            timeout: Duration,
-        ) -> Result<tonic::Response<RemoveMemberResponse>, CurpError> {
+        ) -> Result<tonic::Response<ChangeMembershipResponse>, CurpError> {
             unreachable!("please use MockedConnectApi")
         }
     }

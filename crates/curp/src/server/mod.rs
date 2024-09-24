@@ -23,10 +23,10 @@ use crate::member::MembershipInfo;
 use crate::response::ResponseSender;
 use crate::role_change::RoleChange;
 use crate::rpc::connect::Bypass;
-use crate::rpc::AddLearnerRequest;
-use crate::rpc::AddLearnerResponse;
 use crate::rpc::AppendEntriesRequest;
 use crate::rpc::AppendEntriesResponse;
+use crate::rpc::ChangeMembershipRequest;
+use crate::rpc::ChangeMembershipResponse;
 use crate::rpc::FetchMembershipRequest;
 use crate::rpc::FetchMembershipResponse;
 use crate::rpc::FetchReadStateRequest;
@@ -42,8 +42,6 @@ use crate::rpc::ReadIndexRequest;
 use crate::rpc::ReadIndexResponse;
 use crate::rpc::RecordRequest;
 use crate::rpc::RecordResponse;
-use crate::rpc::RemoveLearnerRequest;
-use crate::rpc::RemoveLearnerResponse;
 use crate::rpc::ShutdownRequest;
 use crate::rpc::ShutdownResponse;
 use crate::rpc::TriggerShutdownRequest;
@@ -194,49 +192,13 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
         ))
     }
 
-    #[instrument(skip_all, name = "add_learner")]
-    async fn add_learner(
+    #[instrument(skip_all, name = "change_membership")]
+    async fn change_membership(
         &self,
-        request: tonic::Request<AddLearnerRequest>,
-    ) -> Result<tonic::Response<AddLearnerResponse>, tonic::Status> {
+        request: tonic::Request<ChangeMembershipRequest>,
+    ) -> Result<tonic::Response<ChangeMembershipResponse>, tonic::Status> {
         self.inner
-            .add_learner(request.into_inner())
-            .await
-            .map(tonic::Response::new)
-            .map_err(Into::into)
-    }
-
-    #[instrument(skip_all, name = "remove_learner")]
-    async fn remove_learner(
-        &self,
-        request: tonic::Request<RemoveLearnerRequest>,
-    ) -> Result<tonic::Response<RemoveLearnerResponse>, tonic::Status> {
-        self.inner
-            .remove_learner(request.into_inner())
-            .await
-            .map(tonic::Response::new)
-            .map_err(Into::into)
-    }
-
-    #[instrument(skip_all, name = "add_member")]
-    async fn add_member(
-        &self,
-        request: tonic::Request<crate::rpc::AddMemberRequest>,
-    ) -> Result<tonic::Response<crate::rpc::AddMemberResponse>, tonic::Status> {
-        self.inner
-            .add_member(request.into_inner())
-            .await
-            .map(tonic::Response::new)
-            .map_err(Into::into)
-    }
-
-    #[instrument(skip_all, name = "remove_member")]
-    async fn remove_member(
-        &self,
-        request: tonic::Request<crate::rpc::RemoveMemberRequest>,
-    ) -> Result<tonic::Response<crate::rpc::RemoveMemberResponse>, tonic::Status> {
-        self.inner
-            .remove_member(request.into_inner())
+            .change_membership(request.into_inner())
             .await
             .map(tonic::Response::new)
             .map_err(Into::into)

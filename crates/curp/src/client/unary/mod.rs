@@ -13,8 +13,8 @@ use super::{
     retry::Context,
 };
 use crate::rpc::{
-    AddLearnerRequest, AddMemberRequest, CurpError, FetchReadStateRequest, MoveLeaderRequest, Node,
-    ReadState, RemoveLearnerRequest, RemoveMemberRequest, ShutdownRequest,
+    Change, ChangeMembershipRequest, CurpError, FetchReadStateRequest, MembershipChange,
+    MoveLeaderRequest, ReadState, ShutdownRequest,
 };
 
 /// The unary client
@@ -109,49 +109,20 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         Ok(state)
     }
 
-    /// Add some learners to the cluster.
-    async fn add_learner(&self, nodes: Vec<Node>, ctx: Context) -> Result<(), Self::Error> {
-        let req = AddLearnerRequest { nodes };
+    async fn change_membership(
+        &self,
+        changes: Vec<Change>,
+        ctx: Context,
+    ) -> Result<(), Self::Error> {
+        let changes = changes
+            .into_iter()
+            .map(|c| MembershipChange { change: Some(c) })
+            .collect();
+        let req = ChangeMembershipRequest { changes };
         let timeout = self.config.wait_synced_timeout();
         let _ignore = ctx
             .cluster_state()
-            .map_leader(|conn| async move { conn.add_learner(req, timeout).await })
-            .await?;
-
-        Ok(())
-    }
-
-    /// Remove some learners from the cluster.
-    async fn remove_learner(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error> {
-        let req = RemoveLearnerRequest { node_ids: ids };
-        let timeout = self.config.wait_synced_timeout();
-        let _ig = ctx
-            .cluster_state()
-            .map_leader(|conn| async move { conn.remove_learner(req, timeout).await })
-            .await?;
-
-        Ok(())
-    }
-
-    /// Add some members to the cluster.
-    async fn add_member(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error> {
-        let req = AddMemberRequest { node_ids: ids };
-        let timeout = self.config.wait_synced_timeout();
-        let _ig = ctx
-            .cluster_state()
-            .map_leader(|conn| async move { conn.add_member(req, timeout).await })
-            .await?;
-
-        Ok(())
-    }
-
-    /// Add some members to the cluster.
-    async fn remove_member(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error> {
-        let req = RemoveMemberRequest { node_ids: ids };
-        let timeout = self.config.wait_synced_timeout();
-        let _ig = ctx
-            .cluster_state()
-            .map_leader(|conn| async move { conn.remove_member(req, timeout).await })
+            .map_leader(|conn| async move { conn.change_membership(req, timeout).await })
             .await?;
 
         Ok(())

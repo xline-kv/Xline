@@ -1,4 +1,3 @@
-use std::collections::btree_map::Entry;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -12,6 +11,7 @@ use serde::Serialize;
 
 use crate::quorum::Joint;
 use crate::quorum::QuorumSet;
+use crate::rpc::Change;
 use crate::rpc::NodeMetadata;
 
 /// The membership info, used to build the initial states
@@ -186,54 +186,48 @@ impl Membership {
     /// Generates a new membership from `Change`
     ///
     /// Returns `None` if the change is invalid
-    pub(crate) fn change(&self, change: Change) -> Vec<Self> {
-        match change {
-            Change::AddLearner(learners) => {
-                let members = self.members.clone();
-                let mut nodes = self.nodes.clone();
-                for (id, meta) in learners {
-                    match nodes.entry(id) {
-                        Entry::Occupied(_) => return vec![],
-                        Entry::Vacant(e) => {
-                            let _ignore = e.insert(meta);
-                        }
+    pub(crate) fn changes<Changes>(&self, changes: Changes) -> Vec<Self>
+    where
+        Changes: IntoIterator<Item = Change>,
+    {
+        let mut nodes = self.nodes.clone();
+        let members = self.members.clone();
+        let is_member = |id: &u64| members.iter().any(|s| s.contains(id));
+        let mut set = self
+            .members
+            .last()
+            .unwrap_or_else(|| unreachable!("there should be at least one member set"))
+            .clone();
+
+        for change in changes {
+            match change {
+                Change::Add(node) => {
+                    let (id, meta) = node.into_parts();
+                    if nodes.insert(id, meta).is_some() {
+                        return vec![];
                     }
                 }
-
-                vec![Self { members, nodes }]
-            }
-            Change::RemoveLearner(ids) => {
-                let members = self.members.clone();
-                let mut nodes = self.nodes.clone();
-                for id in ids {
+                Change::Remove(id) => {
                     if nodes.remove(&id).is_none() {
                         return vec![];
                     }
                 }
-
-                vec![Self { members, nodes }]
+                Change::Promote(id) => {
+                    if !nodes.contains_key(&id) || is_member(&id) {
+                        return vec![];
+                    }
+                    let _ignore = set.insert(id);
+                }
+                Change::Demote(id) => {
+                    if !nodes.contains_key(&id) || !is_member(&id) {
+                        return vec![];
+                    }
+                    let _ignore = set.remove(&id);
+                }
             }
-            Change::AddMember(ids) => self.update_members(ids, |i, set| {
-                set.union(&i.into_iter().collect()).copied().collect()
-            }),
-            Change::RemoveMember(ids) => self.update_members(ids, |i, set| {
-                set.difference(&i.into_iter().collect()).copied().collect()
-            }),
         }
-    }
 
-    /// Updates the membership based on the given operation and returns
-    /// a vector of coherent memberships.
-    fn update_members<F>(&self, ids: Vec<u64>, op: F) -> Vec<Self>
-    where
-        F: FnOnce(Vec<u64>, BTreeSet<u64>) -> BTreeSet<u64>,
-    {
-        if !self.exists(&ids) {
-            return vec![];
-        }
-        let last = self.last_set();
-        let target = op(ids, last);
-        self.all_coherent(&target)
+        self.all_coherent(&set)
     }
 
     /// Generates all coherent membership to reach the target
@@ -253,21 +247,6 @@ impl Membership {
             members: next,
             nodes: ms.nodes.clone(),
         }
-    }
-
-    /// Returns the last member set
-    ///
-    fn last_set(&self) -> BTreeSet<u64> {
-        self.members
-            .last()
-            .unwrap_or_else(|| unreachable!("there should be at least one member set"))
-            .clone()
-    }
-
-    /// Validates the given ids for member operations
-    fn exists(&self, ids: &[u64]) -> bool {
-        // Ids should be in nodes
-        ids.iter().all(|id| self.nodes.contains_key(id))
     }
 
     /// Converts to `Joint`
@@ -294,20 +273,6 @@ impl Membership {
     pub(crate) fn contains_member(&self, node_id: u64) -> bool {
         self.members.iter().any(|s| s.contains(&node_id))
     }
-}
-
-#[allow(unused)]
-/// The change of membership
-#[derive(Clone)]
-pub(crate) enum Change {
-    /// Adds learners
-    AddLearner(Vec<(u64, NodeMetadata)>),
-    /// Removes learners
-    RemoveLearner(Vec<u64>),
-    /// Adds members
-    AddMember(Vec<u64>),
-    /// Removes members
-    RemoveMember(Vec<u64>),
 }
 
 /// Trait for types that can provide a cluster ID.
