@@ -37,10 +37,9 @@ use crate::{
             commandpb::protocol_client::ProtocolClient,
             inner_messagepb::inner_protocol_client::InnerProtocolClient,
         },
-        AddMemberRequest, AddMemberResponse, AppendEntriesRequest, AppendEntriesResponse,
-        CurpError, FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
-        InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse,
-        ProposeRequest, Protocol, RemoveMemberRequest, RemoveMemberResponse, ShutdownRequest,
+        AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchReadStateRequest,
+        FetchReadStateResponse, InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg,
+        MoveLeaderRequest, MoveLeaderResponse, ProposeRequest, Protocol, ShutdownRequest,
         ShutdownResponse, TriggerShutdownRequest, TryBecomeLeaderNowRequest, VoteRequest,
         VoteResponse,
     },
@@ -51,8 +50,8 @@ use crate::{
 use super::{
     proto::commandpb::{ReadIndexRequest, ReadIndexResponse},
     reconnect::Reconnect,
-    AddLearnerRequest, AddLearnerResponse, FetchMembershipRequest, FetchMembershipResponse,
-    OpResponse, RecordRequest, RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse,
+    ChangeMembershipRequest, ChangeMembershipResponse, FetchMembershipRequest,
+    FetchMembershipResponse, OpResponse, RecordRequest, RecordResponse,
 };
 
 /// Install snapshot chunk size: 64KB
@@ -224,33 +223,12 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         timeout: Duration,
     ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError>;
 
-    /// Add a learner to the cluster.
-    async fn add_learner(
+    /// Changes the membership
+    async fn change_membership(
         &self,
-        request: AddLearnerRequest,
+        request: ChangeMembershipRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<AddLearnerResponse>, CurpError>;
-
-    /// Remove a learner from the cluster.
-    async fn remove_learner(
-        &self,
-        request: RemoveLearnerRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError>;
-
-    /// Add a learner to the cluster.
-    async fn add_member(
-        &self,
-        request: AddMemberRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<AddMemberResponse>, CurpError>;
-
-    /// Remove a learner from the cluster.
-    async fn remove_member(
-        &self,
-        request: RemoveMemberRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<RemoveMemberResponse>, CurpError>;
+    ) -> Result<tonic::Response<ChangeMembershipResponse>, CurpError>;
 }
 
 /// Inner Connect interface among different servers
@@ -522,49 +500,14 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         with_timeout!(timeout, client.fetch_membership(req)).map_err(Into::into)
     }
 
-    async fn add_learner(
+    async fn change_membership(
         &self,
-        request: AddLearnerRequest,
+        request: ChangeMembershipRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<AddLearnerResponse>, CurpError> {
+    ) -> Result<tonic::Response<ChangeMembershipResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_current();
-        with_timeout!(timeout, client.add_learner(req)).map_err(Into::into)
-    }
-
-    async fn remove_learner(
-        &self,
-        request: RemoveLearnerRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_current();
-        with_timeout!(timeout, client.remove_learner(req)).map_err(Into::into)
-    }
-
-    async fn add_member(
-        &self,
-        request: AddMemberRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<AddMemberResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_current();
-        with_timeout!(timeout, client.add_member(req)).map_err(Into::into)
-    }
-
-    /// Remove a learner from the cluster.
-    async fn remove_member(
-        &self,
-        request: RemoveMemberRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<RemoveMemberResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_current();
-        with_timeout!(timeout, client.remove_member(req)).map_err(Into::into)
+        let req = tonic::Request::new(request);
+        with_timeout!(timeout, client.change_membership(req)).map_err(Into::into)
     }
 }
 
@@ -833,49 +776,15 @@ where
         self.server.fetch_membership(req).await.map_err(Into::into)
     }
 
-    async fn add_learner(
+    async fn change_membership(
         &self,
-        request: AddLearnerRequest,
+        request: ChangeMembershipRequest,
         _timeout: Duration,
-    ) -> Result<tonic::Response<AddLearnerResponse>, CurpError> {
+    ) -> Result<tonic::Response<ChangeMembershipResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
-        self.server.add_learner(req).await.map_err(Into::into)
-    }
-
-    async fn remove_learner(
-        &self,
-        request: RemoveLearnerRequest,
-        _timeout: Duration,
-    ) -> Result<tonic::Response<RemoveLearnerResponse>, CurpError> {
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_bypassed();
-        req.metadata_mut().inject_current();
-        self.server.remove_learner(req).await.map_err(Into::into)
-    }
-
-    async fn add_member(
-        &self,
-        request: AddMemberRequest,
-        _timeout: Duration,
-    ) -> Result<tonic::Response<AddMemberResponse>, CurpError> {
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_bypassed();
-        req.metadata_mut().inject_current();
-        self.server.add_member(req).await.map_err(Into::into)
-    }
-
-    /// Remove a learner from the cluster.
-    async fn remove_member(
-        &self,
-        request: RemoveMemberRequest,
-        _timeout: Duration,
-    ) -> Result<tonic::Response<RemoveMemberResponse>, CurpError> {
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_bypassed();
-        req.metadata_mut().inject_current();
-        self.server.remove_member(req).await.map_err(Into::into)
+        self.server.change_membership(req).await.map_err(Into::into)
     }
 }
 

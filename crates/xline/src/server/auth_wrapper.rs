@@ -3,12 +3,11 @@ use std::sync::Arc;
 use curp::{
     cmd::PbCodec,
     rpc::{
-        AddLearnerRequest, AddLearnerResponse, AddMemberRequest, AddMemberResponse,
-        FetchMembershipRequest, FetchMembershipResponse, FetchReadStateRequest,
-        FetchReadStateResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse,
-        OpResponse, ProposeRequest, Protocol, ReadIndexRequest, ReadIndexResponse, RecordRequest,
-        RecordResponse, RemoveLearnerRequest, RemoveLearnerResponse, RemoveMemberRequest,
-        RemoveMemberResponse, ShutdownRequest, ShutdownResponse,
+        ChangeMembershipRequest, ChangeMembershipResponse, FetchMembershipRequest,
+        FetchMembershipResponse, FetchReadStateRequest, FetchReadStateResponse, LeaseKeepAliveMsg,
+        MoveLeaderRequest, MoveLeaderResponse, OpResponse, ProposeRequest, Protocol,
+        ReadIndexRequest, ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest,
+        ShutdownResponse,
     },
 };
 use flume::r#async::RecvStream;
@@ -109,31 +108,10 @@ impl Protocol for AuthWrapper {
         self.curp_server.fetch_membership(request).await
     }
 
-    async fn add_learner(
+    async fn change_membership(
         &self,
-        request: tonic::Request<AddLearnerRequest>,
-    ) -> Result<tonic::Response<AddLearnerResponse>, tonic::Status> {
-        self.curp_server.add_learner(request).await
-    }
-
-    async fn remove_learner(
-        &self,
-        request: tonic::Request<RemoveLearnerRequest>,
-    ) -> Result<tonic::Response<RemoveLearnerResponse>, tonic::Status> {
-        self.curp_server.remove_learner(request).await
-    }
-
-    async fn add_member(
-        &self,
-        request: tonic::Request<AddMemberRequest>,
-    ) -> Result<tonic::Response<AddMemberResponse>, tonic::Status> {
-        self.curp_server.add_member(request).await
-    }
-
-    async fn remove_member(
-        &self,
-        request: tonic::Request<RemoveMemberRequest>,
-    ) -> Result<tonic::Response<RemoveMemberResponse>, tonic::Status> {
-        self.curp_server.remove_member(request).await
+        request: tonic::Request<ChangeMembershipRequest>,
+    ) -> Result<tonic::Response<ChangeMembershipResponse>, tonic::Status> {
+        self.curp_server.change_membership(request).await
     }
 }

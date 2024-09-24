@@ -19,7 +19,7 @@ use super::{
 };
 use crate::{
     members::ServerId,
-    rpc::{CurpError, ReadState, Redirect, ProposeId, FetchMembershipResponse, NodeMetadata, Node}, tracker::Tracker,
+    rpc::{CurpError, ReadState, Redirect, ProposeId, FetchMembershipResponse, NodeMetadata, Node, Change}, tracker::Tracker,
 };
 
 /// Backoff config
@@ -433,29 +433,13 @@ where
         .await
     }
 
-    /// Add some learners to the cluster.
-    async fn add_learner(&self, nodes: Vec<Node>) -> Result<(), Self::Error> {
-        self.retry::<_, _>(|client, ctx| client.add_learner(nodes.clone(), ctx))
+
+    /// Performs membership change
+    async fn change_membership(&self, changes: Vec<Change>) -> Result<(), Self::Error> {
+        self.retry::<_, _>(|client, ctx| client.change_membership(changes.clone(), ctx))
             .await
     }
 
-    /// Remove some learners from the cluster.
-    async fn remove_learner(&self, ids: Vec<u64>) -> Result<(), Self::Error> {
-        self.retry::<_, _>(|client, ctx| client.remove_learner(ids.clone(), ctx))
-            .await
-    }
-
-    /// Add some members to the cluster.
-    async fn add_member(&self, ids: Vec<u64>) -> Result<(), Self::Error> {
-        self.retry::<_, _>(|client, ctx| client.add_member(ids.clone(), ctx))
-            .await
-    }
-
-    /// Add some members to the cluster.
-    async fn remove_member(&self, ids: Vec<u64>) -> Result<(), Self::Error> {
-        self.retry::<_, _>(|client, ctx| client.remove_member(ids.clone(), ctx))
-            .await
-    }
 }
 
 /// Tests for backoff

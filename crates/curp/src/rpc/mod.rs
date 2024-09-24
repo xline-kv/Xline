@@ -19,6 +19,7 @@ pub(crate) use self::proto::{
 };
 pub use self::proto::{
     commandpb::{
+        change_membership_request::{membership_change::Change, MembershipChange},
         cmd_result::Result as CmdResultInner,
         curp_error::Err as CurpError, // easy for match
         curp_error::Redirect,
@@ -26,10 +27,8 @@ pub use self::proto::{
         op_response::Op as ResponseOp,
         protocol_client,
         protocol_server::{Protocol, ProtocolServer},
-        AddLearnerRequest,
-        AddLearnerResponse,
-        AddMemberRequest,
-        AddMemberResponse,
+        ChangeMembershipRequest,
+        ChangeMembershipResponse,
         CmdResult,
         FetchMembershipRequest,
         FetchMembershipResponse,
@@ -51,10 +50,6 @@ pub use self::proto::{
         ReadIndexResponse,
         RecordRequest,
         RecordResponse,
-        RemoveLearnerRequest,
-        RemoveLearnerResponse,
-        RemoveMemberRequest,
-        RemoveMemberResponse,
         ShutdownRequest,
         ShutdownResponse,
         SyncedResponse,
@@ -886,5 +881,15 @@ impl NodeMetadata {
     #[must_use]
     pub fn into_client_urls(self) -> Vec<String> {
         self.client_urls
+    }
+}
+
+impl MembershipChange {
+    /// Consumes the wrapper and returns the inner `Change`.
+    #[allow(clippy::unwrap_used, clippy::missing_panics_doc)]
+    #[inline]
+    #[must_use]
+    pub fn into_inner(self) -> Change {
+        self.change.unwrap()
     }
 }

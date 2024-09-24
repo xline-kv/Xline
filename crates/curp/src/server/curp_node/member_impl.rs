@@ -4,6 +4,7 @@
     clippy::needless_pass_by_value
 )] // TODO: remove this after implemented
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use curp_external_api::cmd::Command;
@@ -11,74 +12,55 @@ use curp_external_api::cmd::CommandExecutor;
 use curp_external_api::role_change::RoleChange;
 use utils::task_manager::tasks::TaskName;
 
-use crate::member::Change;
-use crate::rpc::AddLearnerRequest;
-use crate::rpc::AddLearnerResponse;
-use crate::rpc::AddMemberRequest;
-use crate::rpc::AddMemberResponse;
-use crate::rpc::CurpError;
-use crate::rpc::Node;
-use crate::rpc::Redirect;
-use crate::rpc::RemoveLearnerRequest;
-use crate::rpc::RemoveLearnerResponse;
-use crate::rpc::RemoveMemberRequest;
-use crate::rpc::RemoveMemberResponse;
-
 use super::CurpNode;
+use crate::member::Membership;
+use crate::rpc::Change;
+use crate::rpc::ChangeMembershipRequest;
+use crate::rpc::ChangeMembershipResponse;
+use crate::rpc::CurpError;
+use crate::rpc::MembershipChange;
+use crate::rpc::Redirect;
 
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
-    /// Adds a learner to the cluster
-    pub(crate) async fn add_learner(
+    /// Performs a membership change to the cluster
+    pub(crate) async fn change_membership(
         &self,
-        request: AddLearnerRequest,
-    ) -> Result<AddLearnerResponse, CurpError> {
+        request: ChangeMembershipRequest,
+    ) -> Result<ChangeMembershipResponse, CurpError> {
         self.ensure_leader()?;
-        let nodes = request.nodes.into_iter().map(Node::into_parts).collect();
-        self.update_and_wait(Change::AddLearner(nodes)).await?;
+        let changes = request
+            .changes
+            .into_iter()
+            .map(MembershipChange::into_inner);
+        let changes = Self::ensure_non_overlapping(changes)?;
+        let configs = self.curp.generate_membership(changes);
+        self.update_and_wait(configs).await?;
 
-        Ok(AddLearnerResponse {})
+        Ok(ChangeMembershipResponse {})
     }
 
-    /// Removes a learner from the cluster
-    pub(crate) async fn remove_learner(
-        &self,
-        request: RemoveLearnerRequest,
-    ) -> Result<RemoveLearnerResponse, CurpError> {
-        self.ensure_leader()?;
-        self.update_and_wait(Change::RemoveLearner(request.node_ids))
-            .await?;
+    /// Ensures there are no overlapping ids
+    fn ensure_non_overlapping<Changes>(changes: Changes) -> Result<Vec<Change>, CurpError>
+    where
+        Changes: IntoIterator<Item = Change>,
+    {
+        let changes: Vec<_> = changes.into_iter().collect();
+        let mut ids = changes.iter().map(|c| match *c {
+            Change::Add(ref node) => node.node_id,
+            Change::Remove(id) | Change::Promote(id) | Change::Demote(id) => id,
+        });
 
-        Ok(RemoveLearnerResponse {})
-    }
+        let mut set = HashSet::new();
+        if ids.all(|id| set.insert(id)) {
+            return Ok(changes);
+        }
 
-    /// Promotes a learner to a member
-    pub(crate) async fn add_member(
-        &self,
-        request: AddMemberRequest,
-    ) -> Result<AddMemberResponse, CurpError> {
-        self.ensure_leader()?;
-        self.update_and_wait(Change::AddMember(request.node_ids))
-            .await?;
-
-        Ok(AddMemberResponse {})
-    }
-
-    /// Demotes a member to a learner
-    pub(crate) async fn remove_member(
-        &self,
-        request: RemoveMemberRequest,
-    ) -> Result<RemoveMemberResponse, CurpError> {
-        self.ensure_leader()?;
-        self.update_and_wait(Change::RemoveMember(request.node_ids))
-            .await?;
-
-        Ok(RemoveMemberResponse {})
+        Err(CurpError::InvalidConfig(()))
     }
 
     /// Updates the membership based on the given change and waits for
     /// the proposal to be committed
-    async fn update_and_wait(&self, change: Change) -> Result<(), CurpError> {
-        let configs = self.curp.generate_membership(change.clone());
+    async fn update_and_wait(&self, configs: Vec<Membership>) -> Result<(), CurpError> {
         if configs.is_empty() {
             return Err(CurpError::invalid_member_change());
         }

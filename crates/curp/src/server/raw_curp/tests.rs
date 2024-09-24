@@ -9,8 +9,7 @@ use utils::config::{
 
 use super::*;
 use crate::{
-    member::Change,
-    rpc::{self, NodeMetadata, Redirect},
+    rpc::{self, Change, Node, NodeMetadata, Redirect},
     server::{
         cmd_board::CommandBoard,
         conflict::test_pools::{TestSpecPool, TestUncomPool},
@@ -703,7 +702,7 @@ async fn add_learner_node_and_promote_should_success() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     let membership = curp
-        .generate_membership(Change::AddLearner(vec![(3, NodeMetadata::default())]))
+        .generate_membership(Some(Change::Add(Node::new(3, NodeMetadata::default()))))
         .pop()
         .unwrap();
     let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
@@ -715,7 +714,7 @@ async fn add_learner_node_and_promote_should_success() {
         .any(|id| *id == 3));
     curp.membership_commit_to(1);
     let membership = curp
-        .generate_membership(Change::AddMember(vec![3]))
+        .generate_membership(Some(Change::Promote(3)))
         .pop()
         .unwrap();
     let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
@@ -734,13 +733,13 @@ fn add_exists_node_should_have_no_effect() {
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     let exists_node_id = curp.get_id_by_name("S1").unwrap();
     assert!(curp
-        .generate_membership(Change::AddLearner(vec![(
+        .generate_membership(Some(Change::Add(Node::new(
             exists_node_id,
             NodeMetadata::default(),
-        )]))
+        ))))
         .is_empty());
     assert!(curp
-        .generate_membership(Change::AddMember(vec![exists_node_id]))
+        .generate_membership(Some(Change::Promote(exists_node_id)))
         .is_empty());
 }
 
@@ -751,7 +750,7 @@ async fn remove_node_should_remove_node_from_curp() {
     let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
     let follower_id = curp.get_id_by_name("S1").unwrap();
     let membership = curp
-        .generate_membership(Change::RemoveMember(vec![follower_id]))
+        .generate_membership(Some(Change::Demote(follower_id)))
         .pop()
         .unwrap();
     let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();
@@ -770,10 +769,10 @@ fn remove_non_exists_node_should_have_no_effect() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
     assert!(curp
-        .generate_membership(Change::RemoveLearner(vec![10]))
+        .generate_membership(Some(Change::Remove(10)))
         .is_empty());
     assert!(curp
-        .generate_membership(Change::RemoveMember(vec![10]))
+        .generate_membership(Some(Change::Demote(10)))
         .is_empty());
 }
 
@@ -783,7 +782,7 @@ async fn follower_append_membership_change() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     let membership = curp
-        .generate_membership(Change::AddLearner(vec![(3, NodeMetadata::default())]))
+        .generate_membership(Some(Change::Add(Node::new(3, NodeMetadata::default()))))
         .pop()
         .unwrap();
 
@@ -804,7 +803,7 @@ async fn leader_handle_move_leader() {
     let task_manager = Arc::new(TaskManager::new());
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     let membership = curp
-        .generate_membership(Change::AddLearner(vec![(1234, NodeMetadata::default())]))
+        .generate_membership(Some(Change::Add(Node::new(1234, NodeMetadata::default()))))
         .pop()
         .unwrap();
     let _ignore = curp.update_membership(membership, |_, _, _| {}).unwrap();

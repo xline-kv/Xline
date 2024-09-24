@@ -3,7 +3,7 @@ use curp_external_api::cmd::Command;
 
 use crate::{
     members::ServerId,
-    rpc::{FetchMembershipResponse, Node, ReadState},
+    rpc::{Change, FetchMembershipResponse, ReadState},
 };
 
 use super::retry::Context;
@@ -59,17 +59,8 @@ pub trait ClientApi {
             .map(|resp| resp.leader_id)
     }
 
-    /// Add some learners to the cluster.
-    async fn add_learner(&self, nodes: Vec<Node>) -> Result<(), Self::Error>;
-
-    /// Remove some learners from the cluster.
-    async fn remove_learner(&self, ids: Vec<u64>) -> Result<(), Self::Error>;
-
-    /// Add some members to the cluster.
-    async fn add_member(&self, ids: Vec<u64>) -> Result<(), Self::Error>;
-
-    /// Add some members to the cluster.
-    async fn remove_member(&self, ids: Vec<u64>) -> Result<(), Self::Error>;
+    /// Performs membership change
+    async fn change_membership(&self, changes: Vec<Change>) -> Result<(), Self::Error>;
 }
 
 /// This trait override some unrepeatable methods in ClientApi, and a client with this trait will be able to retry.
@@ -104,15 +95,10 @@ pub(crate) trait RepeatableClientApi {
         ctx: Context,
     ) -> Result<ReadState, Self::Error>;
 
-    /// Add some learners to the cluster.
-    async fn add_learner(&self, nodes: Vec<Node>, ctx: Context) -> Result<(), Self::Error>;
-
-    /// Remove some learners from the cluster.
-    async fn remove_learner(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error>;
-
-    /// Add some members to the cluster.
-    async fn add_member(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error>;
-
-    /// Remove some members from the cluster.
-    async fn remove_member(&self, ids: Vec<u64>, ctx: Context) -> Result<(), Self::Error>;
+    /// Performs membership change
+    async fn change_membership(
+        &self,
+        changes: Vec<Change>,
+        ctx: Context,
+    ) -> Result<(), Self::Error>;
 }
