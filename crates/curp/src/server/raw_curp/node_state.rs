@@ -51,6 +51,10 @@ impl NodeStates {
         let old_ids: BTreeSet<_> = states_w.keys().copied().collect();
         let added: BTreeSet<_> = ids.difference(&old_ids).copied().collect();
         let removed: BTreeSet<_> = old_ids.difference(ids).copied().collect();
+        removed
+            .iter()
+            .filter_map(|id| states_w.remove(id))
+            .for_each(|s| s.notify_remove());
         states_w.retain(|id, _| !removed.contains(id));
         let new_connects = connect_to(&added);
         let new_states: BTreeMap<_, _> = added
@@ -168,7 +172,7 @@ impl NodeStates {
 
 /// The state of a node
 #[derive(Clone, Debug)]
-pub(super) struct NodeState {
+pub(crate) struct NodeState {
     /// The status of current node
     status: NodeStatus,
     /// The connect to the node
@@ -210,9 +214,26 @@ impl NodeState {
         &self.sync_event
     }
 
+    /// Notify the remove event
+    pub(super) fn notify_remove(&self) {
+        let _ignore = self.remove_event.notify(1);
+    }
+
     /// Get a mutable reference to the status of the current node
     pub(super) fn status_mut(&mut self) -> &mut NodeStatus {
         &mut self.status
+    }
+
+    /// Decomposes the `NodeState` into its constituent parts.
+    pub(crate) fn into_parts(self) -> (InnerConnectApiWrapper, Arc<Event>, Arc<Event>) {
+        let NodeState {
+            connect,
+            sync_event,
+            remove_event,
+            ..
+        } = self;
+
+        (connect, sync_event, remove_event)
     }
 
     /// Clone parts of self
@@ -231,11 +252,5 @@ impl NodeState {
             Arc::clone(sync_event),
             Arc::clone(remove_event),
         )
-    }
-}
-
-impl Drop for NodeState {
-    fn drop(&mut self) {
-        let _ignore = self.remove_event.notify(1);
     }
 }
