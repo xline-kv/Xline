@@ -4,7 +4,6 @@
     clippy::needless_pass_by_value
 )] // TODO: remove this after implemented
 
-use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -20,6 +19,7 @@ use crate::rpc::ChangeMembershipRequest;
 use crate::rpc::ChangeMembershipResponse;
 use crate::rpc::CurpError;
 use crate::rpc::MembershipChange;
+use crate::rpc::ProposeId;
 use crate::rpc::Redirect;
 use crate::server::raw_curp::node_state::NodeState;
 
@@ -66,22 +66,45 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         if configs.is_empty() {
             return Err(CurpError::invalid_member_change());
         }
-        for config in configs {
-            let (new_nodes, propose_id) = self.curp.update_membership(config)?;
-            self.spawn_sync_follower_tasks(new_nodes);
-            self.curp.wait_propose_ids(Some(propose_id)).await;
-        }
-        self.curp.update_role_leader();
+
+        let propose_ids: Vec<_> = std::iter::repeat_with(|| ProposeId(rand::random(), 0))
+            .take(configs.len())
+            .collect();
+        let entries = propose_ids.clone().into_iter().zip(configs.clone());
+        let indices = self.curp.push_membership_logs(entries);
+        let (new_states, result) = self.with_states_difference(|| {
+            self.curp
+                .update_membership_configs(indices.into_iter().zip(configs))
+        });
+        result?;
+        self.curp.wait_propose_ids(propose_ids).await;
+        self.spawn_sync_follower_tasks(new_states);
+        self.curp.update_role();
         self.curp.update_transferee();
 
         Ok(())
     }
 
+    /// Executes an update operation and captures the difference in node states before and after the update.
+    pub(super) fn with_states_difference<R, Update: FnOnce() -> R>(
+        &self,
+        update: Update,
+    ) -> (Vec<NodeState>, R) {
+        let old = self.curp.clone_node_states();
+        let result = update();
+        let new = self.curp.clone_node_states();
+        let new_states = new
+            .into_iter()
+            .filter_map(|(id, state)| (!old.contains_key(&id)).then_some(state))
+            .collect();
+
+        (new_states, result)
+    }
+
     /// Spawns background follower sync tasks
-    pub(super) fn spawn_sync_follower_tasks(&self, new_nodes: BTreeMap<u64, NodeState>) {
+    pub(super) fn spawn_sync_follower_tasks(&self, new_nodes: Vec<NodeState>) {
         let task_manager = self.curp.task_manager();
-        for (connect, sync_event, remove_event) in
-            new_nodes.into_values().map(NodeState::into_parts)
+        for (connect, sync_event, remove_event) in new_nodes.into_iter().map(NodeState::into_parts)
         {
             task_manager.spawn(TaskName::SyncFollower, |n| {
                 Self::sync_follower_task(

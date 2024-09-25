@@ -42,8 +42,7 @@ impl NodeStates {
         &self,
         ids: &BTreeSet<u64>,
         mut connect_to: ConnectTo,
-    ) -> BTreeMap<u64, NodeState>
-    where
+    ) where
         ConnectTo: FnMut(&BTreeSet<u64>) -> Connects,
         Connects: IntoIterator<Item = InnerConnectApiWrapper>,
     {
@@ -62,11 +61,9 @@ impl NodeStates {
             .into_iter()
             .zip(new_connects.into_iter().map(NodeState::new))
             .collect();
-        states_w.extend(new_states.clone());
+        states_w.extend(new_states);
 
         info!("added nodes: {added:?}, removed nodes: {removed:?}");
-
-        new_states
     }
 
     /// Update `next_index` for server
@@ -167,6 +164,11 @@ impl NodeStates {
             .copied()
             .zip(states_r.values().map(NodeState::connect).cloned())
             .collect()
+    }
+
+    /// Clone the inner map
+    pub(super) fn clone_inner(&self) -> BTreeMap<u64, NodeState> {
+        self.states.read().clone()
     }
 }
 

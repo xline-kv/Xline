@@ -50,7 +50,6 @@ use utils::task_manager::TaskManager;
 use utils::ClientTlsConfig;
 
 use self::log::Log;
-use self::node_state::NodeState;
 use self::node_state::NodeStates;
 use self::state::CandidateState;
 use self::state::LeaderState;
@@ -463,7 +462,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 }
 
 /// Term, entries
-type AppendEntriesSuccess<C> = (u64, Vec<Arc<LogEntry<C>>>, BTreeMap<u64, NodeState>);
+type AppendEntriesSuccess<C> = (u64, Vec<Arc<LogEntry<C>>>);
 /// Term, index
 type AppendEntriesFailure = (u64, LogIndex);
 
@@ -711,15 +710,17 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
         // append log entries
         let mut log_w = self.log.write();
+        let membership_configs: Vec<_> = Self::filter_membership_logs(&entries).collect();
         let (to_persist, truncate_at) = log_w
-            .try_append_entries(entries.clone(), prev_log_index, prev_log_term)
+            .try_append_entries(entries, prev_log_index, prev_log_term)
             .map_err(|_ig| (term, log_w.commit_index + 1))?;
-        let new_nodes = self
-            .append_membership(&entries, truncate_at, leader_commit)
+        self.update_membership_configs(membership_configs)
             .map_err(|err| {
                 error!("append memebrship entires failed: {err}");
                 (term, log_w.commit_index + 1)
             })?;
+        self.update_membership_indices(Some(truncate_at), Some(leader_commit));
+        self.update_role();
         // update commit index
         let prev_commit_index = log_w.commit_index;
         log_w.commit_index = min(leader_commit, log_w.last_log_index());
@@ -727,7 +728,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             self.apply(&mut *log_w);
         }
 
-        Ok((term, to_persist, new_nodes))
+        Ok((term, to_persist))
     }
 
     /// Handle `append_entries` response
@@ -779,7 +780,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let mut log_w = RwLockUpgradableReadGuard::upgrade(log_r);
             if last_sent_index > log_w.commit_index {
                 log_w.commit_to(last_sent_index);
-                self.membership_commit_to(last_sent_index);
+                self.update_membership_indices(None, Some(last_sent_index));
                 debug!("{} updates commit index to {last_sent_index}", self.id());
                 self.apply(&mut *log_w);
             }

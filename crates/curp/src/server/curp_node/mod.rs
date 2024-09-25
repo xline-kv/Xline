@@ -412,16 +412,18 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         req: &AppendEntriesRequest,
     ) -> Result<AppendEntriesResponse, CurpError> {
         let entries = req.entries()?;
-        let result = self.curp.handle_append_entries(
-            req.term,
-            req.leader_id,
-            req.prev_log_index,
-            req.prev_log_term,
-            entries,
-            req.leader_commit,
-        );
+        let (new_nodes, result) = self.with_states_difference(|| {
+            self.curp.handle_append_entries(
+                req.term,
+                req.leader_id,
+                req.prev_log_index,
+                req.prev_log_term,
+                entries,
+                req.leader_commit,
+            )
+        });
         let resp = match result {
-            Ok((term, to_persist, new_nodes)) => {
+            Ok((term, to_persist)) => {
                 self.storage
                     .put_log_entries(&to_persist.iter().map(Arc::as_ref).collect::<Vec<_>>())?;
                 self.spawn_sync_follower_tasks(new_nodes);
