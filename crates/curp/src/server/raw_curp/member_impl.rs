@@ -9,7 +9,6 @@ use utils::parking_lot_lock::RwLockMap;
 use crate::log_entry::EntryData;
 use crate::log_entry::LogEntry;
 use crate::member::Membership;
-use crate::member::NodeMembershipState;
 use crate::rpc::connect::InnerConnectApiWrapper;
 use crate::rpc::inner_connects;
 use crate::rpc::Change;
@@ -21,6 +20,10 @@ use super::node_state::NodeState;
 use super::RawCurp;
 use super::Role;
 
+// Lock order:
+// - log
+// - ms
+// - node_states
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Generate memberships based on the provided change
     pub(crate) fn generate_membership<Changes>(&self, changes: Changes) -> Vec<Membership>
@@ -31,30 +34,41 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         ms_r.cluster().committed().changes(changes)
     }
 
-    /// Updates the membership config
-    pub(crate) fn update_membership(
-        &self,
-        config: Membership,
-    ) -> Result<(BTreeMap<u64, NodeState>, ProposeId), StorageError> {
-        // FIXME: define the lock order of log and ms
+    /// Push membership configs into log
+    pub(crate) fn push_membership_logs<Entries>(&self, entries: Entries) -> Vec<LogIndex>
+    where
+        Entries: IntoIterator<Item = (ProposeId, Membership)>,
+    {
         let mut log_w = self.log.write();
-        let mut ms_w = self.ms.write();
         let st_r = self.st.read();
-        let propose_id = ProposeId(rand::random(), 0);
-        let entry = log_w.push(st_r.term, propose_id, config.clone());
-        let new_nodes = self.on_membership_update(&config);
-        ms_w.cluster_mut().append(entry.index, config);
-        self.ctx
-            .curp_storage
-            .put_membership(ms_w.node_id(), ms_w.cluster())?;
-
-        Ok((new_nodes, propose_id))
+        let mut indices = Vec::new();
+        for (propose_id, config) in entries {
+            let entry = log_w.push(st_r.term, propose_id, config);
+            indices.push(entry.index);
+        }
+        indices
     }
 
-    /// Updates the role if the node is leader
-    pub(crate) fn update_role_leader(&self) {
-        let ms_r = self.ms.read();
-        self.update_role(&ms_r);
+    /// Append configs to membership state
+    ///
+    /// This method will also performs blocking IO
+    pub(crate) fn update_membership_configs<Configs>(
+        &self,
+        memberships: Configs,
+    ) -> Result<(), StorageError>
+    where
+        Configs: IntoIterator<Item = (LogIndex, Membership)>,
+    {
+        let mut ms_w = self.ms.write();
+        for (index, config) in memberships {
+            self.on_membership_update(&config);
+            ms_w.cluster_mut().append(index, config);
+            self.ctx
+                .curp_storage
+                .put_membership(ms_w.node_id(), ms_w.cluster())?;
+        }
+
+        Ok(())
     }
 
     /// Updates the role if the node is leader
@@ -67,52 +81,45 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
     }
 
-    /// Append membership entries
-    pub(crate) fn append_membership<E, I>(
-        &self,
+    /// Filter out membership log entries
+    pub(crate) fn filter_membership_logs<E, I>(
         entries: I,
-        truncate_at: LogIndex,
-        commit_index: LogIndex,
-    ) -> Result<BTreeMap<u64, NodeState>, StorageError>
+    ) -> impl Iterator<Item = (LogIndex, Membership)>
     where
         E: AsRef<LogEntry<C>>,
         I: IntoIterator<Item = E>,
     {
-        let mut new_nodes = BTreeMap::new();
-        let mut ms_w = self.ms.write();
-        ms_w.cluster_mut().truncate(truncate_at);
-        let configs = entries.into_iter().filter_map(|entry| {
+        entries.into_iter().filter_map(|entry| {
             let entry = entry.as_ref();
             if let EntryData::Member(ref m) = entry.entry_data {
                 Some((entry.index, m.clone()))
             } else {
                 None
             }
-        });
-        for (index, config) in configs {
-            new_nodes.append(&mut self.on_membership_update(&config));
-            ms_w.cluster_mut().append(index, config);
-            self.ctx
-                .curp_storage
-                .put_membership(ms_w.node_id(), ms_w.cluster())?;
-        }
-        ms_w.cluster_mut().commit(commit_index);
-
-        self.update_role(&ms_w);
-
-        Ok(new_nodes)
+        })
     }
 
-    /// Updates the commit index
-    pub(crate) fn membership_commit_to(&self, index: LogIndex) {
+    /// Updates membership indices
+    pub(crate) fn update_membership_indices(
+        &self,
+        truncate_at: Option<LogIndex>,
+        commit: Option<LogIndex>,
+    ) {
         let mut ms_w = self.ms.write();
-        ms_w.cluster_mut().commit(index);
+        let _ignore = truncate_at.map(|index| ms_w.cluster_mut().truncate(index));
+        let __ignore = commit.map(|index| ms_w.cluster_mut().commit(index));
+    }
+
+    /// Clone the node states
+    pub(crate) fn clone_node_states(&self) -> BTreeMap<u64, NodeState> {
+        self.ctx.node_states.clone_inner()
     }
 
     /// Updates the role of the node based on the current membership state
-    fn update_role(&self, current: &NodeMembershipState) {
+    pub(crate) fn update_role(&self) {
+        let ms = self.ms.read();
         let mut st_w = self.st.write();
-        if current.is_self_member() {
+        if ms.is_self_member() {
             if matches!(st_w.role, Role::Learner) {
                 st_w.role = Role::Follower;
             }
@@ -121,7 +128,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
 
         // updates leader id
-        if st_w.leader_id.map_or(false, |id| !current.is_member(id)) {
+        if st_w.leader_id.map_or(false, |id| !ms.is_member(id)) {
             st_w.leader_id = None;
         }
     }
@@ -142,7 +149,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Actions on membership update
     ///
     /// Returns the newly added nodes
-    fn on_membership_update(&self, membership: &Membership) -> BTreeMap<u64, NodeState> {
+    fn on_membership_update(&self, membership: &Membership) {
         let node_ids: BTreeSet<_> = membership.nodes.keys().copied().collect();
         let new_connects = self.build_connects(membership);
         let connect_to = move |ids: &BTreeSet<u64>| {
@@ -150,6 +157,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 .filter_map(|id| new_connects.get(id).cloned())
                 .collect::<Vec<_>>()
         };
-        self.ctx.node_states.update_with(&node_ids, connect_to)
+        self.ctx.node_states.update_with(&node_ids, connect_to);
     }
 }

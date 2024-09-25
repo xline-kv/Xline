@@ -708,7 +708,7 @@ fn add_learner_node_and_promote_should_success() {
         .iter()
         .flatten()
         .any(|id| *id == 3));
-    curp.membership_commit_to(1);
+    curp.update_membership_indices(None, Some(1));
     let membership = curp
         .generate_membership(Some(Change::Promote(3)))
         .pop()
@@ -784,11 +784,11 @@ fn follower_append_membership_change() {
 
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
     let log = LogEntry::new(1, 1, ProposeId::default(), membership.clone());
-    let _ignore = curp.append_membership([log], 1, 0).unwrap();
+    let _ignore = curp.append_memberships([log], 1, 0).unwrap();
     assert_eq!(curp.effective_membership(), membership);
     assert_ne!(curp.committed_membership(), membership);
     let log1 = LogEntry::new(2, 1, ProposeId::default(), EntryData::<TestCommand>::Empty);
-    let _ignore = curp.append_membership([log1], 1, 1).unwrap();
+    let _ignore = curp.append_memberships([log1], 1, 1).unwrap();
     assert_eq!(curp.effective_membership(), membership);
     assert_eq!(curp.committed_membership(), membership);
 }
