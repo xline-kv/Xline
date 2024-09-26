@@ -38,32 +38,29 @@ impl NodeStates {
     /// Updates the node states based on the provided set of ids.
     ///
     /// Returns the newly added node states.
-    pub(super) fn update_with<ConnectTo, Connects>(
+    pub(super) fn update_with(
         &self,
-        ids: &BTreeSet<u64>,
-        mut connect_to: ConnectTo,
-    ) where
-        ConnectTo: FnMut(&BTreeSet<u64>) -> Connects,
-        Connects: IntoIterator<Item = InnerConnectApiWrapper>,
-    {
+        connects: BTreeMap<u64, InnerConnectApiWrapper>,
+    ) -> BTreeMap<u64, NodeState> {
         let mut states_w = self.states.write();
+        let ids: BTreeSet<_> = connects.keys().copied().collect();
         let old_ids: BTreeSet<_> = states_w.keys().copied().collect();
         let added: BTreeSet<_> = ids.difference(&old_ids).copied().collect();
-        let removed: BTreeSet<_> = old_ids.difference(ids).copied().collect();
+        let removed: BTreeSet<_> = old_ids.difference(&ids).copied().collect();
         removed
             .iter()
             .filter_map(|id| states_w.remove(id))
             .for_each(|s| s.notify_remove());
         states_w.retain(|id, _| !removed.contains(id));
-        let new_connects = connect_to(&added);
-        let new_states: BTreeMap<_, _> = added
-            .clone()
+        let new_states: BTreeMap<_, _> = connects
             .into_iter()
-            .zip(new_connects.into_iter().map(NodeState::new))
+            .filter_map(|(id, conn)| added.contains(&id).then_some((id, NodeState::new(conn))))
             .collect();
-        states_w.extend(new_states);
+        states_w.append(&mut new_states.clone());
 
         info!("added nodes: {added:?}, removed nodes: {removed:?}");
+
+        new_states
     }
 
     /// Update `next_index` for server

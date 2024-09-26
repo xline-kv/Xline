@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 use curp_external_api::cmd::Command;
 use curp_external_api::role_change::RoleChange;
@@ -35,33 +34,28 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Push membership configs into log
-    pub(crate) fn push_membership_logs<Entries>(&self, entries: Entries) -> Vec<LogIndex>
-    where
-        Entries: IntoIterator<Item = (ProposeId, Membership)>,
-    {
+    pub(crate) fn push_membership_log(
+        &self,
+        propose_id: ProposeId,
+        config: Membership,
+    ) -> LogIndex {
         let mut log_w = self.log.write();
         let st_r = self.st.read();
-        let mut indices = Vec::new();
-        for (propose_id, config) in entries {
-            let entry = log_w.push(st_r.term, propose_id, config);
-            indices.push(entry.index);
-        }
-        indices
+        log_w.push(st_r.term, propose_id, config).index
     }
 
     /// Append configs to membership state
     ///
     /// This method will also performs blocking IO
-    pub(crate) fn update_membership_configs<Configs>(
+    pub(crate) fn update_membership_configs<Entries>(
         &self,
-        memberships: Configs,
+        entries: Entries,
     ) -> Result<(), StorageError>
     where
-        Configs: IntoIterator<Item = (LogIndex, Membership)>,
+        Entries: IntoIterator<Item = (LogIndex, Membership)>,
     {
         let mut ms_w = self.ms.write();
-        for (index, config) in memberships {
-            self.on_membership_update(&config);
+        for (index, config) in entries {
             ms_w.cluster_mut().append(index, config);
             self.ctx
                 .curp_storage
@@ -69,6 +63,14 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
 
         Ok(())
+    }
+
+    /// Updates the node states
+    pub(crate) fn update_node_states(
+        &self,
+        connects: BTreeMap<u64, InnerConnectApiWrapper>,
+    ) -> BTreeMap<u64, NodeState> {
+        self.ctx.node_states.update_with(connects)
     }
 
     /// Updates the role if the node is leader
@@ -133,30 +135,17 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
     }
 
-    /// Creates connections for new membership configuration.
-    ///
-    /// Returns a closure can be used to update the existing connections
-    fn build_connects(&self, config: &Membership) -> BTreeMap<u64, InnerConnectApiWrapper> {
-        let nodes = config
-            .nodes
-            .iter()
-            .map(|(id, meta)| (*id, meta.peer_urls().to_vec()))
-            .collect();
-
-        inner_connects(nodes, self.client_tls_config()).collect()
-    }
-
-    /// Actions on membership update
-    ///
-    /// Returns the newly added nodes
-    fn on_membership_update(&self, membership: &Membership) {
-        let node_ids: BTreeSet<_> = membership.nodes.keys().copied().collect();
-        let new_connects = self.build_connects(membership);
-        let connect_to = move |ids: &BTreeSet<u64>| {
-            ids.iter()
-                .filter_map(|id| new_connects.get(id).cloned())
-                .collect::<Vec<_>>()
-        };
-        self.ctx.node_states.update_with(&node_ids, connect_to);
-    }
+    ///// Actions on membership update
+    /////
+    ///// Returns the newly added nodes
+    //fn on_membership_update(&self, membership: &Membership) {
+    //    let node_ids: BTreeSet<_> = membership.nodes.keys().copied().collect();
+    //    let new_connects = self.build_connects(membership);
+    //    let connect_to = move |ids: &BTreeSet<u64>| {
+    //        ids.iter()
+    //            .filter_map(|id| new_connects.get(id).cloned())
+    //            .collect::<Vec<_>>()
+    //    };
+    //    self.ctx.node_states.update_with(&node_ids, connect_to);
+    //}
 }
