@@ -60,13 +60,7 @@ impl NodeMembershipState {
     /// Creates a new `NodeMembershipState` with initial state
     pub(crate) fn new(info: MembershipInfo) -> Self {
         let node_id = info.node_id;
-        let init_ms = info.into_membership();
-        let cluster_state = MembershipState {
-            effective: init_ms.clone(),
-            index_effective: 0,
-            // The initial configuration considered as committed
-            committed: init_ms,
-        };
+        let cluster_state = MembershipState::new(info.into_membership());
         Self {
             node_id,
             cluster_state,
@@ -121,50 +115,74 @@ impl NodeMembershipState {
 /// Membership state stored in current node
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct MembershipState {
-    /// Config that exist in log, but haven't committed
-    effective: Membership,
-    /// Index of the effective membership
-    index_effective: LogIndex,
-    /// Committed membership config
-    committed: Membership,
+    /// Membership entries
+    entries: Vec<MembershipEntry>,
+    /// Commit log index
+    commit_index: LogIndex,
 }
 
-#[allow(unused)]
+#[allow(clippy::unwrap_used)] // `entries` should contains at least one entry
 impl MembershipState {
-    /// Append a membership change entry
-    pub(crate) fn append(&mut self, index: LogIndex, membership: Membership) {
-        self.index_effective = index;
-        self.effective = membership;
+    /// Creates a new `MembershipState`
+    fn new(initial_membership: Membership) -> Self {
+        let initial_entry = MembershipEntry::new(0, initial_membership);
+        Self {
+            entries: vec![initial_entry],
+            commit_index: 0,
+        }
     }
 
-    /// Commit a membership index
-    pub(crate) fn commit(&mut self, at: LogIndex) {
-        if at >= self.index_effective {
-            self.committed = self.effective.clone();
-        }
+    /// Append a membership change entry
+    pub(crate) fn append(&mut self, index: LogIndex, membership: Membership) {
+        self.entries.push(MembershipEntry::new(index, membership));
     }
 
     /// Truncate at the give log index
     pub(crate) fn truncate(&mut self, at: LogIndex) {
-        if at < self.index_effective {
-            self.effective = self.committed.clone();
-            self.index_effective = at;
-        }
+        self.entries.retain(|entry| entry.index <= at);
+    }
+
+    /// Commit a membership index
+    pub(crate) fn update_commit(&mut self, index: LogIndex) {
+        self.commit_index = index;
     }
 
     /// Returns the committed membership
     pub(crate) fn committed(&self) -> &Membership {
-        &self.committed
+        &self
+            .entries
+            .iter()
+            .take_while(|entry| entry.index <= self.commit_index)
+            .last()
+            .unwrap()
+            .membership
     }
 
     /// Returns the effective membership
     pub(crate) fn effective(&self) -> &Membership {
-        &self.effective
+        &self.entries.last().unwrap().membership
     }
 
-    /// Returns the Some(membership) if there is NO membership change in flight
-    pub(crate) fn in_flight(&self) -> Option<&Membership> {
-        (self.effective != self.committed).then_some(&self.committed)
+    #[allow(unused)] // FIXME: performs checking
+    /// Checks if there's an uncommitted membership change
+    pub(crate) fn has_uncommitted(&self) -> bool {
+        self.entries.last().unwrap().index > self.commit_index
+    }
+}
+
+/// A membership log entry, including `Membership` and `LogIndex`
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq, Hash)]
+struct MembershipEntry {
+    /// The log index of the membership entry
+    index: LogIndex,
+    /// Membership
+    membership: Membership,
+}
+
+impl MembershipEntry {
+    /// Creates a new `MembershipEntry`
+    fn new(index: LogIndex, membership: Membership) -> Self {
+        Self { index, membership }
     }
 }
 
