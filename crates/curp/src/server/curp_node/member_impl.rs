@@ -4,6 +4,7 @@
     clippy::needless_pass_by_value
 )] // TODO: remove this after implemented
 
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -14,6 +15,8 @@ use utils::task_manager::tasks::TaskName;
 
 use super::CurpNode;
 use crate::member::Membership;
+use crate::rpc::connect::InnerConnectApiWrapper;
+use crate::rpc::inner_connects;
 use crate::rpc::Change;
 use crate::rpc::ChangeMembershipRequest;
 use crate::rpc::ChangeMembershipResponse;
@@ -36,7 +39,13 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .map(MembershipChange::into_inner);
         let changes = Self::ensure_non_overlapping(changes)?;
         let configs = self.curp.generate_membership(changes);
-        self.update_and_wait(configs).await?;
+        if configs.is_empty() {
+            return Err(CurpError::invalid_member_change());
+        }
+        for config in configs {
+            let propose_id = self.update_config(config)?;
+            self.wait_commit(Some(propose_id)).await;
+        }
 
         Ok(ChangeMembershipResponse {})
     }
@@ -60,29 +69,51 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         Err(CurpError::InvalidConfig(()))
     }
 
-    /// Updates the membership based on the given change and waits for
-    /// the proposal to be committed
-    async fn update_and_wait(&self, configs: Vec<Membership>) -> Result<(), CurpError> {
-        if configs.is_empty() {
-            return Err(CurpError::invalid_member_change());
-        }
-
-        let propose_ids: Vec<_> = std::iter::repeat_with(|| ProposeId(rand::random(), 0))
-            .take(configs.len())
-            .collect();
-        let entries = propose_ids.clone().into_iter().zip(configs.clone());
-        let indices = self.curp.push_membership_logs(entries);
-        let (new_states, result) = self.with_states_difference(|| {
-            self.curp
-                .update_membership_configs(indices.into_iter().zip(configs))
-        });
-        result?;
-        self.curp.wait_propose_ids(propose_ids).await;
-        self.spawn_sync_follower_tasks(new_states);
+    /// Updates the membership config
+    fn update_config(&self, config: Membership) -> Result<ProposeId, CurpError> {
+        let propose_id = ProposeId(rand::random(), 0);
+        let connects = self.connect_nodes(&config);
+        let index = self.curp.push_membership_log(propose_id, config.clone());
+        self.curp.update_membership_configs(Some((index, config)))?;
+        let new_states = self.curp.update_node_states(connects);
+        self.spawn_sync_follower_tasks(new_states.into_values());
         self.curp.update_role();
         self.curp.update_transferee();
 
-        Ok(())
+        Ok(propose_id)
+    }
+
+    /// Wait the command with the propose id to be committed
+    async fn wait_commit<Ids: IntoIterator<Item = ProposeId>>(&self, propose_ids: Ids) {
+        self.curp.wait_propose_ids(propose_ids).await;
+    }
+
+    ///// Updates the membership based on the given change and waits for
+    ///// the proposal to be committed
+    //async fn update_and_wait(&self, config: Membership) -> Result<(), CurpError> {
+    //    let entries = propose_ids.clone().into_iter().zip(configs.clone());
+    //    let indices = self.curp.push_membership_logs(entries);
+    //    let connects = self.connect_nodes(configs.last().unwrap());
+    //    self.curp
+    //        .update_membership_configs(indices.into_iter().zip(configs))?;
+    //    let new_states = self.curp.update_node_states(connects);
+    //
+    //    self.spawn_sync_follower_tasks(new_states.into_values());
+    //    self.curp.update_role();
+    //    self.curp.update_transferee();
+    //
+    //    Ok(())
+    //}
+
+    /// Connect to nodes of the given membership config
+    fn connect_nodes(&self, config: &Membership) -> BTreeMap<u64, InnerConnectApiWrapper> {
+        let nodes = config
+            .nodes
+            .iter()
+            .map(|(id, meta)| (*id, meta.peer_urls().to_vec()))
+            .collect();
+
+        inner_connects(nodes, self.curp.client_tls_config()).collect()
     }
 
     /// Executes an update operation and captures the difference in node states before and after the update.
@@ -102,7 +133,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     }
 
     /// Spawns background follower sync tasks
-    pub(super) fn spawn_sync_follower_tasks(&self, new_nodes: Vec<NodeState>) {
+    pub(super) fn spawn_sync_follower_tasks(&self, new_nodes: impl IntoIterator<Item = NodeState>) {
         let task_manager = self.curp.task_manager();
         for (connect, sync_event, remove_event) in new_nodes.into_iter().map(NodeState::into_parts)
         {
