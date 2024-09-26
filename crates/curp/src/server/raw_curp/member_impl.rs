@@ -109,7 +109,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     ) {
         let mut ms_w = self.ms.write();
         let _ignore = truncate_at.map(|index| ms_w.cluster_mut().truncate(index));
-        let __ignore = commit.map(|index| ms_w.cluster_mut().commit(index));
+        let __ignore = commit.map(|index| ms_w.cluster_mut().update_commit(index));
     }
 
     /// Clone the node states
