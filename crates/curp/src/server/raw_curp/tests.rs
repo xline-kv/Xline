@@ -676,14 +676,18 @@ fn add_node_should_add_new_node_to_curp() {
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     let original_membership = Membership::new(vec![(0..3).collect()], BTreeMap::default());
     let membership = Membership::new(vec![(0..4).collect()], BTreeMap::default());
-    let _ignore = curp.update_membership(membership).unwrap();
+    let _ignore = curp
+        .update_membership_configs(Some((2, membership)))
+        .unwrap();
     assert!(curp
         .effective_membership()
         .members
         .iter()
         .flatten()
         .any(|id| *id == 3));
-    let _ignore = curp.update_membership(original_membership).unwrap();
+    let _ignore = curp
+        .update_membership_configs(Some((1, original_membership)))
+        .unwrap();
     assert!(!curp
         .effective_membership()
         .members
@@ -701,7 +705,9 @@ fn add_learner_node_and_promote_should_success() {
         .generate_membership(Some(Change::Add(Node::new(3, NodeMetadata::default()))))
         .pop()
         .unwrap();
-    let _ignore = curp.update_membership(membership).unwrap();
+    let _ignore = curp
+        .update_membership_configs(Some((1, membership)))
+        .unwrap();
     assert!(!curp
         .effective_membership()
         .members
@@ -713,7 +719,9 @@ fn add_learner_node_and_promote_should_success() {
         .generate_membership(Some(Change::Promote(3)))
         .pop()
         .unwrap();
-    let _ignore = curp.update_membership(membership).unwrap();
+    let _ignore = curp
+        .update_membership_configs(Some((2, membership)))
+        .unwrap();
     assert!(curp
         .effective_membership()
         .members
@@ -749,7 +757,9 @@ fn remove_node_should_remove_node_from_curp() {
         .generate_membership(Some(Change::Demote(follower_id)))
         .pop()
         .unwrap();
-    let _ignore = curp.update_membership(membership).unwrap();
+    let _ignore = curp
+        .update_membership_configs(Some((1, membership)))
+        .unwrap();
     assert!(!curp
         .effective_membership()
         .members
@@ -783,12 +793,14 @@ fn follower_append_membership_change() {
         .unwrap();
 
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
-    let log = LogEntry::new(1, 1, ProposeId::default(), membership.clone());
-    let _ignore = curp.append_memberships([log], 1, 0).unwrap();
+    let log = LogEntry::<TestCommand>::new(1, 1, ProposeId::default(), membership.clone());
+    let memberships = RawCurp::<_, TestRoleChange>::filter_membership_logs(Some(log));
+    let _ignore = curp.update_membership_configs(memberships).unwrap();
     assert_eq!(curp.effective_membership(), membership);
     assert_ne!(curp.committed_membership(), membership);
     let log1 = LogEntry::new(2, 1, ProposeId::default(), EntryData::<TestCommand>::Empty);
-    let _ignore = curp.append_memberships([log1], 1, 1).unwrap();
+    let memberships1 = RawCurp::<_, TestRoleChange>::filter_membership_logs(Some(log1));
+    let _ignore = curp.update_membership_configs(memberships1).unwrap();
     assert_eq!(curp.effective_membership(), membership);
     assert_eq!(curp.committed_membership(), membership);
 }
@@ -802,7 +814,9 @@ fn leader_handle_move_leader() {
         .generate_membership(Some(Change::Add(Node::new(1234, NodeMetadata::default()))))
         .pop()
         .unwrap();
-    let _ignore = curp.update_membership(membership).unwrap();
+    let _ignore = curp
+        .update_membership_configs(Some((1, membership)))
+        .unwrap();
 
     let res = curp.handle_move_leader(1234);
     assert!(res.is_err());
@@ -850,7 +864,9 @@ fn leader_will_reset_transferee_after_remove_node() {
         vec![(0..5).filter(|id| *id != target_id).collect()],
         BTreeMap::default(),
     );
-    let _ignore = curp.update_membership(membership).unwrap();
+    let _ignore = curp
+        .update_membership_configs(Some((1, membership)))
+        .unwrap();
     curp.update_transferee();
     assert!(curp.get_transferee().is_none());
 }
