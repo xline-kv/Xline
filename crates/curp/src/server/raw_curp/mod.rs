@@ -31,7 +31,6 @@ use opentelemetry::KeyValue;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockUpgradableReadGuard;
-use parking_lot::RwLockWriteGuard;
 use tokio::sync::oneshot;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
@@ -523,37 +522,66 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         conflicts
     }
 
-    /// Handles leader propose
-    pub(super) fn push_logs(
+    /// Push one log, called by the leader
+    ///
+    /// This method performs the following operations:
+    /// * Appends the provided entries to the `Log`
+    /// * (Does I/O) Persists the log entries to the Write-Ahead-Log (WAL) storage
+    /// * Triggers replication events
+    #[allow(clippy::unwrap_used)] // contains exactly one entry
+    pub(super) fn push_log_entry<Entry>(
         &self,
-        proposes: Vec<(Arc<C>, ProposeId, u64, Arc<ResponseSender>)>,
-    ) -> Vec<Arc<LogEntry<C>>> {
-        let term = proposes
-            .first()
-            .unwrap_or_else(|| unreachable!("no propose in proposes"))
-            .2;
-        let mut log_entries = Vec::with_capacity(proposes.len());
-        let mut to_process = Vec::with_capacity(proposes.len());
+        propose_id: ProposeId,
+        entry: Entry,
+    ) -> Arc<LogEntry<C>>
+    where
+        Entry: Into<EntryData<C>>,
+    {
+        self.push_log_entries(Some((propose_id, entry)))
+            .pop()
+            .unwrap()
+    }
+
+    /// Push some logs, called by the leader
+    ///
+    /// This method performs the following operations:
+    /// * Appends the provided entries to the `Log`
+    /// * (Does I/O) Persists the log entries to the Write-Ahead-Log (WAL) storage
+    /// * Triggers replication events
+    pub(super) fn push_log_entries<Logs, Entry>(&self, entries: Logs) -> Vec<Arc<LogEntry<C>>>
+    where
+        Entry: Into<EntryData<C>>,
+        Logs: IntoIterator<Item = (ProposeId, Entry)>,
+    {
         let mut log_w = self.log.write();
-        self.ctx.resp_txs.map_lock(|mut tx_map| {
-            for propose in proposes {
-                let (cmd, id, _term, resp_tx) = propose;
-                let entry = log_w.push(term, id, cmd);
-                let index = entry.index;
-                let conflict = resp_tx.is_conflict();
-                to_process.push((index, conflict));
-                log_entries.push(entry);
-                assert!(
-                    tx_map.insert(index, Arc::clone(&resp_tx)).is_none(),
-                    "Should not insert resp_tx twice"
-                );
-            }
-        });
-        self.entry_process_multi(&mut log_w, &to_process, term);
+        let st_r = self.st.read();
+        let entries: Vec<_> = entries
+            .into_iter()
+            .map(|(id, entry)| log_w.push(st_r.term, id, entry))
+            .collect();
+        let entries_ref: Vec<_> = entries.iter().map(Arc::as_ref).collect();
+        self.persistent_log_entries(&entries_ref);
+        self.notify_sync_events(&log_w);
 
-        self.persistent_log_entries(&log_entries.iter().map(Arc::as_ref).collect::<Vec<_>>());
+        for e in &entries {
+            self.update_index_single_node(&mut log_w, e.index, st_r.term);
+        }
 
-        log_entries
+        entries
+    }
+
+    /// Insert into `Context.resp_txs`
+    pub(super) fn insert_resp_txs<Txs>(&self, txs: Txs)
+    where
+        Txs: IntoIterator<Item = (LogIndex, Arc<ResponseSender>)>,
+    {
+        let mut tx_map = self.ctx.resp_txs.lock();
+        for (index, tx) in txs {
+            assert!(
+                tx_map.insert(index, tx).is_none(),
+                "Should not insert resp_tx twice"
+            );
+        }
     }
 
     /// Persistent log entries
@@ -626,12 +654,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             return Err(CurpError::LeaderTransfer("leader transferring".to_owned()));
         }
         self.deduplicate(propose_id, None)?;
-        let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, propose_id, EntryData::Shutdown);
-        debug!("{} gets new log[{}]", self.id(), entry.index);
-        self.entry_process_single(&mut log_w, entry.as_ref(), true, st_r.term);
-
-        self.persistent_log_entries(&[entry.as_ref()]);
+        let index = self.push_log_entry(propose_id, EntryData::Shutdown).index;
+        debug!("{} gets new log[{index}]", self.id());
 
         Ok(())
     }
@@ -1681,41 +1705,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             debug!("{} updates commit index to {index}", self.id());
             self.apply(&mut *log);
         }
-    }
-
-    /// Entry process shared by `handle_xxx`
-    #[allow(clippy::pattern_type_mismatch)] // Can't be fixed
-    fn entry_process_multi(&self, log: &mut Log<C>, entries: &[(u64, bool)], term: u64) {
-        if let Some(last_no_conflict) = entries
-            .iter()
-            .rev()
-            .find(|(_, conflict)| *conflict)
-            .map(|(index, _)| *index)
-        {
-            log.last_exe = last_no_conflict;
-        }
-        let highest_index = entries
-            .last()
-            .unwrap_or_else(|| unreachable!("no log in entries"))
-            .0;
-        self.notify_sync_events(log);
-        self.update_index_single_node(log, highest_index, term);
-    }
-
-    /// Entry process shared by `handle_xxx`
-    fn entry_process_single(
-        &self,
-        log_w: &mut RwLockWriteGuard<'_, Log<C>>,
-        entry: &LogEntry<C>,
-        conflict: bool,
-        term: u64,
-    ) {
-        let index = entry.index;
-        if !conflict {
-            log_w.last_exe = index;
-        }
-        self.notify_sync_events(log_w);
-        self.update_index_single_node(log_w, index, term);
     }
 
     /// Process deduplication and acknowledge the `first_incomplete` for this

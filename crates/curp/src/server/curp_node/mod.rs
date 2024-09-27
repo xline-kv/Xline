@@ -83,10 +83,6 @@ pub(super) struct Propose<C> {
     pub(super) cmd: Arc<C>,
     /// Propose id
     pub(super) id: ProposeId,
-    /// Term the client proposed
-    /// NOTE: this term should be equal to the cluster's latest term
-    /// for the propose to be accepted.
-    pub(super) term: u64,
     /// Tx used for sending the streaming response back to client
     pub(super) resp_tx: Arc<ResponseSender>,
 }
@@ -101,7 +97,6 @@ where
         Ok(Self {
             cmd,
             id: req.propose_id(),
-            term: req.term,
             resp_tx,
         })
     }
@@ -111,20 +106,10 @@ where
         self.cmd.is_read_only()
     }
 
-    /// Gets response sender
-    fn response_tx(&self) -> Arc<ResponseSender> {
-        Arc::clone(&self.resp_tx)
-    }
-
     /// Convert self into parts
-    fn into_parts(self) -> (Arc<C>, ProposeId, u64, Arc<ResponseSender>) {
-        let Self {
-            cmd,
-            id,
-            term,
-            resp_tx,
-        } = self;
-        (cmd, id, term, resp_tx)
+    fn into_parts(self) -> ((ProposeId, Arc<C>), Arc<ResponseSender>) {
+        let Self { cmd, id, resp_tx } = self;
+        ((id, cmd), resp_tx)
     }
 }
 
@@ -263,9 +248,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         for propose in proposes {
             info!("handle read only cmd: {:?}", propose.cmd);
             // TODO: Disable dedup if the command is read only or commute
-            let Propose {
-                cmd, resp_tx, id, ..
-            } = propose;
+            let Propose { cmd, id, resp_tx } = propose;
             // Use default value for the entry as we don't need to put it into curp log
             let entry = Arc::new(LogEntry::new(0, 0, id, Arc::clone(&cmd)));
             let wait_conflict = curp.wait_conflicts_synced(cmd);
@@ -297,9 +280,11 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             info!("handle mutative cmd: {:?}, conflict: {conflict}", p.cmd);
             p.resp_tx.set_conflict(conflict);
         }
-        let resp_txs: Vec<_> = proposes.iter().map(Propose::response_tx).collect();
-        let logs: Vec<_> = proposes.into_iter().map(Propose::into_parts).collect();
-        let entries = curp.push_logs(logs);
+        let (cmds, resp_txs): (Vec<_>, Vec<_>) =
+            proposes.into_iter().map(Propose::into_parts).unzip();
+        let entries = curp.push_log_entries(cmds);
+        curp.insert_resp_txs(entries.iter().map(|e| e.index).zip(resp_txs.clone()));
+        //let entries = curp.push_logs(logs);
         #[allow(clippy::pattern_type_mismatch)] // Can't be fixed
         entries
             .into_iter()

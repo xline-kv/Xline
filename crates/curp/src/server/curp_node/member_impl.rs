@@ -48,7 +48,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         }
         for config in configs {
             let propose_id = ProposeId(rand::random(), 0);
-            let index = self.append_and_persist_membership(propose_id, config.clone());
+            let index = self.curp.push_log_entry(propose_id, config.clone()).index;
             self.update_states_with_memberships(Some((index, config)))?;
             // Leader also needs to update transferee
             self.curp.update_transferee();
@@ -61,20 +61,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Wait the command with the propose id to be committed
     async fn wait_commit<Ids: IntoIterator<Item = ProposeId>>(&self, propose_ids: Ids) {
         self.curp.wait_propose_ids(propose_ids).await;
-    }
-
-    /// Append and persist the membership log entry
-    fn append_and_persist_membership(&self, propose_id: ProposeId, config: Membership) -> LogIndex {
-        let entries: Vec<_> = self
-            .curp
-            .push_log_entries(Some((propose_id, config.clone().into())))
-            .collect();
-        let to_persist: Vec<_> = entries.iter().map(Arc::as_ref).collect();
-        self.curp.persistent_log_entries(&to_persist);
-        entries
-            .last()
-            .unwrap_or_else(|| unreachable!("should contains at least one entry"))
-            .index
     }
 
     /// Ensures there are no overlapping ids
