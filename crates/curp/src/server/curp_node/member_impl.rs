@@ -95,7 +95,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     }
 }
 
-// Common methods for both leader and follower
+// Common methods shared by both leader and followers
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Updates the membership config
     #[allow(clippy::pattern_type_mismatch)] // can't fix

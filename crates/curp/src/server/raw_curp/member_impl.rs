@@ -19,6 +19,8 @@ use super::Role;
 // - log
 // - ms
 // - node_states
+
+// Leader methods
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Generate memberships based on the provided change
     pub(crate) fn generate_membership<Changes>(&self, changes: Changes) -> Vec<Membership>
@@ -29,6 +31,19 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         ms_r.cluster().committed().changes(changes)
     }
 
+    /// Updates the role if the node is leader
+    pub(crate) fn update_transferee(&self) {
+        let Some(transferee) = self.lst.get_transferee() else {
+            return;
+        };
+        if !self.ms.map_read(|ms| ms.is_member(transferee)) {
+            self.lst.reset_transferee();
+        }
+    }
+}
+
+// Common methods shared by both leader and followers
+impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Append configs to membership state
     ///
     /// This method will also performs blocking IO
@@ -56,16 +71,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         connects: BTreeMap<u64, InnerConnectApiWrapper>,
     ) -> BTreeMap<u64, NodeState> {
         self.ctx.node_states.update_with(connects)
-    }
-
-    /// Updates the role if the node is leader
-    pub(crate) fn update_transferee(&self) {
-        let Some(transferee) = self.lst.get_transferee() else {
-            return;
-        };
-        if !self.ms.map_read(|ms| ms.is_member(transferee)) {
-            self.lst.reset_transferee();
-        }
     }
 
     /// Updates membership indices
