@@ -112,6 +112,7 @@ pub(super) struct Log<C: Command> {
     pub(super) commit_index: LogIndex,
     /// Index of highest log entry sent to after sync. `last_as` should always be less than or equal to `last_exe`.
     pub(super) last_as: LogIndex,
+    // FIXME: Speculative execution does not update the state machine, rewrite the snapshot logic
     /// Index of highest log entry sent to speculatively exe. `last_exe` should always be greater than or equal to `last_as`.
     pub(super) last_exe: LogIndex,
     /// Entries to keep in memory

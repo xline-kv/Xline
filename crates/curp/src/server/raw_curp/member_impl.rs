@@ -1,17 +1,13 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use curp_external_api::cmd::Command;
 use curp_external_api::role_change::RoleChange;
 use curp_external_api::LogIndex;
 use utils::parking_lot_lock::RwLockMap;
 
-use crate::log_entry::EntryData;
-use crate::log_entry::LogEntry;
 use crate::member::Membership;
 use crate::rpc::connect::InnerConnectApiWrapper;
 use crate::rpc::Change;
-use crate::rpc::ProposeId;
 use crate::server::StorageApi;
 use crate::server::StorageError;
 
@@ -31,24 +27,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     {
         let ms_r = self.ms.read();
         ms_r.cluster().committed().changes(changes)
-    }
-
-    /// Push some logs into `Log`
-    /// TODO: replace `push_logs`
-    pub(crate) fn push_log_entries<Logs>(
-        &self,
-        entries: Logs,
-    ) -> impl Iterator<Item = Arc<LogEntry<C>>>
-    where
-        Logs: IntoIterator<Item = (ProposeId, EntryData<C>)>,
-    {
-        let mut log_w = self.log.write();
-        let st_r = self.st.read();
-        entries
-            .into_iter()
-            .map(|(id, entry)| log_w.push(st_r.term, id, entry))
-            .collect::<Vec<_>>()
-            .into_iter()
     }
 
     /// Append configs to membership state
