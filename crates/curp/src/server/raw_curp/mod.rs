@@ -462,7 +462,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 }
 
 /// Term, entries
-type AppendEntriesSuccess<C> = (u64, Vec<Arc<LogEntry<C>>>);
+type AppendEntriesSuccess<C> = (u64, LogIndex, Vec<Arc<LogEntry<C>>>);
 /// Term, index
 type AppendEntriesFailure = (u64, LogIndex);
 
@@ -551,22 +551,15 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         });
         self.entry_process_multi(&mut log_w, &to_process, term);
 
-        let log_r = RwLockWriteGuard::downgrade(log_w);
-        self.persistent_log_entries(
-            &log_entries.iter().map(Arc::as_ref).collect::<Vec<_>>(),
-            &log_r,
-        );
+        self.persistent_log_entries(&log_entries.iter().map(Arc::as_ref).collect::<Vec<_>>());
 
         log_entries
     }
 
     /// Persistent log entries
-    ///
-    /// NOTE: A `&Log<C>` is required because we do not want the `Log` structure
-    /// gets mutated during the persistent
     #[allow(clippy::panic)]
     #[allow(dropping_references)]
-    fn persistent_log_entries(&self, entries: &[&LogEntry<C>], _log: &Log<C>) {
+    pub(crate) fn persistent_log_entries(&self, entries: &[&LogEntry<C>]) {
         // We panic when the log persistence fails because it likely indicates an
         // unrecoverable error. Our WAL implementation does not support rollback
         // on failure, as a file write syscall is not guaranteed to be atomic.
@@ -638,8 +631,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         debug!("{} gets new log[{}]", self.id(), entry.index);
         self.entry_process_single(&mut log_w, entry.as_ref(), true, st_r.term);
 
-        let log_r = RwLockWriteGuard::downgrade(log_w);
-        self.persistent_log_entries(&[entry.as_ref()], &log_r);
+        self.persistent_log_entries(&[entry.as_ref()]);
 
         Ok(())
     }
@@ -710,17 +702,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
         // append log entries
         let mut log_w = self.log.write();
-        let membership_configs: Vec<_> = Self::filter_membership_logs(&entries).collect();
         let (to_persist, truncate_at) = log_w
             .try_append_entries(entries, prev_log_index, prev_log_term)
             .map_err(|_ig| (term, log_w.commit_index + 1))?;
-        self.update_membership_configs(membership_configs)
-            .map_err(|err| {
-                error!("append memebrship entires failed: {err}");
-                (term, log_w.commit_index + 1)
-            })?;
-        self.update_membership_indices(Some(truncate_at), Some(leader_commit));
-        self.update_role();
         // update commit index
         let prev_commit_index = log_w.commit_index;
         log_w.commit_index = min(leader_commit, log_w.last_log_index());
@@ -728,7 +712,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             self.apply(&mut *log_w);
         }
 
-        Ok((term, to_persist))
+        Ok((term, truncate_at, to_persist))
     }
 
     /// Handle `append_entries` response
@@ -954,7 +938,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         // TODO: Generate client id in the same way as client
         let propose_id = ProposeId(rand::random(), 0);
         let entry = log_w.push(st_w.term, propose_id, EntryData::Empty);
-        self.persistent_log_entries(&[&entry], &log_w);
+        self.persistent_log_entries(&[&entry]);
         self.recover_from_spec_pools(&st_w, &mut log_w, spec_pools);
         self.recover_ucp_from_log(&log_w);
         let last_log_index = log_w.last_log_index();
@@ -1623,7 +1607,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             entries.push(entry);
         }
 
-        self.persistent_log_entries(&entries.iter().map(Arc::as_ref).collect::<Vec<_>>(), log);
+        self.persistent_log_entries(&entries.iter().map(Arc::as_ref).collect::<Vec<_>>());
     }
 
     /// Recover the ucp from uncommitted log entries

@@ -677,7 +677,7 @@ fn add_node_should_add_new_node_to_curp() {
     let original_membership = Membership::new(vec![(0..3).collect()], BTreeMap::default());
     let membership = Membership::new(vec![(0..4).collect()], BTreeMap::default());
     let _ignore = curp
-        .update_membership_configs(Some((2, membership)))
+        .append_to_membership_states(Some((2, membership)))
         .unwrap();
     assert!(curp
         .effective_membership()
@@ -686,7 +686,7 @@ fn add_node_should_add_new_node_to_curp() {
         .flatten()
         .any(|id| *id == 3));
     let _ignore = curp
-        .update_membership_configs(Some((1, original_membership)))
+        .append_to_membership_states(Some((1, original_membership)))
         .unwrap();
     assert!(!curp
         .effective_membership()
@@ -706,7 +706,7 @@ fn add_learner_node_and_promote_should_success() {
         .pop()
         .unwrap();
     let _ignore = curp
-        .update_membership_configs(Some((1, membership)))
+        .append_to_membership_states(Some((1, membership)))
         .unwrap();
     assert!(!curp
         .effective_membership()
@@ -720,7 +720,7 @@ fn add_learner_node_and_promote_should_success() {
         .pop()
         .unwrap();
     let _ignore = curp
-        .update_membership_configs(Some((2, membership)))
+        .append_to_membership_states(Some((2, membership)))
         .unwrap();
     assert!(curp
         .effective_membership()
@@ -758,7 +758,7 @@ fn remove_node_should_remove_node_from_curp() {
         .pop()
         .unwrap();
     let _ignore = curp
-        .update_membership_configs(Some((1, membership)))
+        .append_to_membership_states(Some((1, membership)))
         .unwrap();
     assert!(!curp
         .effective_membership()
@@ -815,7 +815,7 @@ fn leader_handle_move_leader() {
         .pop()
         .unwrap();
     let _ignore = curp
-        .update_membership_configs(Some((1, membership)))
+        .append_to_membership_states(Some((1, membership)))
         .unwrap();
 
     let res = curp.handle_move_leader(1234);
@@ -865,7 +865,7 @@ fn leader_will_reset_transferee_after_remove_node() {
         BTreeMap::default(),
     );
     let _ignore = curp
-        .update_membership_configs(Some((1, membership)))
+        .append_to_membership_states(Some((1, membership)))
         .unwrap();
     curp.update_transferee();
     assert!(curp.get_transferee().is_none());
