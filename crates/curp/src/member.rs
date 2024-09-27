@@ -145,6 +145,7 @@ impl MembershipState {
     /// Commit a membership index
     pub(crate) fn update_commit(&mut self, index: LogIndex) {
         self.commit_index = index;
+        self.entries.retain(|entry| entry.index >= index);
     }
 
     /// Returns the committed membership
