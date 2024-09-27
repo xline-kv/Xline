@@ -148,6 +148,7 @@ impl MembershipState {
     }
 
     /// Returns the committed membership
+    #[cfg(test)]
     pub(crate) fn committed(&self) -> &Membership {
         &self
             .entries
@@ -158,15 +159,32 @@ impl MembershipState {
             .membership
     }
 
-    /// Returns the effective membership
-    pub(crate) fn effective(&self) -> &Membership {
-        &self.entries.last().unwrap().membership
+    /// Generates a new membership from `Change`
+    ///
+    /// Returns an empty `Vec` if there's an on-going membership change
+    pub(crate) fn changes<Changes>(&self, changes: Changes) -> Vec<Membership>
+    where
+        Changes: IntoIterator<Item = Change>,
+    {
+        if !self.has_uncommitted() {
+            return vec![];
+        }
+        self.last().membership.changes(changes)
     }
 
-    #[allow(unused)] // FIXME: performs checking
+    /// Returns the effective membership
+    pub(crate) fn effective(&self) -> &Membership {
+        &self.last().membership
+    }
+
     /// Checks if there's an uncommitted membership change
-    pub(crate) fn has_uncommitted(&self) -> bool {
-        self.entries.last().unwrap().index > self.commit_index
+    fn has_uncommitted(&self) -> bool {
+        self.last().index > self.commit_index
+    }
+
+    /// Gets the last entry
+    fn last(&self) -> &MembershipEntry {
+        self.entries.last().unwrap()
     }
 }
 
