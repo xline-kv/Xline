@@ -162,11 +162,6 @@ impl NodeStates {
             .zip(states_r.values().map(NodeState::connect).cloned())
             .collect()
     }
-
-    /// Clone the inner map
-    pub(super) fn clone_inner(&self) -> BTreeMap<u64, NodeState> {
-        self.states.read().clone()
-    }
 }
 
 /// The state of a node

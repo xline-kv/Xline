@@ -11,9 +11,12 @@ use std::sync::Arc;
 use curp_external_api::cmd::Command;
 use curp_external_api::cmd::CommandExecutor;
 use curp_external_api::role_change::RoleChange;
+use curp_external_api::LogIndex;
 use utils::task_manager::tasks::TaskName;
 
 use super::CurpNode;
+use crate::log_entry::EntryData;
+use crate::log_entry::LogEntry;
 use crate::member::Membership;
 use crate::rpc::connect::InnerConnectApiWrapper;
 use crate::rpc::inner_connects;
@@ -26,6 +29,7 @@ use crate::rpc::ProposeId;
 use crate::rpc::Redirect;
 use crate::server::raw_curp::node_state::NodeState;
 
+// Leader methods
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Performs a membership change to the cluster
     pub(crate) async fn change_membership(
@@ -43,11 +47,34 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             return Err(CurpError::invalid_member_change());
         }
         for config in configs {
-            let propose_id = self.update_config(config)?;
+            let propose_id = ProposeId(rand::random(), 0);
+            let index = self.append_and_persist_membership(propose_id, config.clone());
+            self.update_states_with_memberships(Some((index, config)))?;
+            // Leader also needs to update transferee
+            self.curp.update_transferee();
             self.wait_commit(Some(propose_id)).await;
         }
 
         Ok(ChangeMembershipResponse {})
+    }
+
+    /// Wait the command with the propose id to be committed
+    async fn wait_commit<Ids: IntoIterator<Item = ProposeId>>(&self, propose_ids: Ids) {
+        self.curp.wait_propose_ids(propose_ids).await;
+    }
+
+    /// Append and persist the membership log entry
+    fn append_and_persist_membership(&self, propose_id: ProposeId, config: Membership) -> LogIndex {
+        let entries: Vec<_> = self
+            .curp
+            .push_log_entries(Some((propose_id, config.clone().into())))
+            .collect();
+        let to_persist: Vec<_> = entries.iter().map(Arc::as_ref).collect();
+        self.curp.persistent_log_entries(&to_persist);
+        entries
+            .last()
+            .unwrap_or_else(|| unreachable!("should contains at least one entry"))
+            .index
     }
 
     /// Ensures there are no overlapping ids
@@ -69,44 +96,63 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         Err(CurpError::InvalidConfig(()))
     }
 
+    /// Ensures that the current node is the leader
+    fn ensure_leader(&self) -> Result<(), CurpError> {
+        let (leader_id, term, is_leader) = self.curp.leader();
+        if is_leader {
+            return Ok(());
+        }
+        Err(CurpError::Redirect(Redirect {
+            leader_id: leader_id.map(Into::into),
+            term,
+        }))
+    }
+}
+
+// Common methods for both leader and follower
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Updates the membership config
-    fn update_config(&self, config: Membership) -> Result<ProposeId, CurpError> {
-        let propose_id = ProposeId(rand::random(), 0);
-        let connects = self.connect_nodes(&config);
-        let index = self.curp.push_membership_log(propose_id, config.clone());
-        self.curp.update_membership_configs(Some((index, config)))?;
+    #[allow(clippy::pattern_type_mismatch)] // can't fix
+    pub(crate) fn update_states_with_memberships<I>(&self, entries: I) -> Result<(), CurpError>
+    where
+        I: IntoIterator<Item = (LogIndex, Membership)>,
+    {
+        let entries: Vec<_> = entries.into_iter().collect();
+        let Some((_, last)) = entries.last() else {
+            return Ok(());
+        };
+        let connects = self.connect_nodes(last);
+        self.curp.append_to_membership_states(entries)?;
         let new_states = self.curp.update_node_states(connects);
         self.spawn_sync_follower_tasks(new_states.into_values());
         self.curp.update_role();
-        self.curp.update_transferee();
 
-        Ok(propose_id)
+        Ok(())
     }
 
-    /// Wait the command with the propose id to be committed
-    async fn wait_commit<Ids: IntoIterator<Item = ProposeId>>(&self, propose_ids: Ids) {
-        self.curp.wait_propose_ids(propose_ids).await;
+    /// Filter out membership log entries
+    pub(crate) fn filter_membership_entries<E, I>(
+        entries: I,
+    ) -> impl Iterator<Item = (LogIndex, Membership)>
+    where
+        E: AsRef<LogEntry<C>>,
+        I: IntoIterator<Item = E>,
+    {
+        entries.into_iter().filter_map(|entry| {
+            let entry = entry.as_ref();
+            if let EntryData::Member(ref m) = entry.entry_data {
+                Some((entry.index, m.clone()))
+            } else {
+                None
+            }
+        })
     }
-
-    ///// Updates the membership based on the given change and waits for
-    ///// the proposal to be committed
-    //async fn update_and_wait(&self, config: Membership) -> Result<(), CurpError> {
-    //    let entries = propose_ids.clone().into_iter().zip(configs.clone());
-    //    let indices = self.curp.push_membership_logs(entries);
-    //    let connects = self.connect_nodes(configs.last().unwrap());
-    //    self.curp
-    //        .update_membership_configs(indices.into_iter().zip(configs))?;
-    //    let new_states = self.curp.update_node_states(connects);
-    //
-    //    self.spawn_sync_follower_tasks(new_states.into_values());
-    //    self.curp.update_role();
-    //    self.curp.update_transferee();
-    //
-    //    Ok(())
-    //}
 
     /// Connect to nodes of the given membership config
-    fn connect_nodes(&self, config: &Membership) -> BTreeMap<u64, InnerConnectApiWrapper> {
+    pub(crate) fn connect_nodes(
+        &self,
+        config: &Membership,
+    ) -> BTreeMap<u64, InnerConnectApiWrapper> {
         let nodes = config
             .nodes
             .iter()
@@ -114,22 +160,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .collect();
 
         inner_connects(nodes, self.curp.client_tls_config()).collect()
-    }
-
-    /// Executes an update operation and captures the difference in node states before and after the update.
-    pub(super) fn with_states_difference<R, Update: FnOnce() -> R>(
-        &self,
-        update: Update,
-    ) -> (Vec<NodeState>, R) {
-        let old = self.curp.clone_node_states();
-        let result = update();
-        let new = self.curp.clone_node_states();
-        let new_states = new
-            .into_iter()
-            .filter_map(|(id, state)| (!old.contains_key(&id)).then_some(state))
-            .collect();
-
-        (new_states, result)
     }
 
     /// Spawns background follower sync tasks
@@ -147,17 +177,5 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 )
             });
         }
-    }
-
-    /// Ensures that the current node is the leader
-    fn ensure_leader(&self) -> Result<(), CurpError> {
-        let (leader_id, term, is_leader) = self.curp.leader();
-        if is_leader {
-            return Ok(());
-        }
-        Err(CurpError::Redirect(Redirect {
-            leader_id: leader_id.map(Into::into),
-            term,
-        }))
     }
 }

@@ -412,21 +412,23 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         req: &AppendEntriesRequest,
     ) -> Result<AppendEntriesResponse, CurpError> {
         let entries = req.entries()?;
-        let (new_nodes, result) = self.with_states_difference(|| {
-            self.curp.handle_append_entries(
-                req.term,
-                req.leader_id,
-                req.prev_log_index,
-                req.prev_log_term,
-                entries,
-                req.leader_commit,
-            )
-        });
+        let leader_commit = req.leader_commit;
+        let membership_entries: Vec<_> = Self::filter_membership_entries(&entries).collect();
+        let result = self.curp.handle_append_entries(
+            req.term,
+            req.leader_id,
+            req.prev_log_index,
+            req.prev_log_term,
+            entries,
+            leader_commit,
+        );
         let resp = match result {
-            Ok((term, to_persist)) => {
+            Ok((term, truncate_at, to_persist)) => {
                 self.storage
                     .put_log_entries(&to_persist.iter().map(Arc::as_ref).collect::<Vec<_>>())?;
-                self.spawn_sync_follower_tasks(new_nodes);
+                self.update_states_with_memberships(membership_entries)?;
+                self.curp
+                    .update_membership_indices(Some(truncate_at), Some(leader_commit));
                 AppendEntriesResponse::new_accept(term)
             }
             Err((term, hint)) => AppendEntriesResponse::new_reject(term, hint),
