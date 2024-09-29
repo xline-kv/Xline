@@ -141,9 +141,16 @@ impl MembershipState {
 
     /// Commit a membership index
     pub(crate) fn commit(&mut self, index: LogIndex) {
-        if self.last().index >= index {
-            self.entries.retain(|entry| entry.index >= index);
-        }
+        let mut keep = self
+            .entries
+            .iter()
+            .enumerate()
+            // also skips the last entry
+            .map(|(i, e)| e.index >= index || i.wrapping_add(1) == self.entries.len())
+            .collect::<Vec<_>>()
+            .into_iter();
+
+        self.entries.retain(|_| keep.next().unwrap());
     }
 
     /// Returns the committed membership
