@@ -228,7 +228,7 @@ impl Membership {
         Changes: IntoIterator<Item = Change>,
     {
         let mut nodes = self.nodes.clone();
-        let mut target = self.current_member_set().clone();
+        let mut set = self.current_member_set().clone();
 
         for change in changes {
             match change {
@@ -247,25 +247,23 @@ impl Membership {
                     if self.is_current_member(id) {
                         return vec![];
                     }
-                    let _ignore = target.insert(id);
+                    let _ignore = set.insert(id);
                 }
                 Change::Demote(id) => {
                     if !self.is_current_member(id) {
                         return vec![];
                     }
-                    let _ignore = target.remove(&id);
+                    let _ignore = set.remove(&id);
                 }
             }
         }
 
-        let all = Self::all_coherent(self.members.clone(), &target);
+        let target = Self {
+            members: vec![set],
+            nodes,
+        };
 
-        all.into_iter()
-            .map(|members| Self {
-                members,
-                nodes: nodes.clone(),
-            })
-            .collect()
+        Self::all_coherent(self.clone(), &target)
     }
 
     /// Gets the current member set
@@ -280,18 +278,19 @@ impl Membership {
     }
 
     /// Generates all coherent membership to reach the target
-    fn all_coherent(
-        current: Vec<BTreeSet<u64>>,
-        target: &BTreeSet<u64>,
-    ) -> Vec<Vec<BTreeSet<u64>>> {
-        iter::successors(Some(current), |curr| {
-            let next = Joint::new(curr.clone())
-                .coherent(target.clone())
+    fn all_coherent(current: Self, target: &Self) -> Vec<Self> {
+        let next = |curr: &Self| {
+            let members = Joint::new(curr.members.clone())
+                .coherent(Joint::new(target.members.clone()))
                 .into_inner();
-            (curr != &next).then_some(next)
-        })
-        .skip(1)
-        .collect()
+            let next = Membership {
+                members,
+                nodes: target.nodes.clone(),
+            };
+            (*curr != next).then_some(next)
+        };
+
+        iter::successors(Some(current), next).skip(1).collect()
     }
 
     /// Converts to `Joint`

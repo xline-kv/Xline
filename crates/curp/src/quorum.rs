@@ -29,17 +29,19 @@ where
     QS: PartialEq + Clone,
 {
     /// Generates a new coherent joint quorum set
-    pub(crate) fn coherent(&self, qs: QS) -> Self {
-        if self.sets.iter().any(|s| *s == qs) {
-            Self::new(vec![qs])
-        } else {
-            // TODO: select the config where the leader is in
-            let last = self
-                .sets
-                .last()
-                .unwrap_or_else(|| unreachable!("there should be at least one quorum set"));
-            Self::new(vec![last.clone(), qs])
+    pub(crate) fn coherent(&self, other: Self) -> Self {
+        if self.is_superset(&other) {
+            return other;
         }
+
+        // TODO: select the config where the leader is in
+        let last = self.sets.last().cloned();
+        Self::new(last.into_iter().chain(other.sets).collect())
+    }
+
+    /// Checks if `self` is a superset of `other`
+    fn is_superset(&self, other: &Self) -> bool {
+        other.sets.iter().all(|s| self.sets.contains(s))
     }
 }
 
