@@ -27,7 +27,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     where
         Changes: IntoIterator<Item = Change>,
     {
-        self.ms.read().cluster().changes(changes)
+        self.log
+            .map_read(|log| self.ms.read().cluster().changes(changes, log.commit_index))
     }
 
     /// Updates the role if the node is leader
@@ -80,7 +81,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     ) {
         let mut ms_w = self.ms.write();
         let _ignore = truncate_at.map(|index| ms_w.cluster_mut().truncate(index));
-        let __ignore = commit.map(|index| ms_w.cluster_mut().update_commit(index));
+        let __ignore = commit.map(|index| ms_w.cluster_mut().commit(index));
     }
 
     /// Updates the role of the node based on the current membership state

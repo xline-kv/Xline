@@ -117,8 +117,6 @@ impl NodeMembershipState {
 pub struct MembershipState {
     /// Membership entries
     entries: Vec<MembershipEntry>,
-    /// Commit log index
-    commit_index: LogIndex,
 }
 
 #[allow(clippy::unwrap_used)] // `entries` should contains at least one entry
@@ -128,7 +126,6 @@ impl MembershipState {
         let initial_entry = MembershipEntry::new(0, initial_membership);
         Self {
             entries: vec![initial_entry],
-            commit_index: 0,
         }
     }
 
@@ -143,18 +140,19 @@ impl MembershipState {
     }
 
     /// Commit a membership index
-    pub(crate) fn update_commit(&mut self, index: LogIndex) {
-        self.commit_index = index;
-        self.entries.retain(|entry| entry.index >= index);
+    pub(crate) fn commit(&mut self, index: LogIndex) {
+        if self.last().index >= index {
+            self.entries.retain(|entry| entry.index >= index);
+        }
     }
 
     /// Returns the committed membership
     #[cfg(test)]
-    pub(crate) fn committed(&self) -> &Membership {
+    pub(crate) fn committed(&self, commit_index: LogIndex) -> &Membership {
         &self
             .entries
             .iter()
-            .take_while(|entry| entry.index <= self.commit_index)
+            .take_while(|entry| entry.index <= commit_index)
             .last()
             .unwrap()
             .membership
@@ -163,11 +161,16 @@ impl MembershipState {
     /// Generates a new membership from `Change`
     ///
     /// Returns an empty `Vec` if there's an on-going membership change
-    pub(crate) fn changes<Changes>(&self, changes: Changes) -> Vec<Membership>
+    pub(crate) fn changes<Changes>(
+        &self,
+        changes: Changes,
+        commit_index: LogIndex,
+    ) -> Vec<Membership>
     where
         Changes: IntoIterator<Item = Change>,
     {
-        if self.has_uncommitted() {
+        // membership uncommitted, return an empty vec
+        if self.last().index > commit_index {
             return vec![];
         }
         self.last().membership.changes(changes)
@@ -176,11 +179,6 @@ impl MembershipState {
     /// Returns the effective membership
     pub(crate) fn effective(&self) -> &Membership {
         &self.last().membership
-    }
-
-    /// Checks if there's an uncommitted membership change
-    fn has_uncommitted(&self) -> bool {
-        self.last().index > self.commit_index
     }
 
     /// Gets the last entry
