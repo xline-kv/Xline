@@ -228,13 +228,7 @@ impl Membership {
         Changes: IntoIterator<Item = Change>,
     {
         let mut nodes = self.nodes.clone();
-        let members = self.members.clone();
-        let is_member = |id: &u64| members.iter().any(|s| s.contains(id));
-        let mut set = self
-            .members
-            .last()
-            .unwrap_or_else(|| unreachable!("there should be at least one member set"))
-            .clone();
+        let mut target = self.current_member_set().clone();
 
         for change in changes {
             match change {
@@ -250,50 +244,59 @@ impl Membership {
                     }
                 }
                 Change::Promote(id) => {
-                    if !nodes.contains_key(&id) || is_member(&id) {
+                    if self.is_current_member(id) {
                         return vec![];
                     }
-                    let _ignore = set.insert(id);
+                    let _ignore = target.insert(id);
                 }
                 Change::Demote(id) => {
-                    if !nodes.contains_key(&id) || !is_member(&id) {
+                    if !self.is_current_member(id) {
                         return vec![];
                     }
-                    let _ignore = set.remove(&id);
+                    let _ignore = target.remove(&id);
                 }
             }
         }
 
-        self.all_coherent(&set)
+        let all = Self::all_coherent(self.members.clone(), &target);
+
+        all.into_iter()
+            .map(|members| Self {
+                members,
+                nodes: nodes.clone(),
+            })
+            .collect()
+    }
+
+    /// Gets the current member set
+    #[allow(clippy::unwrap_used)] // members should never be empty
+    fn current_member_set(&self) -> &BTreeSet<u64> {
+        self.members.last().unwrap()
+    }
+
+    /// Returns `true` if the given id exists in the current member set
+    fn is_current_member(&self, id: u64) -> bool {
+        self.current_member_set().contains(&id)
     }
 
     /// Generates all coherent membership to reach the target
-    fn all_coherent(&self, target: &BTreeSet<u64>) -> Vec<Self> {
-        iter::successors(Some(self.clone()), |current| {
-            let next = Self::next_coherent(current, target.clone());
-            (current != &next).then_some(next)
+    fn all_coherent(
+        current: Vec<BTreeSet<u64>>,
+        target: &BTreeSet<u64>,
+    ) -> Vec<Vec<BTreeSet<u64>>> {
+        iter::successors(Some(current), |curr| {
+            let next = Joint::new(curr.clone())
+                .coherent(target.clone())
+                .into_inner();
+            (curr != &next).then_some(next)
         })
         .skip(1)
         .collect()
     }
 
-    /// Generates a new coherent membership from a quorum set
-    fn next_coherent(ms: &Self, set: BTreeSet<u64>) -> Self {
-        let next = ms.as_joint_owned().coherent(set).into_inner();
-        Self {
-            members: next,
-            nodes: ms.nodes.clone(),
-        }
-    }
-
     /// Converts to `Joint`
     pub(crate) fn as_joint(&self) -> Joint<BTreeSet<u64>, &[BTreeSet<u64>]> {
         Joint::new(self.members.as_slice())
-    }
-
-    /// Converts to `Joint`
-    pub(crate) fn as_joint_owned(&self) -> Joint<BTreeSet<u64>, Vec<BTreeSet<u64>>> {
-        Joint::new(self.members.clone())
     }
 
     /// Gets the addresses of all members
