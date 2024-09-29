@@ -413,7 +413,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                     .put_log_entries(&to_persist.iter().map(Arc::as_ref).collect::<Vec<_>>())?;
                 self.update_states_with_memberships(membership_entries)?;
                 self.curp
-                    .update_membership_indices(Some(truncate_at), Some(leader_commit));
+                    .update_membership_indices(truncate_at, Some(leader_commit));
                 AppendEntriesResponse::new_accept(term)
             }
             Err((term, hint)) => AppendEntriesResponse::new_reject(term, hint),

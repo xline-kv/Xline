@@ -279,7 +279,7 @@ impl<C: Command> Debug for Log<C> {
 }
 
 /// Type retruned when append success
-type AppendSuccess<C> = (Vec<Arc<LogEntry<C>>>, LogIndex);
+type AppendSuccess<C> = (Vec<Arc<LogEntry<C>>>, Option<LogIndex>);
 
 impl<C: Command> Log<C> {
     /// Create a new log
@@ -362,10 +362,7 @@ impl<C: Command> Log<C> {
         }
         // Truncate entries
         self.truncate(pi);
-        let truncate_at = self
-            .entries
-            .back()
-            .map_or_else(LogIndex::default, |e| e.inner.index);
+        let truncate_at = self.entries.back().map(|e| e.inner.index);
         // Push the remaining entries and record the conf change entries
         for entry in entries
             .into_iter()
