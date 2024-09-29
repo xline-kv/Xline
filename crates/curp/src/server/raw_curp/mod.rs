@@ -461,7 +461,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 }
 
 /// Term, entries
-type AppendEntriesSuccess<C> = (u64, LogIndex, Vec<Arc<LogEntry<C>>>);
+type AppendEntriesSuccess<C> = (u64, Option<LogIndex>, Vec<Arc<LogEntry<C>>>);
 /// Term, index
 type AppendEntriesFailure = (u64, LogIndex);
 
