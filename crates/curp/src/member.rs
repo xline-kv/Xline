@@ -167,7 +167,7 @@ impl MembershipState {
     where
         Changes: IntoIterator<Item = Change>,
     {
-        if !self.has_uncommitted() {
+        if self.has_uncommitted() {
             return vec![];
         }
         self.last().membership.changes(changes)
