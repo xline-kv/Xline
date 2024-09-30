@@ -8,7 +8,7 @@ use tracing::warn;
 use utils::parking_lot_lock::RwLockMap;
 
 use crate::{
-    quorum,
+    quorum::{self, QuorumSet},
     rpc::{self, connect::ConnectApi, CurpError, FetchMembershipRequest, FetchMembershipResponse},
 };
 
@@ -90,7 +90,7 @@ impl Fetch {
             connects,
             resp.clone().into_membership(),
         );
-        if self.fetch_term(&new_state).await {
+        if self.fetch_term(new_state.clone()).await {
             return Ok((new_state, resp));
         }
 
@@ -98,20 +98,19 @@ impl Fetch {
     }
 
     /// Fetch the term of the cluster. This ensures that the current leader is the latest.
-    async fn fetch_term(&self, state: &ClusterStateReady) -> bool {
+    async fn fetch_term(&self, state: ClusterStateReady) -> bool {
         let timeout = self.timeout;
         let term = state.term();
-        let quorum = state.get_quorum(quorum);
+        let fetch_membership = |c: Arc<dyn ConnectApi>| async move {
+            c.fetch_membership(FetchMembershipRequest {}, timeout).await
+        };
+
         state
-            .for_each_server(|c| async move {
-                c.fetch_membership(FetchMembershipRequest {}, timeout).await
-            })
-            .filter_map(|r| future::ready(r.ok()))
-            .map(Response::into_inner)
-            .filter(move |resp| future::ready(resp.term == term))
-            .take(quorum)
-            .count()
-            .map(move |t| t >= quorum)
+            .for_each_node_with_quorum(
+                fetch_membership,
+                |r| r.is_ok_and(|ok| ok.get_ref().term == term),
+                |qs, ids| QuorumSet::is_quorum(qs, ids),
+            )
             .await
     }
 
