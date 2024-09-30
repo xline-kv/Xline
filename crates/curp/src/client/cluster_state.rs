@@ -27,6 +27,18 @@ pub(crate) enum ClusterState {
     Ready(ClusterStateReady),
 }
 
+impl From<ClusterStateInit> for ClusterState {
+    fn from(init: ClusterStateInit) -> Self {
+        ClusterState::Init(init)
+    }
+}
+
+impl From<ClusterStateReady> for ClusterState {
+    fn from(ready: ClusterStateReady) -> Self {
+        ClusterState::Ready(ready)
+    }
+}
+
 impl ForEachServer for ClusterState {
     fn for_each_server<R, F: Future<Output = R>>(
         &self,
@@ -158,46 +170,6 @@ impl ClusterStateReady {
             .map(Arc::clone)
             .map(f)
             .collect()
-    }
-
-    /// Execute an operation on each node, until a quorum is reached.
-    ///
-    /// Parameters:
-    /// - f: Operation to execute on each follower's connection
-    /// - filter: Function to filter on each response
-    /// - quorum: Function to determine if a quorum is reached, use functions in `QuorumSet` trait
-    ///
-    /// Returns `true` if then given quorum is reached.
-    pub(crate) async fn for_each_node_with_quorum<R, Fut: Future<Output = R>, F, Q>(
-        self,
-        mut f: impl FnMut(Arc<dyn ConnectApi>) -> Fut,
-        mut filter: F,
-        mut expect_quorum: Q,
-    ) -> bool
-    where
-        F: FnMut(R) -> bool,
-        Q: FnMut(&dyn QuorumSet<Vec<u64>>, Vec<u64>) -> bool,
-    {
-        let qs = self.membership.as_joint();
-
-        #[allow(clippy::pattern_type_mismatch)]
-        let futs: FuturesUnordered<_> = self
-            .member_connects()
-            .map(|(id, conn)| f(Arc::clone(conn)).map(move |r| (id, r)))
-            .collect();
-
-        let mut filtered =
-            futs.filter_map(|(id, r)| futures::future::ready(filter(r).then_some(id)));
-
-        let mut ids = vec![];
-        while let Some(id) = filtered.next().await {
-            ids.push(id);
-            if expect_quorum(&qs, ids.clone()) {
-                return true;
-            }
-        }
-
-        false
     }
 
     /// Execute an operation on each follower, until a quorum is reached.

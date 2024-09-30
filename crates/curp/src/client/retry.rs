@@ -427,7 +427,7 @@ where
         linearizable: bool,
     ) -> Result<FetchMembershipResponse, tonic::Status> {
         self.retry::<_, _>(|client, ctx| async move {
-            let (_, resp) = self.fetch.fetch_cluster(ctx.cluster_state()).await?;
+            let (_, resp) = self.fetch.fetch_cluster(ClusterState::Ready(ctx.cluster_state())).await?;
             Ok(resp)
         })
         .await

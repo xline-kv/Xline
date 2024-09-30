@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use curp_external_api::cmd::Command;
-use futures::{future, FutureExt, StreamExt};
+use futures::{future, Future, FutureExt, StreamExt};
 use parking_lot::RwLock;
 use tonic::Response;
 use tracing::warn;
@@ -12,7 +12,7 @@ use crate::{
     rpc::{self, connect::ConnectApi, CurpError, FetchMembershipRequest, FetchMembershipResponse},
 };
 
-use super::cluster_state::{ClusterState, ClusterStateReady, ForEachServer};
+use super::cluster_state::{ClusterState, ClusterStateInit, ClusterStateReady, ForEachServer};
 use super::config::Config;
 
 /// Connect to cluster
@@ -77,59 +77,88 @@ impl Fetch {
     /// Fetch cluster and updates the current state
     pub(crate) async fn fetch_cluster(
         &self,
-        state: impl ForEachServer,
+        state: impl Into<ClusterState>,
     ) -> Result<(ClusterStateReady, FetchMembershipResponse), CurpError> {
-        let resp = self
-            .pre_fetch(&state)
-            .await
-            .ok_or(CurpError::internal("cluster not available"))?;
-        let connects = (self.connect_to)(&resp);
-        let new_state = ClusterStateReady::new(
-            resp.leader_id,
-            resp.term,
-            connects,
-            resp.clone().into_membership(),
-        );
-        if self.fetch_term(new_state.clone()).await {
-            return Ok((new_state, resp));
+        let state = match state.into() {
+            ClusterState::Init(state) => {
+                let resp = self
+                    .fetch_one(&state)
+                    .await
+                    .ok_or(CurpError::internal("cluster not available"))?;
+                Self::build_cluster_state_from_response(self.connect_to.as_ref(), resp.clone())
+            }
+            ClusterState::Ready(state) => state,
+        };
+
+        let (fetch_leader, term_ok) =
+            tokio::join!(self.fetch_from_leader(&state), self.fetch_term(state));
+
+        if term_ok {
+            return fetch_leader;
+        }
+
+        let (leader_state, resp) = fetch_leader?;
+        if self.fetch_term(leader_state.clone()).await {
+            return Ok((leader_state, resp));
         }
 
         Err(CurpError::internal("cluster not available"))
     }
 
     /// Fetch the term of the cluster. This ensures that the current leader is the latest.
-    async fn fetch_term(&self, state: ClusterStateReady) -> bool {
+    fn fetch_term(&self, state: ClusterStateReady) -> impl Future<Output = bool> {
         let timeout = self.timeout;
         let term = state.term();
-        let fetch_membership = |c: Arc<dyn ConnectApi>| async move {
+        let fetch_membership = move |c: Arc<dyn ConnectApi>| async move {
             c.fetch_membership(FetchMembershipRequest {}, timeout).await
         };
 
-        state
-            .for_each_node_with_quorum(
-                fetch_membership,
-                |r| r.is_ok_and(|ok| ok.get_ref().term == term),
-                |qs, ids| QuorumSet::is_quorum(qs, ids),
-            )
-            .await
+        state.for_each_follower_with_quorum(
+            fetch_membership,
+            move |r| r.is_ok_and(|ok| ok.get_ref().term == term),
+            |qs, ids| QuorumSet::is_quorum(qs, ids),
+        )
     }
 
-    /// Prefetch, send fetch cluster request to the cluster and get the
-    /// config with the greatest quorum.
-    async fn pre_fetch(&self, state: &impl ForEachServer) -> Option<FetchMembershipResponse> {
+    /// Fetch cluster state from leader
+    fn fetch_from_leader(
+        &self,
+        state: &ClusterStateReady,
+    ) -> impl Future<Output = Result<(ClusterStateReady, FetchMembershipResponse), CurpError>> {
         let timeout = self.timeout;
-        let requests = state.for_each_server(|c| async move {
+        let connect_to = self.connect_to.clone_box();
+        state.map_leader(|c| async move {
+            let result = c.fetch_membership(FetchMembershipRequest {}, timeout).await;
+            result.map(|resp| {
+                let resp = resp.into_inner();
+                let fetch_state =
+                    Self::build_cluster_state_from_response(connect_to.as_ref(), resp.clone());
+                (fetch_state, resp)
+            })
+        })
+    }
+
+    /// Sends fetch membership request to the cluster, and returns the first response
+    async fn fetch_one(&self, state: &ClusterStateInit) -> Option<FetchMembershipResponse> {
+        let timeout = self.timeout;
+        let request_futs = state.for_each_server(|c| async move {
             c.fetch_membership(FetchMembershipRequest {}, timeout).await
         });
-        let responses: Vec<_> = requests
-            .filter_map(|r| future::ready(r.ok()))
+
+        request_futs
+            .filter_map(|req| future::ready(req.ok()))
+            .next()
+            .await
             .map(Response::into_inner)
-            .collect()
-            .await;
-        responses
-            .into_iter()
-            .filter(|resp| !resp.members.is_empty())
-            .max_by(|x, y| x.term.cmp(&y.term))
+    }
+
+    /// Build `ClusterStateReady` from `FetchMembershipResponse`
+    fn build_cluster_state_from_response(
+        connect_to: &dyn ConnectToCluster,
+        resp: FetchMembershipResponse,
+    ) -> ClusterStateReady {
+        let connects = (connect_to)(&resp);
+        ClusterStateReady::new(resp.leader_id, resp.term, connects, resp.into_membership())
     }
 }
 
@@ -149,7 +178,11 @@ mod test {
     use tracing_test::traced_test;
 
     use crate::{
-        client::{cluster_state::ForEachServer, config::Config, tests::init_mocked_connects},
+        client::{
+            cluster_state::{ClusterState, ClusterStateInit, ForEachServer},
+            config::Config,
+            tests::init_mocked_connects,
+        },
         rpc::{
             self, connect::ConnectApi, CurpError, FetchMembershipResponse, Member, Node,
             NodeMetadata,
@@ -158,12 +191,9 @@ mod test {
 
     use super::Fetch;
 
-    impl ForEachServer for HashMap<u64, Arc<dyn ConnectApi>> {
-        fn for_each_server<R, F: futures::Future<Output = R>>(
-            &self,
-            f: impl FnMut(Arc<dyn ConnectApi>) -> F,
-        ) -> FuturesUnordered<F> {
-            self.values().cloned().map(f).collect()
+    impl From<HashMap<u64, Arc<dyn ConnectApi>>> for ClusterState {
+        fn from(connects: HashMap<u64, Arc<dyn ConnectApi>>) -> Self {
+            ClusterState::Init(ClusterStateInit::new(connects.into_values().collect()))
         }
     }
 
