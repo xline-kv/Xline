@@ -44,25 +44,42 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
 // Common methods shared by both leader and followers
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
-    /// Append configs to membership state
+    /// Updates the membership state
     ///
-    /// This method will also performs blocking IO
-    pub(crate) fn append_to_membership_states<Entries>(
+    /// # Arguments
+    ///
+    /// * `truncate` - An optional `LogIndex` up to which the membership log should be truncated.
+    /// * `append` - An iterator of tuples `(LogIndex, Membership)` to be appended to the membership log.
+    /// * `commit` - An optional `LogIndex` up to which the membership log should be committed.
+    pub(crate) fn update_membership_state<Entries>(
         &self,
-        entries: Entries,
-    ) -> Result<(), StorageError>
-    where
+        truncate: Option<LogIndex>,
+        append: Entries,
+        commit: Option<LogIndex>,
+    ) where
         Entries: IntoIterator<Item = (LogIndex, Membership)>,
     {
         let mut ms_w = self.ms.write();
-        for (index, config) in entries {
-            ms_w.cluster_mut().append(index, config);
-            self.ctx
-                .curp_storage
-                .put_membership(ms_w.node_id(), ms_w.cluster())?;
+        if let Some(index) = truncate {
+            ms_w.cluster_mut().truncate(index);
         }
+        for (index, config) in append {
+            ms_w.cluster_mut().append(index, config);
+        }
+        if let Some(index) = commit {
+            ms_w.cluster_mut().commit(index);
+        }
+    }
 
-        Ok(())
+    /// Persists the current membership state to storage.
+    ///
+    /// This method should only be called when new entries are appended to the membership state.
+    pub(crate) fn persistent_membership_state(&self) -> Result<(), StorageError> {
+        let (node_id, membership_state) =
+            self.ms.map_read(|ms| (ms.node_id(), ms.cluster().clone()));
+        self.ctx
+            .curp_storage
+            .put_membership(node_id, &membership_state)
     }
 
     /// Updates the node states
@@ -71,17 +88,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         connects: BTreeMap<u64, InnerConnectApiWrapper>,
     ) -> BTreeMap<u64, NodeState> {
         self.ctx.node_states.update_with(connects)
-    }
-
-    /// Updates membership indices
-    pub(crate) fn update_membership_indices(
-        &self,
-        truncate_at: Option<LogIndex>,
-        commit: Option<LogIndex>,
-    ) {
-        let mut ms_w = self.ms.write();
-        let _ignore = truncate_at.map(|index| ms_w.cluster_mut().truncate(index));
-        let __ignore = commit.map(|index| ms_w.cluster_mut().commit(index));
     }
 
     /// Updates the role of the node based on the current membership state

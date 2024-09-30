@@ -113,7 +113,7 @@ impl NodeMembershipState {
 }
 
 /// Membership state stored in current node
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct MembershipState {
     /// Membership entries
     entries: Vec<MembershipEntry>,

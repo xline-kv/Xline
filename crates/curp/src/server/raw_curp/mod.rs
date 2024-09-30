@@ -788,7 +788,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let mut log_w = RwLockUpgradableReadGuard::upgrade(log_r);
             if last_sent_index > log_w.commit_index {
                 log_w.commit_to(last_sent_index);
-                self.update_membership_indices(None, Some(last_sent_index));
+                self.update_membership_state(None, None, Some(last_sent_index));
                 debug!("{} updates commit index to {last_sent_index}", self.id());
                 self.apply(&mut *log_w);
             }
