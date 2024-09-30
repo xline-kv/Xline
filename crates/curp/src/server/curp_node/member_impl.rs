@@ -49,7 +49,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         for config in configs {
             let propose_id = ProposeId(rand::random(), 0);
             let index = self.curp.push_log_entry(propose_id, config.clone()).index;
-            self.update_states_with_memberships(Some((index, config)))?;
+            self.update_states_with_membership(&config);
+            self.curp
+                .update_membership_state(None, Some((index, config)), None);
+            self.curp.persistent_membership_state()?;
             // Leader also needs to update transferee
             self.curp.update_transferee();
             self.wait_commit(Some(propose_id)).await;
@@ -98,22 +101,11 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
 // Common methods shared by both leader and followers
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Updates the membership config
-    #[allow(clippy::pattern_type_mismatch)] // can't fix
-    pub(crate) fn update_states_with_memberships<I>(&self, entries: I) -> Result<(), CurpError>
-    where
-        I: IntoIterator<Item = (LogIndex, Membership)>,
-    {
-        let entries: Vec<_> = entries.into_iter().collect();
-        let Some((_, last)) = entries.last() else {
-            return Ok(());
-        };
-        let connects = self.connect_nodes(last);
-        self.curp.append_to_membership_states(entries)?;
+    pub(crate) fn update_states_with_membership(&self, membership: &Membership) {
+        let connects = self.connect_nodes(membership);
         let new_states = self.curp.update_node_states(connects);
         self.spawn_sync_follower_tasks(new_states.into_values());
         self.curp.update_role();
-
-        Ok(())
     }
 
     /// Filter out membership log entries
