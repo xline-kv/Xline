@@ -100,13 +100,18 @@ impl Cluster for ClusterServer {
         let id = request.into_inner().id;
         // In etcd a member could be a learner, and could return CurpError::InvalidMemberChange
         // TODO: handle other errors that may returned
-        let _ignore = self
-            .client
-            .change_membership(vec![Change::Demote(id)])
-            .await;
         self.client
-            .change_membership(vec![Change::Remove(id)])
+            .change_membership(vec![Change::Demote(id)])
             .await?;
+        while self
+            .client
+            .change_membership(vec![Change::Remove(id)])
+            .await
+            // TODO: This is workaround for removed leader, we need retry to update the client id
+            // use a method to manually update it
+            .is_err_and(|e| e.code() == tonic::Code::FailedPrecondition)
+        {}
+
         let members = self.fetch_members(true).await?;
 
         Ok(tonic::Response::new(MemberRemoveResponse {
@@ -133,9 +138,14 @@ impl Cluster for ClusterServer {
                 .change_membership(vec![Change::Demote(id)])
                 .await?;
         }
-        self.client
+        while self
+            .client
             .change_membership(vec![Change::Remove(id)])
-            .await?;
+            .await
+            // TODO: This is workaround for removed leader, we need retry to update the client id
+            // use a method to manually update it
+            .is_err_and(|e| e.code() == tonic::Code::FailedPrecondition)
+        {}
 
         let meta = NodeMetadata::new(
             member.name.clone(),
