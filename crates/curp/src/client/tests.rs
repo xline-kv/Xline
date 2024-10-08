@@ -26,8 +26,8 @@ use crate::{
     rpc::{
         self,
         connect::{ConnectApi, MockConnectApi},
-        CurpError, FetchMembershipResponse, Node, NodeMetadata, OpResponse, ProposeId,
-        ProposeResponse, ReadIndexResponse, RecordResponse, ResponseOp, SyncedResponse,
+        CurpError, MembershipResponse, Node, NodeMetadata, OpResponse, ProposeId, ProposeResponse,
+        ReadIndexResponse, RecordResponse, ResponseOp, SyncedResponse,
     },
 };
 
@@ -103,7 +103,7 @@ fn build_membership_resp(
     leader_id: Option<u64>,
     term: u64,
     members: impl IntoIterator<Item = u64>,
-) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
+) -> Result<tonic::Response<MembershipResponse>, CurpError> {
     let leader_id = leader_id.ok_or(CurpError::leader_transfer("no current leader"))?;
 
     let members: Vec<_> = members.into_iter().collect();
@@ -117,7 +117,7 @@ fn build_membership_resp(
         .collect();
     let qs = rpc::QuorumSet { set: members };
 
-    let resp = FetchMembershipResponse {
+    let resp = MembershipResponse {
         members: vec![qs],
         nodes,
         term,

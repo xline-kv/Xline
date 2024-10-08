@@ -28,14 +28,13 @@ pub use self::proto::{
         protocol_client,
         protocol_server::{Protocol, ProtocolServer},
         ChangeMembershipRequest,
-        ChangeMembershipResponse,
         CmdResult,
         FetchMembershipRequest,
-        FetchMembershipResponse,
         FetchReadStateRequest,
         FetchReadStateResponse,
         LeaseKeepAliveMsg,
         Member,
+        MembershipResponse,
         MoveLeaderRequest,
         MoveLeaderResponse,
         Node,
@@ -790,7 +789,7 @@ impl std::fmt::Display for ProposeId {
     }
 }
 
-impl FetchMembershipResponse {
+impl MembershipResponse {
     /// Consumes self and returns a `Membership`
     pub(crate) fn into_membership(self) -> Membership {
         let Self { members, nodes, .. } = self;

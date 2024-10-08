@@ -14,11 +14,11 @@ use crate::{
             commandpb::protocol_client::ProtocolClient,
             inner_messagepb::inner_protocol_client::InnerProtocolClient,
         },
-        AppendEntriesRequest, AppendEntriesResponse, ChangeMembershipRequest,
-        ChangeMembershipResponse, CurpError, FetchMembershipRequest, FetchMembershipResponse,
-        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotResponse, MoveLeaderRequest,
-        MoveLeaderResponse, OpResponse, ProposeRequest, ReadIndexResponse, RecordRequest,
-        RecordResponse, ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
+        AppendEntriesRequest, AppendEntriesResponse, ChangeMembershipRequest, CurpError,
+        FetchMembershipRequest, FetchReadStateRequest, FetchReadStateResponse,
+        InstallSnapshotResponse, MembershipResponse, MoveLeaderRequest, MoveLeaderResponse,
+        OpResponse, ProposeRequest, ReadIndexResponse, RecordRequest, RecordResponse,
+        ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
     },
     snapshot::Snapshot,
 };
@@ -231,7 +231,7 @@ impl ConnectApi for ConnectLazy<ProtocolClient<Channel>> {
         &self,
         request: FetchMembershipRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
+    ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
         let mut inner = self.inner.lock().await;
         self.connect_inner(&mut inner);
         inner
@@ -245,7 +245,7 @@ impl ConnectApi for ConnectLazy<ProtocolClient<Channel>> {
         &self,
         request: ChangeMembershipRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ChangeMembershipResponse>, CurpError> {
+    ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
         let mut inner = self.inner.lock().await;
         self.connect_inner(&mut inner);
         inner

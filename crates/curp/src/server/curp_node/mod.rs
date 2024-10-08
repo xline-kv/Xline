@@ -37,16 +37,16 @@ use super::{
 use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
-    member::{Membership, MembershipInfo},
+    member::MembershipInfo,
     response::ResponseSender,
     role_change::RoleChange,
     rpc::{
         self,
         connect::{InnerConnectApi, InnerConnectApiWrapper},
         AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchMembershipRequest,
-        FetchMembershipResponse, FetchReadStateRequest, FetchReadStateResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
-        MoveLeaderResponse, Node, PoolEntry, ProposeId, ProposeRequest, ProposeResponse, QuorumSet,
+        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
+        InstallSnapshotResponse, LeaseKeepAliveMsg, MembershipResponse, MoveLeaderRequest,
+        MoveLeaderResponse, PoolEntry, ProposeId, ProposeRequest, ProposeResponse,
         ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
         SyncedResponse, TriggerShutdownRequest, TriggerShutdownResponse, TryBecomeLeaderNowRequest,
         TryBecomeLeaderNowResponse, VoteRequest, VoteResponse,
@@ -361,32 +361,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     pub(super) fn fetch_membership(
         &self,
         _req: FetchMembershipRequest,
-    ) -> Result<FetchMembershipResponse, CurpError> {
-        let (leader_id, term, _) = self.curp.leader();
-        let Membership { members, nodes } = self.curp.effective_membership();
-        let members = members
-            .into_iter()
-            .map(|s| QuorumSet {
-                set: s.into_iter().collect(),
-            })
-            .collect();
-        let nodes = nodes
-            .into_iter()
-            .map(|(node_id, meta)| Node {
-                node_id,
-                meta: Some(meta),
-            })
-            .collect();
-
-        let leader_id =
-            leader_id.ok_or(CurpError::LeaderTransfer("no current leader".to_owned()))?;
-
-        Ok(FetchMembershipResponse {
-            members,
-            nodes,
-            term,
-            leader_id,
-        })
+    ) -> Result<MembershipResponse, CurpError> {
+        self.build_membership_response()
     }
 }
 

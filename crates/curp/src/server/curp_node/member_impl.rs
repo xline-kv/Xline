@@ -18,13 +18,14 @@ use super::CurpNode;
 use crate::log_entry::EntryData;
 use crate::log_entry::LogEntry;
 use crate::member::Membership;
+use crate::rpc;
 use crate::rpc::connect::InnerConnectApiWrapper;
 use crate::rpc::inner_connects;
 use crate::rpc::Change;
 use crate::rpc::ChangeMembershipRequest;
-use crate::rpc::ChangeMembershipResponse;
 use crate::rpc::CurpError;
 use crate::rpc::MembershipChange;
+use crate::rpc::MembershipResponse;
 use crate::rpc::ProposeId;
 use crate::rpc::Redirect;
 use crate::server::raw_curp::node_state::NodeState;
@@ -35,7 +36,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     pub(crate) async fn change_membership(
         &self,
         request: ChangeMembershipRequest,
-    ) -> Result<ChangeMembershipResponse, CurpError> {
+    ) -> Result<MembershipResponse, CurpError> {
         self.ensure_leader()?;
         let changes = request
             .changes
@@ -58,7 +59,36 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             self.wait_commit(Some(propose_id)).await;
         }
 
-        Ok(ChangeMembershipResponse {})
+        self.build_membership_response()
+    }
+
+    /// Builds a `ChangeMembershipResponse` from the given membership.
+    pub(crate) fn build_membership_response(&self) -> Result<MembershipResponse, CurpError> {
+        let (leader_id, term, _) = self.curp.leader();
+        let Membership { members, nodes } = self.curp.effective_membership();
+        let members = members
+            .into_iter()
+            .map(|s| rpc::QuorumSet {
+                set: s.into_iter().collect(),
+            })
+            .collect();
+        let nodes = nodes
+            .into_iter()
+            .map(|(node_id, meta)| rpc::Node {
+                node_id,
+                meta: Some(meta),
+            })
+            .collect();
+
+        let leader_id =
+            leader_id.ok_or(CurpError::LeaderTransfer("no current leader".to_owned()))?;
+
+        Ok(MembershipResponse {
+            members,
+            nodes,
+            term,
+            leader_id,
+        })
     }
 
     /// Wait the command with the propose id to be committed

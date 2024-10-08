@@ -19,7 +19,7 @@ use super::{
 };
 use crate::{
     members::ServerId,
-    rpc::{CurpError, ReadState, Redirect, ProposeId, FetchMembershipResponse, NodeMetadata, Node, Change}, tracker::Tracker,
+    rpc::{CurpError, ReadState, Redirect, ProposeId, MembershipResponse, NodeMetadata, Node, Change}, tracker::Tracker,
 };
 
 /// Backoff config
@@ -221,6 +221,11 @@ impl ClusterStateShared {
             ClusterState::Init(init) => self.fetch_and_update().await,
             ClusterState::Ready(ready) => Ok(ready),
         }
+    }
+
+    /// Updates the current state with the provided `ClusterStateReady`.
+    pub(crate) fn update_with(&self, cluster_state: ClusterStateReady) {
+        *self.inner.write() = ClusterState::Ready(cluster_state);
     }
 }
 
@@ -425,7 +430,7 @@ where
     async fn fetch_cluster(
         &self,
         linearizable: bool,
-    ) -> Result<FetchMembershipResponse, tonic::Status> {
+    ) -> Result<MembershipResponse, tonic::Status> {
         self.retry::<_, _>(|client, ctx| async move {
             let (_, resp) = self.fetch.fetch_cluster(ClusterState::Ready(ctx.cluster_state())).await?;
             Ok(resp)
@@ -436,10 +441,13 @@ where
 
     /// Performs membership change
     async fn change_membership(&self, changes: Vec<Change>) -> Result<(), Self::Error> {
-        self.retry::<_, _>(|client, ctx| client.change_membership(changes.clone(), ctx))
-            .await
-    }
+        let resp = self.retry::<_, _>(|client, ctx| client.change_membership(changes.clone(), ctx))
+            .await?;
+        let cluster_state = Fetch::build_cluster_state_from_response(self.fetch.connect_to(), resp);
+        self.cluster_state.update_with(cluster_state);
 
+        Ok(())
+    }
 }
 
 /// Tests for backoff

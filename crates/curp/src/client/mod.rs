@@ -65,7 +65,7 @@ use crate::{
     rpc::{
         self,
         connect::{BypassedConnect, ConnectApi},
-        FetchMembershipResponse, NodeMetadata, ProposeId, Protocol,
+        MembershipResponse, NodeMetadata, ProposeId, Protocol,
     },
     server::StreamingProtocol,
     tracker::Tracker,
@@ -239,7 +239,7 @@ impl ClientBuilder {
     ) -> impl ConnectToCluster {
         let tls_config = self.tls_config.clone();
         let is_raw_curp = self.is_raw_curp;
-        move |resp: &FetchMembershipResponse| -> HashMap<u64, Arc<dyn ConnectApi>> {
+        move |resp: &MembershipResponse| -> HashMap<u64, Arc<dyn ConnectApi>> {
             resp.nodes
                 .clone()
                 .into_iter()

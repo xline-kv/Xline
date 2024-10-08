@@ -3,11 +3,10 @@ use std::sync::Arc;
 use curp::{
     cmd::PbCodec,
     rpc::{
-        ChangeMembershipRequest, ChangeMembershipResponse, FetchMembershipRequest,
-        FetchMembershipResponse, FetchReadStateRequest, FetchReadStateResponse, LeaseKeepAliveMsg,
-        MoveLeaderRequest, MoveLeaderResponse, OpResponse, ProposeRequest, Protocol,
-        ReadIndexRequest, ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest,
-        ShutdownResponse,
+        ChangeMembershipRequest, FetchMembershipRequest, FetchReadStateRequest,
+        FetchReadStateResponse, LeaseKeepAliveMsg, MembershipResponse, MoveLeaderRequest,
+        MoveLeaderResponse, OpResponse, ProposeRequest, Protocol, ReadIndexRequest,
+        ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
     },
 };
 use flume::r#async::RecvStream;
@@ -104,14 +103,14 @@ impl Protocol for AuthWrapper {
     async fn fetch_membership(
         &self,
         request: tonic::Request<FetchMembershipRequest>,
-    ) -> Result<tonic::Response<FetchMembershipResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<MembershipResponse>, tonic::Status> {
         self.curp_server.fetch_membership(request).await
     }
 
     async fn change_membership(
         &self,
         request: tonic::Request<ChangeMembershipRequest>,
-    ) -> Result<tonic::Response<ChangeMembershipResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<MembershipResponse>, tonic::Status> {
         self.curp_server.change_membership(request).await
     }
 }

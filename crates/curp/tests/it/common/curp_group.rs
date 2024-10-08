@@ -56,7 +56,7 @@ pub mod commandpb {
 }
 
 pub use commandpb::{
-    protocol_client::ProtocolClient, FetchMembershipResponse, ProposeRequest, ProposeResponse,
+    protocol_client::ProtocolClient, MembershipResponse, ProposeRequest, ProposeResponse,
 };
 
 use self::commandpb::FetchMembershipRequest;
@@ -434,7 +434,7 @@ impl CurpGroup {
                 Err(e) => continue,
             };
 
-            let FetchMembershipResponse {
+            let MembershipResponse {
                 leader_id, term, ..
             } = if let Ok(resp) = client.fetch_membership(FetchMembershipRequest {}).await {
                 resp.into_inner()
@@ -475,7 +475,7 @@ impl CurpGroup {
                 Err(e) => continue,
             };
 
-            let FetchMembershipResponse {
+            let MembershipResponse {
                 leader_id, term, ..
             } = if let Ok(resp) = client.fetch_membership(FetchMembershipRequest {}).await {
                 resp.into_inner()

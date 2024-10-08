@@ -3,7 +3,7 @@ use curp_external_api::cmd::Command;
 
 use crate::{
     members::ServerId,
-    rpc::{Change, FetchMembershipResponse, ReadState},
+    rpc::{Change, MembershipResponse, ReadState},
 };
 
 use super::retry::Context;
@@ -46,10 +46,7 @@ pub trait ClientApi {
     /// know who the leader is.)
     ///
     /// Note: The fetched cluster may still be outdated if `linearizable` is false
-    async fn fetch_cluster(
-        &self,
-        linearizable: bool,
-    ) -> Result<FetchMembershipResponse, Self::Error>;
+    async fn fetch_cluster(&self, linearizable: bool) -> Result<MembershipResponse, Self::Error>;
 
     /// Fetch leader id
     #[inline]
@@ -100,5 +97,5 @@ pub(crate) trait RepeatableClientApi {
         &self,
         changes: Vec<Change>,
         ctx: Context,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<MembershipResponse, Self::Error>;
 }

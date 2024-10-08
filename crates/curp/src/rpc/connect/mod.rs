@@ -53,8 +53,8 @@ use crate::{
 use super::{
     proto::commandpb::{ReadIndexRequest, ReadIndexResponse},
     reconnect::Reconnect,
-    ChangeMembershipRequest, ChangeMembershipResponse, FetchMembershipRequest,
-    FetchMembershipResponse, OpResponse, RecordRequest, RecordResponse,
+    ChangeMembershipRequest, FetchMembershipRequest, MembershipResponse, OpResponse, RecordRequest,
+    RecordResponse,
 };
 
 /// Install snapshot chunk size: 64KB
@@ -224,14 +224,14 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         &self,
         request: FetchMembershipRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError>;
+    ) -> Result<tonic::Response<MembershipResponse>, CurpError>;
 
     /// Changes the membership
     async fn change_membership(
         &self,
         request: ChangeMembershipRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ChangeMembershipResponse>, CurpError>;
+    ) -> Result<tonic::Response<MembershipResponse>, CurpError>;
 }
 
 /// Inner Connect interface among different servers
@@ -497,7 +497,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         &self,
         request: FetchMembershipRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
+    ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
         let req = tonic::Request::new(request);
         with_timeout!(timeout, client.fetch_membership(req)).map_err(Into::into)
@@ -507,7 +507,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         &self,
         request: ChangeMembershipRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ChangeMembershipResponse>, CurpError> {
+    ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
         let req = tonic::Request::new(request);
         with_timeout!(timeout, client.change_membership(req)).map_err(Into::into)
@@ -772,7 +772,7 @@ where
         &self,
         request: FetchMembershipRequest,
         _timeout: Duration,
-    ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
+    ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
@@ -783,7 +783,7 @@ where
         &self,
         request: ChangeMembershipRequest,
         _timeout: Duration,
-    ) -> Result<tonic::Response<ChangeMembershipResponse>, CurpError> {
+    ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
