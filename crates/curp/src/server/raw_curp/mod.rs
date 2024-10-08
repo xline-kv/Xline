@@ -1148,6 +1148,16 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let ms_r = self.ms.read();
         self.become_candidate(&mut st_w, &mut cst_l, log_r, &ms_r)
     }
+
+    /// Returns `CurpError::WrongClusterVersion` if the give cluster version does not match the
+    /// effective membership version of the current node.
+    pub(super) fn check_cluster_version(&self, cluster_version: u64) -> Result<(), CurpError> {
+        if self.ms.read().cluster().cluster_version() == cluster_version {
+            return Ok(());
+        }
+
+        Err(CurpError::wrong_cluster_version())
+    }
 }
 
 /// Other small public interface

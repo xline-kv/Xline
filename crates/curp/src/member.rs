@@ -188,6 +188,13 @@ impl MembershipState {
         &self.last().membership
     }
 
+    /// Calculates the cluster version
+    ///
+    /// The cluster version is a hash of the effective `Membership`
+    pub(crate) fn cluster_version(&self) -> u64 {
+        self.effective().version()
+    }
+
     /// Gets the last entry
     fn last(&self) -> &MembershipEntry {
         self.entries.last().unwrap()
@@ -316,6 +323,14 @@ impl Membership {
     /// Returns `true` if the given node id is present in `members`.
     pub(crate) fn contains_member(&self, node_id: u64) -> bool {
         self.members.iter().any(|s| s.contains(&node_id))
+    }
+
+    /// Calculates the version of this membership
+    pub(crate) fn version(&self) -> u64 {
+        // TODO: handle conflict?
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
     }
 }
 
