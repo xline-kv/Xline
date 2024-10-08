@@ -314,7 +314,7 @@ impl Lease for LeaseServer {
                     return Err(tonic::Status::internal("Leader not exist"));
                 };
                 break self
-                    .follower_keep_alive(request_stream, leader_meta.peer_urls())
+                    .follower_keep_alive(request_stream, leader_meta.client_urls())
                     .await?;
             }
         };
