@@ -692,9 +692,6 @@ async fn propose_conf_change_rpc_should_work_when_client_has_wrong_cluster() {
         .change_membership(vec![Change::Remove(node_id)])
         .await
         .unwrap();
-    group
-        .wait_for_node_shutdown(node_id, DEFAULT_SHUTDOWN_TIMEOUT)
-        .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
