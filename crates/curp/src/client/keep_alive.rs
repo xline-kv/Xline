@@ -157,14 +157,17 @@ mod tests {
         rpc::{
             connect::ConnectApi, ChangeMembershipRequest, ChangeMembershipResponse,
             FetchMembershipRequest, FetchMembershipResponse, FetchReadStateRequest,
-            FetchReadStateResponse, MoveLeaderRequest, MoveLeaderResponse, NodeMetadata,
-            OpResponse, ProposeRequest, ReadIndexResponse, RecordRequest, RecordResponse,
-            ShutdownRequest, ShutdownResponse,
+            FetchReadStateResponse, MoveLeaderRequest, MoveLeaderResponse, Node, NodeMetadata,
+            OpResponse, ProposeRequest, QuorumSet, ReadIndexResponse, RecordRequest,
+            RecordResponse, ShutdownRequest, ShutdownResponse,
         },
     };
 
     struct MockedStreamConnectApi {
         id: u64,
+        leader_id: u64,
+        term: u64,
+        size: usize,
         lease_keep_alive_handle:
             Box<dyn Fn(u64) -> BoxFuture<'static, Result<u64, CurpError>> + Send + Sync + 'static>,
     }
@@ -252,7 +255,21 @@ mod tests {
             _request: FetchMembershipRequest,
             _timeout: Duration,
         ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
-            unreachable!("please use MockedConnectApi")
+            let ids = (0..self.size as u64);
+            let qs = QuorumSet {
+                set: ids.clone().collect(),
+            };
+            let nodes = ids
+                .map(|node_id| Node::new(node_id, NodeMetadata::default()))
+                .collect();
+            let resp = FetchMembershipResponse {
+                term: self.term,
+                leader_id: self.leader_id,
+                members: vec![qs],
+                nodes,
+            };
+
+            Ok(tonic::Response::new(resp))
         }
 
         async fn change_membership(
@@ -285,6 +302,9 @@ mod tests {
         (0..size)
             .map(|id| MockedStreamConnectApi {
                 id: id as u64,
+                leader_id: leader_idx as u64,
+                term: leader_term,
+                size,
                 lease_keep_alive_handle: if id == leader_idx {
                     Box::new(keep_alive_handle.take().unwrap())
                 } else {
