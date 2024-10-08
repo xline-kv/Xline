@@ -708,6 +708,7 @@ fn add_learner_node_and_promote_should_success() {
         .iter()
         .flatten()
         .any(|id| *id == 3));
+    curp.log.write().commit_to(1);
     curp.update_membership_state(None, None, Some(1));
     let membership = curp
         .generate_membership(Some(Change::Promote(3)))
