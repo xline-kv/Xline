@@ -814,9 +814,6 @@ fn leader_handle_move_leader() {
     assert!(res.is_err());
 
     let target_id = curp.get_id_by_name("S1").unwrap();
-    let _ignore = curp
-        .handle_append_entries_resp(target_id, Some(1), 1, true, 1)
-        .unwrap();
     let res = curp.handle_move_leader(target_id);
     // need to send try become leader now after handle_move_leader
     assert!(res.is_ok_and(|b| b));
