@@ -155,11 +155,10 @@ mod tests {
     use crate::{
         member::Membership,
         rpc::{
-            connect::ConnectApi, ChangeMembershipRequest, ChangeMembershipResponse,
-            FetchMembershipRequest, FetchMembershipResponse, FetchReadStateRequest,
-            FetchReadStateResponse, MoveLeaderRequest, MoveLeaderResponse, Node, NodeMetadata,
-            OpResponse, ProposeRequest, QuorumSet, ReadIndexResponse, RecordRequest,
-            RecordResponse, ShutdownRequest, ShutdownResponse,
+            connect::ConnectApi, ChangeMembershipRequest, FetchMembershipRequest,
+            FetchReadStateRequest, FetchReadStateResponse, MembershipResponse, MoveLeaderRequest,
+            MoveLeaderResponse, Node, NodeMetadata, OpResponse, ProposeRequest, QuorumSet,
+            ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
         },
     };
 
@@ -254,7 +253,7 @@ mod tests {
             &self,
             _request: FetchMembershipRequest,
             _timeout: Duration,
-        ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
+        ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
             let ids = (0..self.size as u64);
             let qs = QuorumSet {
                 set: ids.clone().collect(),
@@ -262,7 +261,7 @@ mod tests {
             let nodes = ids
                 .map(|node_id| Node::new(node_id, NodeMetadata::default()))
                 .collect();
-            let resp = FetchMembershipResponse {
+            let resp = MembershipResponse {
                 term: self.term,
                 leader_id: self.leader_id,
                 members: vec![qs],
@@ -276,7 +275,7 @@ mod tests {
             &self,
             _request: ChangeMembershipRequest,
             _timeout: Duration,
-        ) -> Result<tonic::Response<ChangeMembershipResponse>, CurpError> {
+        ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
             unreachable!("please use MockedConnectApi")
         }
     }

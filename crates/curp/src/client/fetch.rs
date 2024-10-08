@@ -9,7 +9,7 @@ use utils::parking_lot_lock::RwLockMap;
 
 use crate::{
     quorum::{self, QuorumSet},
-    rpc::{self, connect::ConnectApi, CurpError, FetchMembershipRequest, FetchMembershipResponse},
+    rpc::{self, connect::ConnectApi, CurpError, FetchMembershipRequest, MembershipResponse},
 };
 
 use super::cluster_state::{ClusterState, ClusterStateInit, ClusterStateReady, ForEachServer};
@@ -20,7 +20,7 @@ use super::config::Config;
 /// This is used to build a boxed closure that handles the `FetchClusterResponse` and returns
 /// new connections.
 pub(super) trait ConnectToCluster:
-    Fn(&FetchMembershipResponse) -> HashMap<u64, Arc<dyn ConnectApi>> + Send + Sync + 'static
+    Fn(&MembershipResponse) -> HashMap<u64, Arc<dyn ConnectApi>> + Send + Sync + 'static
 {
     /// Clone the value
     fn clone_box(&self) -> Box<dyn ConnectToCluster>;
@@ -28,11 +28,7 @@ pub(super) trait ConnectToCluster:
 
 impl<T> ConnectToCluster for T
 where
-    T: Fn(&FetchMembershipResponse) -> HashMap<u64, Arc<dyn ConnectApi>>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
+    T: Fn(&MembershipResponse) -> HashMap<u64, Arc<dyn ConnectApi>> + Clone + Send + Sync + 'static,
 {
     fn clone_box(&self) -> Box<dyn ConnectToCluster> {
         Box::new(self.clone())
@@ -78,7 +74,7 @@ impl Fetch {
     pub(crate) async fn fetch_cluster(
         &self,
         state: impl Into<ClusterState>,
-    ) -> Result<(ClusterStateReady, FetchMembershipResponse), CurpError> {
+    ) -> Result<(ClusterStateReady, MembershipResponse), CurpError> {
         let state = match state.into() {
             ClusterState::Init(state) => {
                 let resp = self
@@ -105,6 +101,21 @@ impl Fetch {
         Err(CurpError::internal("cluster not available"))
     }
 
+    // TODO: Separate the connect object into its own type
+    /// Returns a reference to the `ConnectToCluster` trait object.
+    pub(crate) fn connect_to(&self) -> &dyn ConnectToCluster {
+        self.connect_to.as_ref()
+    }
+
+    /// Build `ClusterStateReady` from `MembershipResponse`
+    pub(crate) fn build_cluster_state_from_response(
+        connect_to: &dyn ConnectToCluster,
+        resp: MembershipResponse,
+    ) -> ClusterStateReady {
+        let connects = (connect_to)(&resp);
+        ClusterStateReady::new(resp.leader_id, resp.term, connects, resp.into_membership())
+    }
+
     /// Fetch the term of the cluster. This ensures that the current leader is the latest.
     fn fetch_term(&self, state: ClusterStateReady) -> impl Future<Output = bool> {
         let timeout = self.timeout;
@@ -124,7 +135,7 @@ impl Fetch {
     fn fetch_from_leader(
         &self,
         state: &ClusterStateReady,
-    ) -> impl Future<Output = Result<(ClusterStateReady, FetchMembershipResponse), CurpError>> {
+    ) -> impl Future<Output = Result<(ClusterStateReady, MembershipResponse), CurpError>> {
         let timeout = self.timeout;
         let connect_to = self.connect_to.clone_box();
         state.map_leader(|c| async move {
@@ -139,7 +150,7 @@ impl Fetch {
     }
 
     /// Sends fetch membership request to the cluster, and returns the first response
-    async fn fetch_one(&self, state: &ClusterStateInit) -> Option<FetchMembershipResponse> {
+    async fn fetch_one(&self, state: &ClusterStateInit) -> Option<MembershipResponse> {
         let timeout = self.timeout;
         let resps: Vec<_> = state
             .for_each_server(|c| async move {
@@ -153,15 +164,6 @@ impl Fetch {
             .filter_map(Result::ok)
             .map(Response::into_inner)
             .max_by(|x, y| x.term.cmp(&y.term))
-    }
-
-    /// Build `ClusterStateReady` from `FetchMembershipResponse`
-    fn build_cluster_state_from_response(
-        connect_to: &dyn ConnectToCluster,
-        resp: FetchMembershipResponse,
-    ) -> ClusterStateReady {
-        let connects = (connect_to)(&resp);
-        ClusterStateReady::new(resp.leader_id, resp.term, connects, resp.into_membership())
     }
 }
 
@@ -187,8 +189,7 @@ mod test {
             tests::init_mocked_connects,
         },
         rpc::{
-            self, connect::ConnectApi, CurpError, FetchMembershipResponse, Member, Node,
-            NodeMetadata,
+            self, connect::ConnectApi, CurpError, Member, MembershipResponse, Node, NodeMetadata,
         },
     };
 
@@ -209,7 +210,7 @@ mod test {
         leader_id: Option<u64>,
         term: u64,
         members: impl IntoIterator<Item = u64>,
-    ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
+    ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
         let leader_id = leader_id.ok_or(CurpError::leader_transfer("no current leader"))?;
 
         let members: Vec<_> = members.into_iter().collect();
@@ -223,7 +224,7 @@ mod test {
             .collect();
         let qs = rpc::QuorumSet { set: members };
 
-        let resp = FetchMembershipResponse {
+        let resp = MembershipResponse {
             members: vec![qs],
             nodes,
             term,

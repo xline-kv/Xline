@@ -26,14 +26,13 @@ use crate::rpc::connect::Bypass;
 use crate::rpc::AppendEntriesRequest;
 use crate::rpc::AppendEntriesResponse;
 use crate::rpc::ChangeMembershipRequest;
-use crate::rpc::ChangeMembershipResponse;
 use crate::rpc::FetchMembershipRequest;
-use crate::rpc::FetchMembershipResponse;
 use crate::rpc::FetchReadStateRequest;
 use crate::rpc::FetchReadStateResponse;
 use crate::rpc::InstallSnapshotRequest;
 use crate::rpc::InstallSnapshotResponse;
 use crate::rpc::LeaseKeepAliveMsg;
+use crate::rpc::MembershipResponse;
 use crate::rpc::MoveLeaderRequest;
 use crate::rpc::MoveLeaderResponse;
 use crate::rpc::OpResponse;
@@ -186,7 +185,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
     async fn fetch_membership(
         &self,
         request: tonic::Request<FetchMembershipRequest>,
-    ) -> Result<tonic::Response<FetchMembershipResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<MembershipResponse>, tonic::Status> {
         Ok(tonic::Response::new(
             self.inner.fetch_membership(request.into_inner())?,
         ))
@@ -196,7 +195,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
     async fn change_membership(
         &self,
         request: tonic::Request<ChangeMembershipRequest>,
-    ) -> Result<tonic::Response<ChangeMembershipResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<MembershipResponse>, tonic::Status> {
         self.inner
             .change_membership(request.into_inner())
             .await

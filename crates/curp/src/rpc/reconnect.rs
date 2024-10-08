@@ -7,10 +7,10 @@ use futures::Stream;
 use crate::{
     members::ServerId,
     rpc::{
-        connect::ConnectApi, ChangeMembershipRequest, ChangeMembershipResponse, CurpError,
-        FetchMembershipRequest, FetchMembershipResponse, FetchReadStateRequest,
-        FetchReadStateResponse, MoveLeaderRequest, MoveLeaderResponse, OpResponse, ProposeRequest,
-        ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
+        connect::ConnectApi, ChangeMembershipRequest, CurpError, FetchMembershipRequest,
+        FetchReadStateRequest, FetchReadStateResponse, MembershipResponse, MoveLeaderRequest,
+        MoveLeaderResponse, OpResponse, ProposeRequest, ReadIndexResponse, RecordRequest,
+        RecordResponse, ShutdownRequest, ShutdownResponse,
     },
 };
 
@@ -159,7 +159,7 @@ impl<C: ConnectApi> ConnectApi for Reconnect<C> {
         &self,
         request: FetchMembershipRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchMembershipResponse>, CurpError> {
+    ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
         execute_with_reconnect!(self, ConnectApi::fetch_membership, request, timeout)
     }
 
@@ -168,7 +168,7 @@ impl<C: ConnectApi> ConnectApi for Reconnect<C> {
         &self,
         request: ChangeMembershipRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ChangeMembershipResponse>, CurpError> {
+    ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
         execute_with_reconnect!(self, ConnectApi::change_membership, request, timeout)
     }
 }

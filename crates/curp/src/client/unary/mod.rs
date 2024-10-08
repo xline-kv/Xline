@@ -14,7 +14,7 @@ use super::{
 };
 use crate::rpc::{
     Change, ChangeMembershipRequest, CurpError, FetchReadStateRequest, MembershipChange,
-    MoveLeaderRequest, ReadState, ShutdownRequest,
+    MembershipResponse, MoveLeaderRequest, ReadState, ShutdownRequest,
 };
 
 /// The unary client
@@ -113,18 +113,19 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         &self,
         changes: Vec<Change>,
         ctx: Context,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<MembershipResponse, Self::Error> {
         let changes = changes
             .into_iter()
             .map(|c| MembershipChange { change: Some(c) })
             .collect();
         let req = ChangeMembershipRequest { changes };
         let timeout = self.config.wait_synced_timeout();
-        let _ignore = ctx
+        let resp = ctx
             .cluster_state()
             .map_leader(|conn| async move { conn.change_membership(req, timeout).await })
-            .await?;
+            .await?
+            .into_inner();
 
-        Ok(())
+        Ok(resp)
     }
 }
