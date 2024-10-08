@@ -814,8 +814,12 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             Self::election_task(Arc::clone(&curp), n)
         });
 
+        let self_id = curp.id();
         curp.with_member_connects(|connects| {
-            for c in connects.values() {
+            for (id, c) in connects {
+                if *id == self_id {
+                    continue;
+                }
                 let (sync_event, remove_event) = curp.events(c.id());
                 task_manager.spawn(TaskName::SyncFollower, |n| {
                     Self::sync_follower_task(
