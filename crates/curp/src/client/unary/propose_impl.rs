@@ -195,7 +195,7 @@ impl<C: Command> Unary<C> {
                 |res| res.is_ok_and(|resp| !resp.get_ref().conflict),
                 |qs, ids| QuorumSet::is_super_quorum(qs, ids),
             )
-            .map(move |conflict| ProposeEvent::Record { conflict })
+            .map(move |ok| ProposeEvent::Record { conflict: !ok })
             .map(Ok)
             .into_stream();
 
