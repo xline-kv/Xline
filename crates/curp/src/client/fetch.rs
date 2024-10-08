@@ -141,15 +141,18 @@ impl Fetch {
     /// Sends fetch membership request to the cluster, and returns the first response
     async fn fetch_one(&self, state: &ClusterStateInit) -> Option<FetchMembershipResponse> {
         let timeout = self.timeout;
-        let request_futs = state.for_each_server(|c| async move {
-            c.fetch_membership(FetchMembershipRequest {}, timeout).await
-        });
+        let resps: Vec<_> = state
+            .for_each_server(|c| async move {
+                c.fetch_membership(FetchMembershipRequest {}, timeout).await
+            })
+            .collect()
+            .await;
 
-        request_futs
-            .filter_map(|req| future::ready(req.ok()))
-            .next()
-            .await
+        resps
+            .into_iter()
+            .filter_map(Result::ok)
             .map(Response::into_inner)
+            .max_by(|x, y| x.term.cmp(&y.term))
     }
 
     /// Build `ClusterStateReady` from `FetchMembershipResponse`
