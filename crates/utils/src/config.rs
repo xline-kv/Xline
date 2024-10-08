@@ -1621,11 +1621,27 @@ mod tests {
                 peer_advertise_urls = ['127.0.0.1:2380']
                 client_listen_urls = ['127.0.0.1:2379']
                 client_advertise_urls = ['127.0.0.1:2379']
+                node_id = 1
 
                 [cluster.peers]
                 node1 = ['127.0.0.1:2379']
                 node2 = ['127.0.0.1:2380']
                 node3 = ['127.0.0.1:2381']
+
+                [cluster.initial_membership_info.node1]
+                id = 1
+                peer_urls = ['127.0.0.1:2380']
+                client_urls = ['127.0.0.1:2379']
+
+                [cluster.initial_membership_info.node2]
+                id = 2
+                peer_urls = ['127.0.0.1:2480']
+                client_urls = ['127.0.0.1:2479']
+
+                [cluster.initial_membership_info.node3]
+                id = 3
+                peer_urls = ['127.0.0.1:2580']
+                client_urls = ['127.0.0.1:2579']
 
                 [cluster.storage]
 
