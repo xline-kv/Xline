@@ -136,10 +136,11 @@ impl<C: Command> Unary<C> {
         ctx: &Context,
     ) -> EventStream<'_, C> {
         let term = ctx.cluster_state().term();
+        let cluster_version = ctx.cluster_state().cluster_version();
         let propose_req = ProposeRequest::new::<C>(
             ctx.propose_id(),
             cmd,
-            0,
+            cluster_version,
             term,
             !use_fast_path,
             ctx.first_incomplete(),

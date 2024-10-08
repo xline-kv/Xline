@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{hash_map::DefaultHasher, HashMap},
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 use futures::{stream::FuturesUnordered, Future, FutureExt, StreamExt};
 
@@ -238,5 +242,12 @@ impl ClusterStateReady {
     /// Returns the leader id
     pub(crate) fn leader_id(&self) -> u64 {
         self.leader
+    }
+
+    /// Calculates the cluster version
+    ///
+    /// The cluster version is a hash of the current `Membership`
+    pub(crate) fn cluster_version(&self) -> u64 {
+        self.membership.version()
     }
 }
