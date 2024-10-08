@@ -104,12 +104,16 @@ async fn test_status() -> Result<(), Box<dyn std::error::Error>> {
     let mut cluster = Cluster::new_rocks(3).await;
     cluster.start().await;
     let client = cluster.client().await;
+    // adds some data to the db
+    let _ignore = client.kv_client().put("foo", "bar", None).await?;
+    // ensure that the key is persistent
+    let _ignore = client.kv_client().put("foo", "bar1", None).await?;
     let mut maintenance_client = client.maintenance_client();
     let res = maintenance_client.status().await?;
     assert_eq!(res.version, env!("CARGO_PKG_VERSION"));
     assert!(res.db_size > 0);
     assert!(res.db_size_in_use > 0);
-    assert_ne!(res.leader, 0);
+    assert_eq!(res.leader, 0);
     assert!(res.raft_index >= res.raft_applied_index);
     assert_eq!(res.raft_term, 1);
     assert!(res.raft_applied_index > 0);
