@@ -1,3 +1,6 @@
+/// Lazy connect implementation
+mod lazy;
+
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Formatter},
@@ -148,9 +151,9 @@ pub(crate) fn inner_connects(
     members.into_iter().map(move |(id, addrs)| {
         (
             id,
-            InnerConnectApiWrapper::new_from_arc(Arc::new(connect_to::<
+            InnerConnectApiWrapper::new_from_arc(Arc::new(lazy::ConnectLazy::<
                 InnerProtocolClient<Channel>,
-            >(
+            >::connect(
                 id, addrs, tls_config.clone()
             ))),
         )
