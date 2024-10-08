@@ -8,7 +8,7 @@ use std::{
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use engine::{SnapshotAllocator, SnapshotApi};
 use event_listener::Event;
-use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{pin_mut, stream::FuturesUnordered, FutureExt, Stream, StreamExt};
 use madsim::rand::{thread_rng, Rng};
 use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock};
@@ -848,27 +848,27 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// - `Some(vote)` if bcast pre vote and success
     /// - `None` if bcast pre vote and fail or bcast vote
     async fn bcast_vote(curp: &RawCurp<C, RC>, vote: Vote) -> Option<Vote> {
+        let self_id = curp.id();
         if vote.is_pre_vote {
-            debug!("{} broadcasts pre votes to all servers", curp.id());
+            debug!("{self_id} broadcasts pre votes to all servers");
         } else {
-            debug!("{} broadcasts votes to all servers", curp.id());
+            debug!("{self_id} broadcasts votes to all servers");
         }
         let rpc_timeout = curp.cfg().rpc_timeout;
         let voters_connects = curp.voters_connects();
+        let req = VoteRequest::new(
+            vote.term,
+            vote.candidate_id,
+            vote.last_log_index,
+            vote.last_log_term,
+            vote.is_pre_vote,
+        );
         let resps = voters_connects
             .into_iter()
-            .map(|(id, connect)| {
-                let req = VoteRequest::new(
-                    vote.term,
-                    vote.candidate_id,
-                    vote.last_log_index,
-                    vote.last_log_term,
-                    vote.is_pre_vote,
-                );
-                async move {
-                    let resp = connect.vote(req, rpc_timeout).await;
-                    (id, resp)
-                }
+            .filter_map(|(id, connect)| {
+                (id != self_id).then_some(async move {
+                    connect.vote(req, rpc_timeout).map(|res| (id, res)).await
+                })
             })
             .collect::<FuturesUnordered<_>>()
             .filter_map(|(id, resp)| async move {
