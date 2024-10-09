@@ -21,8 +21,8 @@ pub(crate) trait ForEachServer {
 pub(crate) enum ClusterState {
     /// Initial cluster state
     Init(ClusterStateInit),
-    /// Ready cluster state
-    Ready(ClusterStateReady),
+    /// Full cluster state
+    Full(ClusterStateFull),
 }
 
 impl ForEachServer for ClusterState {
@@ -32,7 +32,7 @@ impl ForEachServer for ClusterState {
     ) -> FuturesUnordered<F> {
         match *self {
             ClusterState::Init(ref init) => init.for_each_server(f),
-            ClusterState::Ready(ref ready) => ready.for_each_server(f),
+            ClusterState::Full(ref ready) => ready.for_each_server(f),
         }
     }
 }
@@ -70,9 +70,9 @@ impl std::fmt::Debug for ClusterStateInit {
     }
 }
 
-/// The cluster state that is ready for client propose
+/// The full cluster state that is ready for client propose
 #[derive(Clone, Default)]
-pub(crate) struct ClusterStateReady {
+pub(crate) struct ClusterStateFull {
     /// Leader id.
     leader: ServerId,
     /// Term, initialize to 0, calibrated by the server.
@@ -83,7 +83,7 @@ pub(crate) struct ClusterStateReady {
     connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
 }
 
-impl std::fmt::Debug for ClusterStateReady {
+impl std::fmt::Debug for ClusterStateFull {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("State")
             .field("leader", &self.leader)
@@ -94,7 +94,7 @@ impl std::fmt::Debug for ClusterStateReady {
     }
 }
 
-impl ForEachServer for ClusterStateReady {
+impl ForEachServer for ClusterStateFull {
     fn for_each_server<R, F: Future<Output = R>>(
         &self,
         f: impl FnMut(Arc<dyn ConnectApi>) -> F,
@@ -103,7 +103,7 @@ impl ForEachServer for ClusterStateReady {
     }
 }
 
-impl ClusterStateReady {
+impl ClusterStateFull {
     /// Creates a new `ClusterState`
     pub(crate) fn new(
         leader: ServerId,

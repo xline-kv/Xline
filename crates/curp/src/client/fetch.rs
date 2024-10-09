@@ -12,7 +12,7 @@ use crate::{
     rpc::{self, connect::ConnectApi, CurpError, FetchClusterRequest, FetchClusterResponse},
 };
 
-use super::cluster_state::{ClusterState, ClusterStateReady, ForEachServer};
+use super::cluster_state::{ClusterState, ClusterStateFull, ForEachServer};
 use super::config::Config;
 
 /// Connect to cluster
@@ -78,13 +78,13 @@ impl Fetch {
     pub(crate) async fn fetch_cluster(
         &self,
         state: impl ForEachServer,
-    ) -> Result<(ClusterStateReady, FetchClusterResponse), CurpError> {
+    ) -> Result<(ClusterStateFull, FetchClusterResponse), CurpError> {
         let resp = self
             .pre_fetch(&state)
             .await
             .ok_or(CurpError::internal("cluster not available"))?;
         let new_connects = (self.connect_to)(&resp);
-        let new_state = ClusterStateReady::new(
+        let new_state = ClusterStateFull::new(
             resp.leader_id
                 .unwrap_or_else(|| unreachable!("leader id should be Some"))
                 .into(),
@@ -101,7 +101,7 @@ impl Fetch {
     }
 
     /// Fetch the term of the cluster. This ensures that the current leader is the latest.
-    async fn fetch_term(&self, state: &ClusterStateReady) -> bool {
+    async fn fetch_term(&self, state: &ClusterStateFull) -> bool {
         let timeout = self.timeout;
         let term = state.term();
         let quorum = state.get_quorum(quorum);
