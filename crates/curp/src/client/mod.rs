@@ -8,14 +8,33 @@ mod metrics;
 /// Unary rpc client
 mod unary;
 
+#[cfg(ignore)]
 /// Stream rpc client
 mod stream;
 
+#[allow(unused)]
 /// Retry layer
 mod retry;
 
+#[allow(unused)]
 /// State for clients
 mod state;
+
+#[allow(unused)]
+/// State of the cluster
+mod cluster_state;
+
+#[allow(unused)]
+/// Client cluster fetch implementation
+mod fetch;
+
+#[allow(unused)]
+/// Config of the client
+mod config;
+
+#[allow(unused)]
+/// Lease keep alive implementation
+mod keep_alive;
 
 /// Tests for client
 #[cfg(test)]
@@ -29,7 +48,6 @@ use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, StreamExt};
 use parking_lot::RwLock;
-use tokio::task::JoinHandle;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::{debug, warn};
@@ -38,6 +56,8 @@ use utils::ClientTlsConfig;
 use utils::{build_endpoint, config::ClientConfig};
 
 use self::{
+    fetch::Fetch,
+    keep_alive::KeepAlive,
     retry::{Retry, RetryConfig},
     state::StateBuilder,
     unary::{Unary, UnaryConfig},
@@ -163,7 +183,7 @@ impl Drop for ProposeIdGuard<'_> {
 #[async_trait]
 trait RepeatableClientApi: ClientApi {
     /// Generate a unique propose id during the retry process.
-    fn gen_propose_id(&self) -> Result<ProposeIdGuard<'_>, Self::Error>;
+    async fn gen_propose_id(&self) -> Result<ProposeIdGuard<'_>, Self::Error>;
 
     /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
     /// requests (event the requests are commutative).
@@ -412,61 +432,27 @@ impl ClientBuilder {
         )
     }
 
-    /// Spawn background tasks for the client
-    fn spawn_bg_tasks(&self, state: Arc<state::State>) -> JoinHandle<()> {
-        let interval = *self.config.keep_alive_interval();
-        tokio::spawn(async move {
-            let stream = stream::Streaming::new(state, stream::StreamingConfig::new(interval));
-            stream.keep_heartbeat().await;
-            debug!("keep heartbeat task shutdown");
-        })
-    }
-
-    /// Wait for client id
-    async fn wait_for_client_id(&self, state: Arc<state::State>) -> Result<(), tonic::Status> {
-        /// Max retry count for waiting for a client ID
-        ///
-        /// TODO: This retry count is set relatively high to avoid test cluster startup timeouts.
-        /// We should consider setting this to a more reasonable value.
-        const RETRY_COUNT: usize = 30;
-        /// The interval for each retry
-        const RETRY_INTERVAL: Duration = Duration::from_secs(1);
-
-        for _ in 0..RETRY_COUNT {
-            if state.client_id() != 0 {
-                return Ok(());
-            }
-            debug!("waiting for client_id");
-            tokio::time::sleep(RETRY_INTERVAL).await;
-        }
-
-        Err(tonic::Status::deadline_exceeded(
-            "timeout waiting for client id",
-        ))
-    }
-
     /// Build the client
     ///
     /// # Errors
     ///
     /// Return `tonic::transport::Error` for connection failure.
     #[inline]
-    pub async fn build<C: Command>(
+    pub fn build<C: Command>(
         &self,
     ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static, tonic::Status>
     {
-        let state = Arc::new(
-            self.init_state_builder()
-                .build()
-                .await
-                .map_err(|e| tonic::Status::internal(e.to_string()))?,
-        );
+        let state = Arc::new(self.init_state_builder().build());
+        let keep_alive = KeepAlive::new(*self.config.keep_alive_interval());
+        // TODO: build the fetch object
+        let fetch = Fetch::default();
         let client = Retry::new(
             Unary::new(Arc::clone(&state), self.init_unary_config()),
             self.init_retry_config(),
-            Some(self.spawn_bg_tasks(Arc::clone(&state))),
+            keep_alive,
+            fetch,
         );
-        self.wait_for_client_id(state).await?;
+
         Ok(client)
     }
 
@@ -477,21 +463,14 @@ impl ClientBuilder {
     ///
     /// Return `tonic::transport::Error` for connection failure.
     #[inline]
-    pub async fn build_with_client_id<C: Command>(
+    #[must_use]
+    pub fn build_with_client_id<C: Command>(
         &self,
-    ) -> Result<
-        (
-            impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static,
-            Arc<AtomicU64>,
-        ),
-        tonic::Status,
-    > {
-        let state = Arc::new(
-            self.init_state_builder()
-                .build()
-                .await
-                .map_err(|e| tonic::Status::internal(e.to_string()))?,
-        );
+    ) -> (
+        impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static,
+        Arc<AtomicU64>,
+    ) {
+        let state = Arc::new(self.init_state_builder().build());
 
         let client = Retry::new(
             Unary::new(Arc::clone(&state), self.init_unary_config()),
@@ -499,9 +478,8 @@ impl ClientBuilder {
             Some(self.spawn_bg_tasks(Arc::clone(&state))),
         );
         let client_id = state.clone_client_id();
-        self.wait_for_client_id(state).await?;
 
-        Ok((client, client_id))
+        (client, client_id)
     }
 }
 
@@ -512,22 +490,24 @@ impl<P: Protocol> ClientBuilderWithBypass<P> {
     ///
     /// Return `tonic::transport::Error` for connection failure.
     #[inline]
-    pub async fn build<C: Command>(
+    pub fn build<C: Command>(
         self,
     ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C>, tonic::Status> {
         let state = self
             .inner
             .init_state_builder()
-            .build_bypassed::<P>(self.local_server_id, self.local_server)
-            .await
-            .map_err(|e| tonic::Status::internal(e.to_string()))?;
+            .build_bypassed::<P>(self.local_server_id, self.local_server);
         let state = Arc::new(state);
+        let keep_alive = KeepAlive::new(*self.inner.config.keep_alive_interval());
+        // TODO: build the fetch object
+        let fetch = Fetch::default();
         let client = Retry::new(
             Unary::new(Arc::clone(&state), self.inner.init_unary_config()),
             self.inner.init_retry_config(),
-            Some(self.inner.spawn_bg_tasks(Arc::clone(&state))),
+            keep_alive,
+            fetch,
         );
-        self.inner.wait_for_client_id(state).await?;
+
         Ok(client)
     }
 }

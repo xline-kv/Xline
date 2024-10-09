@@ -439,8 +439,6 @@ pub async fn get_cluster_info_from_remote(
     let peers = init_cluster_info.peers_addrs();
     let self_client_urls = init_cluster_info.self_client_urls();
     let connects = rpc::connects(peers, tls_config)
-        .await
-        .ok()?
         .map(|pair| pair.1)
         .collect_vec();
     let mut futs = connects

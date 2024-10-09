@@ -95,7 +95,8 @@ impl State {
                 tls_config,
                 is_raw_curp: true,
             },
-            client_id: Arc::new(AtomicU64::new(0)),
+            // Sets the client id to non-zero to avoid waiting for client id in tests
+            client_id: Arc::new(AtomicU64::new(1)),
         })
     }
 
@@ -146,8 +147,8 @@ impl State {
         };
         let resp = rand_conn
             .fetch_cluster(FetchClusterRequest::default(), REFRESH_TIMEOUT)
-            .await?;
-        self.check_and_update(&resp.into_inner()).await?;
+            .await;
+        self.check_and_update(&resp?.into_inner()).await?;
         Ok(())
     }
 
@@ -327,7 +328,7 @@ impl State {
                     .remove(&diff)
                     .unwrap_or_else(|| unreachable!("{diff} must in new member addrs"));
                 debug!("client connects to a new server({diff}), address({addrs:?})");
-                let new_conn = rpc::connect(diff, addrs, self.immutable.tls_config.clone()).await?;
+                let new_conn = rpc::connect(diff, addrs, self.immutable.tls_config.clone());
                 let _ig = e.insert(new_conn);
             } else {
                 debug!("client removes old server({diff})");
@@ -346,6 +347,30 @@ impl State {
         }
 
         Ok(())
+    }
+
+    /// Wait for client id
+    pub(super) async fn wait_for_client_id(&self) -> Result<u64, tonic::Status> {
+        /// Max retry count for waiting for a client ID
+        ///
+        /// TODO: This retry count is set relatively high to avoid test cluster startup timeouts.
+        /// We should consider setting this to a more reasonable value.
+        const RETRY_COUNT: usize = 30;
+        /// The interval for each retry
+        const RETRY_INTERVAL: Duration = Duration::from_secs(1);
+
+        for _ in 0..RETRY_COUNT {
+            let client_id = self.client_id();
+            if client_id != 0 {
+                return Ok(client_id);
+            }
+            debug!("waiting for client_id");
+            tokio::time::sleep(RETRY_INTERVAL).await;
+        }
+
+        Err(tonic::Status::deadline_exceeded(
+            "timeout waiting for client id",
+        ))
     }
 }
 
@@ -395,24 +420,22 @@ impl StateBuilder {
     }
 
     /// Build the state with local server
-    pub(super) async fn build_bypassed<P: Protocol>(
+    pub(super) fn build_bypassed<P: Protocol>(
         mut self,
         local_server_id: ServerId,
         local_server: P,
-    ) -> Result<State, tonic::transport::Error> {
+    ) -> State {
         debug!("client bypassed server({local_server_id})");
 
         let _ig = self.all_members.remove(&local_server_id);
         let mut connects: HashMap<_, _> =
-            rpc::connects(self.all_members.clone(), self.tls_config.as_ref())
-                .await?
-                .collect();
+            rpc::connects(self.all_members.clone(), self.tls_config.as_ref()).collect();
         let __ig = connects.insert(
             local_server_id,
             Arc::new(BypassedConnect::new(local_server_id, local_server)),
         );
 
-        Ok(State {
+        State {
             mutable: RwLock::new(StateMut {
                 leader: self.leader_state.map(|state| state.0),
                 term: self.leader_state.map_or(0, |state| state.1),
@@ -426,16 +449,14 @@ impl StateBuilder {
                 is_raw_curp: self.is_raw_curp,
             },
             client_id: Arc::new(AtomicU64::new(0)),
-        })
+        }
     }
 
     /// Build the state
-    pub(super) async fn build(self) -> Result<State, tonic::transport::Error> {
+    pub(super) fn build(self) -> State {
         let connects: HashMap<_, _> =
-            rpc::connects(self.all_members.clone(), self.tls_config.as_ref())
-                .await?
-                .collect();
-        Ok(State {
+            rpc::connects(self.all_members.clone(), self.tls_config.as_ref()).collect();
+        State {
             mutable: RwLock::new(StateMut {
                 leader: self.leader_state.map(|state| state.0),
                 term: self.leader_state.map_or(0, |state| state.1),
@@ -449,6 +470,6 @@ impl StateBuilder {
                 is_raw_curp: self.is_raw_curp,
             },
             client_id: Arc::new(AtomicU64::new(0)),
-        })
+        }
     }
 }

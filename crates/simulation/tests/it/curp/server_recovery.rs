@@ -457,6 +457,13 @@ async fn recovery_after_compaction() {
 async fn overwritten_config_should_fallback() {
     init_logger();
     let group = CurpGroup::new(5).await;
+    let client = group.new_client().await;
+    // A workaround for dedup. The client will lazily acquire an id from the leader during a
+    // propose.
+    let _wait_for_client_id = client
+        .propose(TestCommand::new_put(vec![0], 0), false)
+        .await;
+    let client_id = client.client_id();
     let leader1 = group.get_leader().await.0;
     for node in group.nodes.values().filter(|node| node.id != leader1) {
         group.disable_node(node.id);
@@ -468,13 +475,13 @@ async fn overwritten_config_should_fallback() {
     let node_id = 123;
     let address = vec!["127.0.0.1:4567".to_owned()];
     let changes = vec![ConfChange::add(node_id, address)];
-    let client = group.new_client().await;
     let res = leader_conn
         .propose_conf_change(
             ProposeConfChangeRequest {
                 propose_id: Some(PbProposeId {
-                    client_id: client.client_id(),
-                    seq_num: 0,
+                    client_id,
+                    // start from 1 as we already propose an put with seq_num = 0
+                    seq_num: 1,
                 }),
                 changes,
                 cluster_version: cluster.cluster_version,
