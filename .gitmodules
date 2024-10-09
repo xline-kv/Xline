@@ -4,3 +4,7 @@
 [submodule "curp/proto/common"]
 	path = crates/curp/proto/common
 	url = https://github.com/xline-kv/curp-proto.git
+[submodule "crates/jepsen-rs"]
+	path = crates/jepsen-rs
+	url = https://github.com/lxl66566/jepsen-rs.git
+	branch = main

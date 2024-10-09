@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use itertools::Itertools;
+use jepsen_rs::client::ElleRwClusterClient;
 use madsim::runtime::NodeHandle;
 use tonic::transport::Channel;
 use tracing::debug;
@@ -210,6 +211,28 @@ impl SimClient {
             .spawn(async move { client.watch_client().watch(key, options).await })
             .await
             .unwrap()
+    }
+}
+
+#[async_trait::async_trait]
+impl ElleRwClusterClient for SimClient {
+    async fn get(&self, key: u64) -> Result<Option<u64>, String> {
+        Ok(self
+            .range(key.to_be_bytes(), None)
+            .await
+            .map_err(|err| err.to_string())?
+            .kvs
+            .into_iter()
+            .next()
+            .map(|kv: xlineapi::KeyValue| {
+                u64::from_be_bytes(kv.value.try_into().expect("key should be 8 bytes"))
+            }))
+    }
+    async fn put(&self, key: u64, value: u64) -> Result<(), String> {
+        self.put(key.to_be_bytes(), value.to_be_bytes(), None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
     }
 }
 
