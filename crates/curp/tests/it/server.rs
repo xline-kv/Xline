@@ -299,8 +299,23 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
         for i in 0..10 {
             let cmd = TestCommand::new_put(vec![i], i);
             let res = req_client.propose(&cmd, None, true).await;
-            if res.is_ok() && res.unwrap().is_ok() {
-                collection.push(i);
+            match res {
+                Ok(res) => {
+                    if res.is_ok() {
+                        collection.push(i);
+                    }
+                }
+                Err(err) => {
+                    // retry 3 times after 10.5s, the cluster has been shutted down
+                    if err.code() == tonic::Code::DeadlineExceeded
+                        || matches!(
+                            err.into(),
+                            CurpError::ShuttingDown(_) | CurpError::RpcTransport(())
+                        )
+                    {
+                        return collection;
+                    }
+                }
             }
         }
         collection
