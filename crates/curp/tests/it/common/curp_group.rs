@@ -136,22 +136,19 @@ impl CurpGroup {
             let role_change_cb = TestRoleChange::default();
             let role_change_arc = role_change_cb.get_inner_arc();
             let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
-            let server = Arc::new(
-                Rpc::new(
-                    cluster_info,
-                    name == leader_name,
-                    ce,
-                    snapshot_allocator,
-                    role_change_cb,
-                    config,
-                    curp_storage,
-                    Arc::clone(&task_manager),
-                    client_tls_config.clone(),
-                    vec![Box::<TestSpecPool>::default()],
-                    vec![Box::<TestUncomPool>::default()],
-                )
-                .await,
-            );
+            let server = Arc::new(Rpc::new(
+                cluster_info,
+                name == leader_name,
+                ce,
+                snapshot_allocator,
+                role_change_cb,
+                config,
+                curp_storage,
+                Arc::clone(&task_manager),
+                client_tls_config.clone(),
+                vec![Box::<TestSpecPool>::default()],
+                vec![Box::<TestUncomPool>::default()],
+            ));
             task_manager.spawn(TaskName::TonicServer, |n| async move {
                 let ig = Self::run(server, listener, n).await;
             });
@@ -268,22 +265,19 @@ impl CurpGroup {
         let role_change_cb = TestRoleChange::default();
         let role_change_arc = role_change_cb.get_inner_arc();
         let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
-        let server = Arc::new(
-            Rpc::new(
-                cluster_info,
-                false,
-                ce,
-                snapshot_allocator,
-                role_change_cb,
-                config,
-                curp_storage,
-                Arc::clone(&task_manager),
-                self.client_tls_config.clone(),
-                vec![],
-                vec![],
-            )
-            .await,
-        );
+        let server = Arc::new(Rpc::new(
+            cluster_info,
+            false,
+            ce,
+            snapshot_allocator,
+            role_change_cb,
+            config,
+            curp_storage,
+            Arc::clone(&task_manager),
+            self.client_tls_config.clone(),
+            vec![],
+            vec![],
+        ));
         task_manager.spawn(TaskName::TonicServer, |n| async move {
             let _ig = Self::run(server, listener, n).await;
         });
@@ -329,7 +323,6 @@ impl CurpGroup {
             .await
             .unwrap()
             .build()
-            .await
             .unwrap()
     }
 
