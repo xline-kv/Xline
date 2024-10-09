@@ -437,7 +437,6 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_leader()
         .leader_state(follower_id, 0)
         .all_members(group.all_addrs_map())
         .build::<TestCommand>()
-        .await
         .unwrap();
     client.propose_shutdown().await.unwrap();
 
@@ -459,7 +458,6 @@ async fn propose_conf_change_to_follower() {
         .leader_state(follower_id, 0)
         .all_members(group.all_addrs_map())
         .build::<TestCommand>()
-        .await
         .unwrap();
 
     let node_id = group.nodes.keys().next().copied().unwrap();

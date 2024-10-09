@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Formatter},
     ops::Deref,
-    sync::{atomic::AtomicU64, Arc},
+    sync::Arc,
     time::Duration,
 };
 
@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use clippy_utilities::NumericCast;
 use engine::SnapshotApi;
-use futures::{stream::FuturesUnordered, Stream};
+use futures::Stream;
 #[cfg(test)]
 use mockall::automock;
 use tokio::sync::Mutex;
@@ -37,11 +37,13 @@ use crate::{
         Protocol, PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse,
         TriggerShutdownRequest, TryBecomeLeaderNowRequest, VoteRequest, VoteResponse,
     },
+    server::StreamingProtocol,
     snapshot::Snapshot,
 };
 
 use super::{
     proto::commandpb::{ReadIndexRequest, ReadIndexResponse},
+    reconnect::Reconnect,
     OpResponse, RecordRequest, RecordResponse,
 };
 
@@ -69,85 +71,83 @@ impl FromTonicChannel for InnerProtocolClient<Channel> {
     }
 }
 
-/// Connect to a server
-async fn connect_to<Client: FromTonicChannel>(
+/// Creates a new connection
+fn connect_to<Client: FromTonicChannel>(
     id: ServerId,
     addrs: Vec<String>,
     tls_config: Option<ClientTlsConfig>,
-) -> Result<Arc<Connect<Client>>, tonic::transport::Error> {
-    let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE);
+) -> Connect<Client> {
+    let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE.max(addrs.len()));
     for addr in &addrs {
-        let endpoint = build_endpoint(addr, tls_config.as_ref())?;
-        let _ig = change_tx
-            .send(tower::discover::Change::Insert(addr.clone(), endpoint))
-            .await;
+        let endpoint = build_endpoint(addr, tls_config.as_ref())
+            .unwrap_or_else(|_| unreachable!("address is ill-formatted"));
+        if change_tx
+            .try_send(tower::discover::Change::Insert(addr.clone(), endpoint))
+            .is_err()
+        {
+            // It seems that tonic would close the channel asynchronously
+            debug!("failed to update channel due to runtime closed");
+        }
     }
     let client = Client::from_channel(channel);
-    let connect = Arc::new(Connect {
+    Connect {
         id,
         rpc_connect: client,
         change_tx,
         addrs: Mutex::new(addrs),
 
         tls_config,
-    });
-    Ok(connect)
+    }
 }
 
-/// Connect to a map of members
-async fn connect_all<Client: FromTonicChannel>(
-    members: HashMap<ServerId, Vec<String>>,
-    tls_config: Option<&ClientTlsConfig>,
-) -> Result<Vec<(u64, Arc<Connect<Client>>)>, tonic::transport::Error> {
-    let conns_to: FuturesUnordered<_> = members
-        .into_iter()
-        .map(|(id, addrs)| async move {
-            connect_to::<Client>(id, addrs, tls_config.cloned())
-                .await
-                .map(|conn| (id, conn))
-        })
-        .collect();
-    futures::StreamExt::collect::<Vec<_>>(conns_to)
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-}
-
-/// A wrapper of [`connect_to`], hide the detailed [`Connect<ProtocolClient>`]
-pub(crate) async fn connect(
+/// Creates a new connection with auto reconnect
+fn new_reconnect(
     id: ServerId,
     addrs: Vec<String>,
     tls_config: Option<ClientTlsConfig>,
-) -> Result<Arc<dyn ConnectApi>, tonic::transport::Error> {
-    let conn = connect_to::<ProtocolClient<Channel>>(id, addrs, tls_config).await?;
-    Ok(conn)
+) -> Reconnect<Connect<ProtocolClient<Channel>>> {
+    Reconnect::new(Box::new(move || {
+        connect_to(id, addrs.clone(), tls_config.clone())
+    }))
+}
+
+/// A wrapper of [`connect_to`], hide the detailed [`Connect<ProtocolClient>`]
+pub(crate) fn connect(
+    id: ServerId,
+    addrs: Vec<String>,
+    tls_config: Option<ClientTlsConfig>,
+) -> Arc<dyn ConnectApi> {
+    let conn = new_reconnect(id, addrs, tls_config);
+    Arc::new(conn)
 }
 
 /// Wrapper of [`connect_all`], hide the details of [`Connect<ProtocolClient>`]
-pub(crate) async fn connects(
+pub(crate) fn connects(
     members: HashMap<ServerId, Vec<String>>,
     tls_config: Option<&ClientTlsConfig>,
-) -> Result<impl Iterator<Item = (ServerId, Arc<dyn ConnectApi>)>, tonic::transport::Error> {
-    // It seems that casting high-rank types cannot be inferred, so we allow trivial_casts to cast manually
-    #[allow(trivial_casts)]
-    #[allow(clippy::as_conversions)]
-    let conns = connect_all(members, tls_config)
-        .await?
+) -> impl Iterator<Item = (ServerId, Arc<dyn ConnectApi>)> {
+    let tls_config = tls_config.cloned();
+    members
         .into_iter()
-        .map(|(id, conn)| (id, conn as Arc<dyn ConnectApi>));
-    Ok(conns)
+        .map(move |(id, addrs)| (id, connect(id, addrs, tls_config.clone())))
 }
 
 /// Wrapper of [`connect_all`], hide the details of [`Connect<InnerProtocolClient>`]
-pub(crate) async fn inner_connects(
+pub(crate) fn inner_connects(
     members: HashMap<ServerId, Vec<String>>,
     tls_config: Option<&ClientTlsConfig>,
-) -> Result<impl Iterator<Item = (ServerId, InnerConnectApiWrapper)>, tonic::transport::Error> {
-    let conns = connect_all(members, tls_config)
-        .await?
-        .into_iter()
-        .map(|(id, conn)| (id, InnerConnectApiWrapper::new_from_arc(conn)));
-    Ok(conns)
+) -> impl Iterator<Item = (ServerId, InnerConnectApiWrapper)> {
+    let tls_config = tls_config.cloned();
+    members.into_iter().map(move |(id, addrs)| {
+        (
+            id,
+            InnerConnectApiWrapper::new_from_arc(Arc::new(connect_to::<
+                InnerProtocolClient<Channel>,
+            >(
+                id, addrs, tls_config.clone()
+            ))),
+        )
+    })
 }
 
 /// Connect interface between server and clients
@@ -228,7 +228,7 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
     ) -> Result<tonic::Response<MoveLeaderResponse>, CurpError>;
 
     /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>, interval: Duration) -> CurpError;
+    async fn lease_keep_alive(&self, client_id: u64, interval: Duration) -> Result<u64, CurpError>;
 }
 
 /// Inner Connect interface among different servers
@@ -282,13 +282,13 @@ impl InnerConnectApiWrapper {
     }
 
     /// Create a new `InnerConnectApiWrapper` from id and addrs
-    pub(crate) async fn connect(
+    pub(crate) fn connect(
         id: ServerId,
         addrs: Vec<String>,
         tls_config: Option<ClientTlsConfig>,
-    ) -> Result<Self, tonic::transport::Error> {
-        let conn = connect_to::<InnerProtocolClient<Channel>>(id, addrs, tls_config).await?;
-        Ok(InnerConnectApiWrapper::new_from_arc(conn))
+    ) -> Self {
+        let conn = connect_to::<InnerProtocolClient<Channel>>(id, addrs, tls_config);
+        InnerConnectApiWrapper::new_from_arc(Arc::new(conn))
     }
 }
 
@@ -518,22 +518,18 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         with_timeout!(timeout, client.move_leader(req)).map_err(Into::into)
     }
 
-    /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>, interval: Duration) -> CurpError {
+    /// Keep send lease keep alive to server with the current client id
+    async fn lease_keep_alive(&self, client_id: u64, interval: Duration) -> Result<u64, CurpError> {
         let mut client = self.rpc_connect.clone();
-        loop {
-            let stream = heartbeat_stream(
-                client_id.load(std::sync::atomic::Ordering::Relaxed),
-                interval,
-            );
-            let new_id = match client.lease_keep_alive(stream).await {
-                Err(err) => return err.into(),
-                Ok(res) => res.into_inner().client_id,
-            };
-            // The only place to update the client id for follower
-            info!("client_id update to {new_id}");
-            client_id.store(new_id, std::sync::atomic::Ordering::Relaxed);
-        }
+        let stream = heartbeat_stream(client_id, interval);
+        let new_id = client
+            .lease_keep_alive(stream)
+            .await?
+            .into_inner()
+            .client_id;
+        // The only place to update the client id for follower
+        info!("client_id update to {new_id}");
+        Ok(new_id)
     }
 }
 
@@ -685,7 +681,7 @@ impl Bypass for tonic::metadata::MetadataMap {
 #[async_trait]
 impl<T> ConnectApi for BypassedConnect<T>
 where
-    T: Protocol,
+    T: Protocol + StreamingProtocol,
 {
     /// Get server id
     fn id(&self) -> ServerId {
@@ -817,8 +813,16 @@ where
     }
 
     /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(&self, _client_id: Arc<AtomicU64>, _interval: Duration) -> CurpError {
-        unreachable!("cannot invoke lease_keep_alive in bypassed connect")
+    async fn lease_keep_alive(&self, client_id: u64, interval: Duration) -> Result<u64, CurpError> {
+        let stream = heartbeat_stream(client_id, interval);
+        let new_id = StreamingProtocol::lease_keep_alive(&self.server, stream)
+            .await?
+            .into_inner()
+            .client_id;
+        // The only place to update the client id for follower
+        info!("client_id update to {new_id}");
+
+        Ok(new_id)
     }
 }
 

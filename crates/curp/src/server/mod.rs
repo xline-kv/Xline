@@ -2,6 +2,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use engine::SnapshotAllocator;
 use flume::r#async::RecvStream;
+use futures::{Stream, StreamExt};
 use tokio::sync::broadcast;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
@@ -256,6 +257,32 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::InnerProtoc
     }
 }
 
+/// Used for bypassed connect because the `Protocol` trait requires `tonic::Streaming`
+/// as request type and there's no easy way to convert a Stream into that.
+#[async_trait::async_trait]
+pub trait StreamingProtocol {
+    /// Lease keep alive
+    async fn lease_keep_alive(
+        &self,
+        request: impl Stream<Item = LeaseKeepAliveMsg> + Send,
+    ) -> Result<tonic::Response<LeaseKeepAliveMsg>, tonic::Status>;
+}
+
+#[async_trait::async_trait]
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> StreamingProtocol for Rpc<C, CE, RC> {
+    #[instrument(skip_all, name = "lease_keep_alive")]
+    async fn lease_keep_alive(
+        &self,
+        request: impl Stream<Item = LeaseKeepAliveMsg> + Send,
+    ) -> Result<tonic::Response<LeaseKeepAliveMsg>, tonic::Status> {
+        let stream = request.map(Ok::<_, std::io::Error>);
+
+        Ok(tonic::Response::new(
+            self.inner.lease_keep_alive(stream).await?,
+        ))
+    }
+}
+
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     /// New `Rpc`
     ///
@@ -264,7 +291,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     /// Panic if storage creation failed
     #[inline]
     #[allow(clippy::too_many_arguments)] // TODO: refactor this use builder pattern
-    pub async fn new(
+    pub fn new(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         executor: Arc<CE>,
@@ -290,9 +317,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
             client_tls_config,
             sps,
             ucps,
-        )
-        .await
-        {
+        ) {
             Ok(n) => n,
             Err(err) => {
                 panic!("failed to create curp service, {err:?}");
@@ -346,8 +371,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
             client_tls_config,
             sps,
             ucps,
-        )
-        .await;
+        );
 
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server.clone()))
