@@ -726,6 +726,7 @@ impl SnapshotApi for RocksSnapshot {
 #[cfg(test)]
 mod test {
     use std::env::temp_dir;
+    use tempfile::TempDir;
 
     use test_macros::abort_on_panic;
 
@@ -735,9 +736,9 @@ mod test {
     #[tokio::test]
     #[abort_on_panic]
     async fn test_rocks_errors() {
-        let dir = PathBuf::from("/tmp/test_rocks_errors");
-        let engine_path = dir.join("engine");
-        let snapshot_path = dir.join("snapshot");
+        let dir = TempDir::with_prefix("test_rocks_errors-").unwrap();
+        let engine_path = dir.path().join("engine");
+        let snapshot_path = dir.path().join("snapshot");
         let engine = RocksEngine::new(engine_path, &TEST_TABLES).unwrap();
         let res = engine.get("not_exist", "key");
         assert!(res.is_err());
@@ -756,7 +757,7 @@ mod test {
         };
         let res = engine.apply_snapshot(fake_snapshot, &["not_exist"]).await;
         assert!(res.is_err());
-        fs::remove_dir_all(dir).unwrap();
+        dir.close().unwrap();
     }
 
     #[test]

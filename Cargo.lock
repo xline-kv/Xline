@@ -916,6 +916,7 @@ dependencies = [
  "parking_lot",
  "rocksdb",
  "serde",
+ "tempfile",
  "test-macros",
  "thiserror",
  "tokio-util",
