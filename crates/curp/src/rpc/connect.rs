@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use clippy_utilities::NumericCast;
 use engine::SnapshotApi;
-use futures::{stream::FuturesUnordered, Stream};
+use futures::Stream;
 #[cfg(test)]
 use mockall::automock;
 use tokio::sync::Mutex;
@@ -42,6 +42,7 @@ use crate::{
 
 use super::{
     proto::commandpb::{ReadIndexRequest, ReadIndexResponse},
+    reconnect::Reconnect,
     OpResponse, RecordRequest, RecordResponse,
 };
 
@@ -69,85 +70,79 @@ impl FromTonicChannel for InnerProtocolClient<Channel> {
     }
 }
 
-/// Connect to a server
-async fn connect_to<Client: FromTonicChannel>(
+/// Creates a new connection
+fn connect_to<Client: FromTonicChannel>(
     id: ServerId,
     addrs: Vec<String>,
     tls_config: Option<ClientTlsConfig>,
-) -> Result<Arc<Connect<Client>>, tonic::transport::Error> {
-    let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE);
+) -> Connect<Client> {
+    let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE.max(addrs.len()));
     for addr in &addrs {
-        let endpoint = build_endpoint(addr, tls_config.as_ref())?;
-        let _ig = change_tx
-            .send(tower::discover::Change::Insert(addr.clone(), endpoint))
-            .await;
+        let endpoint = build_endpoint(addr, tls_config.as_ref())
+            .unwrap_or_else(|_| unreachable!("address is ill-formatted"));
+        change_tx
+            .try_send(tower::discover::Change::Insert(addr.clone(), endpoint))
+            .unwrap_or_else(|_| unreachable!("unknown channel tx send error"));
     }
     let client = Client::from_channel(channel);
-    let connect = Arc::new(Connect {
+    Connect {
         id,
         rpc_connect: client,
         change_tx,
         addrs: Mutex::new(addrs),
 
         tls_config,
-    });
-    Ok(connect)
+    }
 }
 
-/// Connect to a map of members
-async fn connect_all<Client: FromTonicChannel>(
-    members: HashMap<ServerId, Vec<String>>,
-    tls_config: Option<&ClientTlsConfig>,
-) -> Result<Vec<(u64, Arc<Connect<Client>>)>, tonic::transport::Error> {
-    let conns_to: FuturesUnordered<_> = members
-        .into_iter()
-        .map(|(id, addrs)| async move {
-            connect_to::<Client>(id, addrs, tls_config.cloned())
-                .await
-                .map(|conn| (id, conn))
-        })
-        .collect();
-    futures::StreamExt::collect::<Vec<_>>(conns_to)
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-}
-
-/// A wrapper of [`connect_to`], hide the detailed [`Connect<ProtocolClient>`]
-pub(crate) async fn connect(
+/// Creates a new connection with auto reconnect
+fn new_reconnect(
     id: ServerId,
     addrs: Vec<String>,
     tls_config: Option<ClientTlsConfig>,
-) -> Result<Arc<dyn ConnectApi>, tonic::transport::Error> {
-    let conn = connect_to::<ProtocolClient<Channel>>(id, addrs, tls_config).await?;
-    Ok(conn)
+) -> Reconnect<Connect<ProtocolClient<Channel>>> {
+    Reconnect::new(Box::new(move || {
+        connect_to(id, addrs.clone(), tls_config.clone())
+    }))
+}
+
+/// A wrapper of [`connect_to`], hide the detailed [`Connect<ProtocolClient>`]
+pub(crate) fn connect(
+    id: ServerId,
+    addrs: Vec<String>,
+    tls_config: Option<ClientTlsConfig>,
+) -> Arc<dyn ConnectApi> {
+    let conn = new_reconnect(id, addrs, tls_config);
+    Arc::new(conn)
 }
 
 /// Wrapper of [`connect_all`], hide the details of [`Connect<ProtocolClient>`]
-pub(crate) async fn connects(
+pub(crate) fn connects(
     members: HashMap<ServerId, Vec<String>>,
     tls_config: Option<&ClientTlsConfig>,
-) -> Result<impl Iterator<Item = (ServerId, Arc<dyn ConnectApi>)>, tonic::transport::Error> {
-    // It seems that casting high-rank types cannot be inferred, so we allow trivial_casts to cast manually
-    #[allow(trivial_casts)]
-    #[allow(clippy::as_conversions)]
-    let conns = connect_all(members, tls_config)
-        .await?
+) -> impl Iterator<Item = (ServerId, Arc<dyn ConnectApi>)> {
+    let tls_config = tls_config.cloned();
+    members
         .into_iter()
-        .map(|(id, conn)| (id, conn as Arc<dyn ConnectApi>));
-    Ok(conns)
+        .map(move |(id, addrs)| (id, connect(id, addrs, tls_config.clone())))
 }
 
 /// Wrapper of [`connect_all`], hide the details of [`Connect<InnerProtocolClient>`]
-pub(crate) async fn inner_connects(
+pub(crate) fn inner_connects(
     members: HashMap<ServerId, Vec<String>>,
     tls_config: Option<&ClientTlsConfig>,
-) -> Result<impl Iterator<Item = (ServerId, InnerConnectApiWrapper)>, tonic::transport::Error> {
-    let conns = connect_all(members, tls_config)
-        .await?
-        .into_iter()
-        .map(|(id, conn)| (id, InnerConnectApiWrapper::new_from_arc(conn)));
-    Ok(conns)
+) -> impl Iterator<Item = (ServerId, InnerConnectApiWrapper)> {
+    let tls_config = tls_config.cloned();
+    members.into_iter().map(move |(id, addrs)| {
+        (
+            id,
+            InnerConnectApiWrapper::new_from_arc(Arc::new(connect_to::<
+                InnerProtocolClient<Channel>,
+            >(
+                id, addrs, tls_config.clone()
+            ))),
+        )
+    })
 }
 
 /// Connect interface between server and clients
@@ -282,13 +277,13 @@ impl InnerConnectApiWrapper {
     }
 
     /// Create a new `InnerConnectApiWrapper` from id and addrs
-    pub(crate) async fn connect(
+    pub(crate) fn connect(
         id: ServerId,
         addrs: Vec<String>,
         tls_config: Option<ClientTlsConfig>,
-    ) -> Result<Self, tonic::transport::Error> {
-        let conn = connect_to::<InnerProtocolClient<Channel>>(id, addrs, tls_config).await?;
-        Ok(InnerConnectApiWrapper::new_from_arc(conn))
+    ) -> Self {
+        let conn = connect_to::<InnerProtocolClient<Channel>>(id, addrs, tls_config);
+        InnerConnectApiWrapper::new_from_arc(Arc::new(conn))
     }
 }
 
