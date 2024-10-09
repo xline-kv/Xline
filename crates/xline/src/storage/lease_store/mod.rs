@@ -25,6 +25,7 @@ use utils::table_names::LEASE_TABLE;
 use xlineapi::{
     command::{CommandResponse, SyncResponse},
     execute_error::ExecuteError,
+    keyrange::KeyRange,
 };
 
 pub(crate) use self::{lease::Lease, lease_collection::LeaseCollection};
@@ -363,8 +364,13 @@ impl LeaseStore {
         }
 
         for (key, mut sub_revision) in del_keys.iter().zip(0..) {
-            let deleted =
-                KvStore::delete_keys(txn_db, index, key, &[], revision, &mut sub_revision)?;
+            let deleted = KvStore::delete_keys(
+                txn_db,
+                index,
+                KeyRange::new_one_key(key.clone()),
+                revision,
+                &mut sub_revision,
+            )?;
             KvStore::detach_leases(&deleted, &self.lease_collection);
             let mut del_event = KvStore::new_deletion_events(revision, deleted);
             updates.append(&mut del_event);

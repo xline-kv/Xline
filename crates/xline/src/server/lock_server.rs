@@ -10,8 +10,9 @@ use utils::build_endpoint;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
 use xlineapi::{
-    command::{Command, CommandResponse, CurpClient, KeyRange, SyncResponse},
+    command::{Command, CommandResponse, CurpClient, SyncResponse},
     execute_error::ExecuteError,
+    keyrange::KeyRange,
     AuthInfo, EventType,
 };
 
