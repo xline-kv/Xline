@@ -59,7 +59,7 @@ once_cell = "1.17.0"
 tempfile = "3"
 test-macros = { path = "../test-macros" }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "time"] }
-tracing-test = "0.2.4"
+tracing-test = "0.2.5"
 
 [build-dependencies]
 prost-build = "0.13.0"
