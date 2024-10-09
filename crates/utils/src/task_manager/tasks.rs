@@ -33,6 +33,15 @@ macro_rules! enum_with_iter {
                 VARIANTS.iter().copied()
             }
         }
+
+        impl From<TaskName> for &'static str {
+            #[inline]
+            fn from(task_name: TaskName) -> &'static str {
+                match task_name {
+                    $(TaskName::$variant => stringify!($variant)),*
+                }
+            }
+        }
     }
 }
 enum_with_iter! {

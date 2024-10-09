@@ -483,7 +483,7 @@ mod test {
         let next_id = Arc::new(WatchIdGenerator::new(1));
         let n = task_manager
             .get_shutdown_listener(TaskName::WatchTask)
-            .unwrap();
+            .unwrap_or_else(|| unreachable!("task WatchTask should exist"));
         let handle = tokio::spawn(WatchServer::task(
             next_id,
             Arc::clone(&watcher),
@@ -737,7 +737,7 @@ mod test {
         let next_id = Arc::new(WatchIdGenerator::new(1));
         let n = task_manager
             .get_shutdown_listener(TaskName::WatchTask)
-            .unwrap();
+            .unwrap_or_else(|| unreachable!("task WatchTask should exist"));
         let handle = tokio::spawn(WatchServer::task(
             next_id,
             Arc::clone(&watcher),

@@ -1,8 +1,3 @@
-use std::{
-    collections::HashMap, error::Error, fmt::Display, iter, path::PathBuf, sync::Arc, thread,
-    time::Duration,
-};
-
 use async_trait::async_trait;
 use clippy_utilities::NumericCast;
 use curp::{
@@ -27,6 +22,10 @@ use engine::{
 };
 use futures::{future::join_all, stream::FuturesUnordered, Future};
 use itertools::Itertools;
+use std::{
+    collections::HashMap, error::Error, fmt::Display, iter, path::PathBuf, sync::Arc, thread,
+    time::Duration,
+};
 use tokio::{
     net::TcpListener,
     runtime::{Handle, Runtime},
@@ -36,7 +35,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, ServerTlsConfig};
-use tracing::debug;
+use tracing::{debug, info};
 use utils::{
     build_endpoint,
     config::{
@@ -379,20 +378,25 @@ impl CurpGroup {
     }
 
     async fn wait_for_targets_shutdown(targets: impl Iterator<Item = &CurpNode>) {
+        let targets = targets.collect::<Vec<_>>();
         let listeners = targets
+            .iter()
             .flat_map(|node| {
                 BOTTOM_TASKS
                     .iter()
-                    .map(|task| {
-                        node.task_manager
-                            .get_shutdown_listener(task.to_owned())
-                            .unwrap()
-                    })
+                    .filter_map(|task| node.task_manager.get_shutdown_listener(task.to_owned()))
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
         let waiters: Vec<_> = listeners.iter().map(|l| l.wait()).collect();
         futures::future::join_all(waiters.into_iter()).await;
+        for node in targets {
+            assert!(
+                node.task_manager.is_empty(),
+                "The tm in target node({}) is not empty",
+                node.id
+            );
+        }
     }
 
     async fn stop(&mut self) {
