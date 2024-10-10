@@ -69,12 +69,12 @@ where
 
     fn is_super_quorum(&self, ids: I) -> bool {
         let num = ids.into_iter().filter(|id| self.contains(id)).count();
-        num * 4 > 3 * self.len()
+        num * 4 >= 3 * self.len()
     }
 
     fn is_recover_quorum(&self, ids: I) -> bool {
         let num = ids.into_iter().filter(|id| self.contains(id)).count();
-        num * 4 - 2 > self.len()
+        num * 4 > self.len() + 2
     }
 }
 
@@ -163,5 +163,57 @@ mod tests {
             &[BTreeSet::from([1, 2, 3]), BTreeSet::from([4, 5])],
             &[BTreeSet::from([1, 2, 3]), BTreeSet::from([4, 5])],
         );
+    }
+
+    fn power_set(set: &BTreeSet<u64>) -> Vec<BTreeSet<u64>> {
+        (0..(1 << set.len()))
+            .map(|i| {
+                set.iter()
+                    .enumerate()
+                    .filter_map(|(j, x)| ((i >> j) & 1 == 1).then_some(*x))
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_quorum_should_work() {
+        let nodes = vec![1, 2, 3, 4, 5, 6, 7];
+        // (quorum, recover_quorum, super_quorum)
+        let expected_res = vec![
+            (1, 1, 1),
+            (2, 2, 2),
+            (2, 2, 3),
+            (3, 2, 3),
+            (3, 2, 4),
+            (4, 3, 5),
+            (4, 3, 6),
+        ];
+
+        for (node_cnt, (quorum, recover_quorum, super_quorum)) in
+            nodes.into_iter().zip(expected_res.into_iter())
+        {
+            let set: BTreeSet<u64> = (0..node_cnt).collect();
+            for sub in power_set(&set) {
+                let is_quorum = set.is_quorum(sub.clone());
+                let is_recover_quorum = set.is_recover_quorum(sub.clone());
+                let is_super_quorum = set.is_super_quorum(sub.clone());
+                assert_eq!(sub.len() >= quorum, is_quorum);
+                assert_eq!(
+                    sub.len() >= recover_quorum,
+                    is_recover_quorum,
+                    "size: {}, sub: {}",
+                    set.len(),
+                    sub.len()
+                );
+                assert_eq!(
+                    sub.len() >= super_quorum,
+                    is_super_quorum,
+                    "size: {}, sub: {}",
+                    set.len(),
+                    sub.len()
+                );
+            }
+        }
     }
 }
