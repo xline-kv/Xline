@@ -75,27 +75,25 @@ impl Fetch {
         &self,
         state: impl Into<ClusterState>,
     ) -> Result<(ClusterStateReady, MembershipResponse), CurpError> {
-        let state = match state.into() {
-            ClusterState::Init(state) => {
-                let resp = self
-                    .fetch_one(&state)
-                    .await
-                    .ok_or(CurpError::internal("cluster not available"))?;
-                Self::build_cluster_state_from_response(self.connect_to.as_ref(), resp.clone())
-            }
-            ClusterState::Ready(state) => state,
-        };
+        let resp = self
+            .fetch_one(&state.into())
+            .await
+            .ok_or(CurpError::internal("cluster not available"))?;
+        let new_state =
+            Self::build_cluster_state_from_response(self.connect_to.as_ref(), resp.clone());
 
-        let (fetch_leader, term_ok) =
-            tokio::join!(self.fetch_from_leader(&state), self.fetch_term(state));
+        let (fetch_leader, term_ok) = tokio::join!(
+            self.fetch_from_leader(&new_state),
+            self.fetch_term(new_state)
+        );
 
         if term_ok {
             return fetch_leader;
         }
 
-        let (leader_state, resp) = fetch_leader?;
+        let (leader_state, leader_resp) = fetch_leader?;
         if self.fetch_term(leader_state.clone()).await {
-            return Ok((leader_state, resp));
+            return Ok((leader_state, leader_resp));
         }
 
         Err(CurpError::internal("cluster not available"))
@@ -150,7 +148,7 @@ impl Fetch {
     }
 
     /// Sends fetch membership request to the cluster, and returns the first response
-    async fn fetch_one(&self, state: &ClusterStateInit) -> Option<MembershipResponse> {
+    async fn fetch_one(&self, state: &impl ForEachServer) -> Option<MembershipResponse> {
         let timeout = self.timeout;
         let resps: Vec<_> = state
             .for_each_server(|c| async move {
@@ -177,17 +175,22 @@ impl std::fmt::Debug for Fetch {
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, sync::Arc, time::Duration};
+    use std::{
+        collections::{BTreeSet, HashMap},
+        sync::Arc,
+        time::Duration,
+    };
 
     use futures::stream::FuturesUnordered;
     use tracing_test::traced_test;
 
     use crate::{
         client::{
-            cluster_state::{ClusterState, ClusterStateInit, ForEachServer},
+            cluster_state::{ClusterState, ClusterStateInit, ClusterStateReady, ForEachServer},
             config::Config,
             tests::init_mocked_connects,
         },
+        member::Membership,
         rpc::{
             self, connect::ConnectApi, CurpError, Member, MembershipResponse, Node, NodeMetadata,
         },
@@ -304,5 +307,153 @@ mod test {
         let fetch = init_fetch(connects.clone());
         // only server(0, 1)'s responses are valid, less than majority quorum(3).
         fetch.fetch_cluster(connects).await.unwrap_err();
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_unary_fetch_clusters_during_membership_change() {
+        let connects = init_mocked_connects(5, |id, conn| {
+            match id {
+                0 | 1 => {
+                    conn.expect_fetch_membership().returning(|_req, _timeout| {
+                        build_membership_resp(Some(0), 1, vec![0, 1, 2, 3, 4])
+                    });
+                }
+                2 | 3 | 4 => {
+                    conn.expect_fetch_membership().returning(|_req, _timeout| {
+                        build_membership_resp(Some(0), 1, vec![0, 1, 2, 3])
+                    });
+                }
+                _ => unreachable!("there are only 5 nodes"),
+            };
+        });
+        let fetch = init_fetch(connects.clone());
+        let (_, res) = fetch.fetch_cluster(connects).await.unwrap();
+        assert_eq!(res.members[0].set, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_unary_fetch_clusters_with_full_state_case0() {
+        // No network partition
+        let connects = init_mocked_connects(5, |id, conn| {
+            match id {
+                0 | 1 | 2 | 3 | 4 => {
+                    conn.expect_fetch_membership().returning(|_req, _timeout| {
+                        build_membership_resp(Some(0), 1, vec![0, 1, 2, 3, 4])
+                    });
+                }
+                _ => unreachable!("there are only 5 nodes"),
+            };
+        });
+
+        let fetch = init_fetch(connects.clone());
+        // Client cluster state outdated [0, 1, 2, 3]
+        let membership = Membership::new(
+            vec![(0..4).collect()],
+            (0..4).map(|i| (i, NodeMetadata::default())).collect(),
+        );
+        let cluster_state = ClusterStateReady::new(0, 1, connects, membership);
+        let (_, res) = fetch.fetch_cluster(cluster_state).await.unwrap();
+        assert_eq!(res.members[0].set, vec![0, 1, 2, 3, 4]);
+        assert_eq!(res.leader_id, 0);
+        assert_eq!(res.term, 1);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_unary_fetch_clusters_with_full_state_case1() {
+        /// Partitioned
+        let connects = init_mocked_connects(5, |id, conn| {
+            match id {
+                2 | 3 | 4 => {
+                    conn.expect_fetch_membership().returning(|_req, _timeout| {
+                        build_membership_resp(Some(2), 2, vec![0, 1, 2, 3, 4])
+                    });
+                }
+                0 | 1 => {
+                    conn.expect_fetch_membership().returning(|_req, _timeout| {
+                        build_membership_resp(Some(0), 1, vec![0, 1, 2, 3, 4])
+                    });
+                }
+
+                _ => unreachable!("there are only 5 nodes"),
+            };
+        });
+
+        let fetch = init_fetch(connects.clone());
+        // Client cluster state outdated [0, 1, 2, 3]
+        let membership = Membership::new(
+            vec![(0..4).collect()],
+            (0..4).map(|i| (i, NodeMetadata::default())).collect(),
+        );
+        let cluster_state = ClusterStateReady::new(0, 1, connects, membership);
+        let (_, res) = fetch.fetch_cluster(cluster_state).await.unwrap();
+        assert_eq!(res.members[0].set, vec![0, 1, 2, 3, 4]);
+        assert_eq!(res.leader_id, 2);
+        assert_eq!(res.term, 2);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_unary_fetch_clusters_with_full_state_case2() {
+        /// Partitioned, the partitioned part has outdated membership state
+        let connects = init_mocked_connects(5, |id, conn| {
+            match id {
+                2 | 3 | 4 => {
+                    conn.expect_fetch_membership().returning(|_req, _timeout| {
+                        build_membership_resp(Some(2), 2, vec![0, 1, 2, 3, 4])
+                    });
+                }
+                0 | 1 => {
+                    conn.expect_fetch_membership().returning(|_req, _timeout| {
+                        build_membership_resp(Some(0), 1, vec![0, 1, 2, 3])
+                    });
+                }
+
+                _ => unreachable!("there are only 5 nodes"),
+            };
+        });
+
+        let fetch = init_fetch(connects.clone());
+        let membership = Membership::new(
+            vec![(0..4).collect()],
+            (0..4).map(|i| (i, NodeMetadata::default())).collect(),
+        );
+        let cluster_state = ClusterStateReady::new(0, 1, connects, membership);
+        let (_, res) = fetch.fetch_cluster(cluster_state).await.unwrap();
+        assert_eq!(res.members[0].set, vec![0, 1, 2, 3, 4]);
+        assert_eq!(res.leader_id, 2);
+        assert_eq!(res.term, 2);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_unary_fetch_clusters_with_full_state_case3() {
+        /// Partitioned, no majority
+        let connects = init_mocked_connects(5, |id, conn| {
+            match id {
+                0 | 1 => {
+                    conn.expect_fetch_membership().returning(|_req, _timeout| {
+                        build_membership_resp(Some(0), 1, vec![0, 1, 2, 3, 4])
+                    });
+                }
+                2 | 3 | 4 => {
+                    conn.expect_fetch_membership().returning(|_req, _timeout| {
+                        build_membership_resp(None, 1, vec![0, 1, 2, 3, 4])
+                    });
+                }
+                _ => unreachable!("there are only 5 nodes"),
+            };
+        });
+
+        let fetch = init_fetch(connects.clone());
+        // Client cluster state outdated [0, 1, 2, 3, 4]
+        let membership = Membership::new(
+            vec![(0..5).collect()],
+            (0..5).map(|i| (i, NodeMetadata::default())).collect(),
+        );
+        let cluster_state = ClusterStateReady::new(0, 1, connects, membership);
+        fetch.fetch_cluster(cluster_state).await.unwrap_err();
     }
 }

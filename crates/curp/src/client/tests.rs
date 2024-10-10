@@ -361,12 +361,13 @@ async fn test_retry_propose_return_retry_error() {
                 .returning(move |_req, _timeout| Err(err.clone()));
         });
         let unary = init_unary_client(None, None);
-        let cluster_state = ClusterStateReady::new(0, 1, connects, build_default_membership());
+        let cluster_state =
+            ClusterStateReady::new(0, 1, connects.clone(), build_default_membership());
         let retry = Retry::new(
             unary,
             RetryConfig::new_fixed(Duration::from_millis(10), 5),
             KeepAlive::new(Duration::from_secs(1)),
-            Fetch::new_disable(),
+            Fetch::new(Duration::from_secs(1), move |_| connects.clone()),
             ClusterState::Ready(cluster_state),
         );
         let _err = retry
