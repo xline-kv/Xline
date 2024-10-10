@@ -1213,9 +1213,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Get the committed membership
     #[cfg(test)]
     pub(super) fn committed_membership(&self) -> Membership {
-        let log_r = self.log.read();
         let ms_r = self.ms.read();
-        ms_r.cluster().committed(log_r.commit_index).clone()
+        ms_r.cluster().committed().clone()
     }
 
     /// Get `append_entries` request for `follower_id` that contains the latest

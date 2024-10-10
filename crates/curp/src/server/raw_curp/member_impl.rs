@@ -27,8 +27,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     where
         Changes: IntoIterator<Item = Change>,
     {
-        self.log
-            .map_read(|log| self.ms.read().cluster().changes(changes, log.commit_index))
+        self.ms.read().cluster().changes(changes)
     }
 
     /// Updates the role if the node is leader

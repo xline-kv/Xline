@@ -155,29 +155,19 @@ impl MembershipState {
 
     /// Returns the committed membership
     #[cfg(test)]
-    pub(crate) fn committed(&self, commit_index: LogIndex) -> &Membership {
-        &self
-            .entries
-            .iter()
-            .take_while(|entry| entry.index <= commit_index)
-            .last()
-            .unwrap()
-            .membership
+    pub(crate) fn committed(&self) -> &Membership {
+        &self.entries.first().unwrap().membership
     }
 
     /// Generates a new membership from `Change`
     ///
     /// Returns an empty `Vec` if there's an on-going membership change
-    pub(crate) fn changes<Changes>(
-        &self,
-        changes: Changes,
-        commit_index: LogIndex,
-    ) -> Vec<Membership>
+    pub(crate) fn changes<Changes>(&self, changes: Changes) -> Vec<Membership>
     where
         Changes: IntoIterator<Item = Change>,
     {
         // membership uncommitted, return an empty vec
-        if self.last().index > commit_index {
+        if self.entries.len() != 1 {
             return vec![];
         }
         self.last().membership.changes(changes)
@@ -352,5 +342,180 @@ impl ClusterId for MembershipInfo {
     #[inline]
     fn cluster_id(&self) -> u64 {
         self.clone().into_membership().cluster_id()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rpc::{Node, NodeMetadata};
+
+    #[test]
+    fn test_membership_info_into_membership_ok() {
+        let init_members = BTreeMap::from([(1, NodeMetadata::default())]);
+        let membership_info = MembershipInfo::new(1, init_members.clone());
+        let membership = Membership::new(
+            vec![BTreeSet::from([1])],
+            BTreeMap::from([(1, NodeMetadata::default())]),
+        );
+        assert_eq!(membership_info.into_membership(), membership);
+    }
+
+    fn build_membership(member_sets: impl IntoIterator<Item = Vec<u64>>) -> Membership {
+        let members: Vec<BTreeSet<u64>> = member_sets
+            .into_iter()
+            .map(|s| s.into_iter().collect())
+            .collect();
+        let nodes: BTreeMap<u64, NodeMetadata> = members
+            .iter()
+            .flat_map(|s| s.iter().map(|id| (*id, NodeMetadata::default())))
+            .collect();
+        Membership::new(members, nodes)
+    }
+
+    fn build_membership_with_learners(
+        member_sets: impl IntoIterator<Item = Vec<u64>>,
+        learners: impl IntoIterator<Item = u64>,
+    ) -> Membership {
+        let members: Vec<BTreeSet<u64>> = member_sets
+            .into_iter()
+            .map(|s| s.into_iter().collect())
+            .collect();
+        let nodes: BTreeMap<u64, NodeMetadata> = members
+            .iter()
+            .flat_map(|s| s.iter().copied())
+            .chain(learners.into_iter())
+            .map(|id| (id, NodeMetadata::default()))
+            .collect();
+        Membership::new(members, nodes)
+    }
+
+    #[test]
+    fn test_membership_state_append_will_update_effective() {
+        let m0 = build_membership([vec![1]]);
+        let mut membership_state = MembershipState::new(m0.clone());
+        assert_eq!(*membership_state.effective(), m0);
+
+        let m1 = build_membership([vec![1], vec![1, 2]]);
+        membership_state.append(1, m1.clone());
+        assert_eq!(*membership_state.effective(), m1);
+
+        let m2 = build_membership([vec![1, 2]]);
+        membership_state.append(2, m2.clone());
+        assert_eq!(*membership_state.effective(), m2);
+    }
+
+    #[test]
+    fn test_membership_state_commit_will_update_committed() {
+        let m0 = build_membership([vec![1]]);
+        let mut membership_state = MembershipState::new(m0.clone());
+        assert_eq!(*membership_state.committed(), m0);
+
+        let m1 = build_membership([vec![1], vec![1, 2]]);
+        membership_state.append(1, m1.clone());
+        assert_eq!(*membership_state.effective(), m1);
+        assert_eq!(*membership_state.committed(), m0);
+
+        membership_state.commit(1);
+        assert_eq!(*membership_state.effective(), m1);
+        assert_eq!(*membership_state.committed(), m1);
+
+        let m2 = build_membership([vec![1, 2]]);
+        membership_state.append(2, m2.clone());
+        let m3 = build_membership([vec![1, 2], vec![1, 2, 3]]);
+        membership_state.append(3, m3.clone());
+        let m4 = build_membership([vec![1, 2, 3]]);
+        membership_state.append(4, m4.clone());
+
+        assert_eq!(*membership_state.effective(), m4);
+
+        membership_state.commit(2);
+        assert_eq!(*membership_state.committed(), m2);
+        membership_state.commit(4);
+        assert_eq!(*membership_state.committed(), m4);
+    }
+
+    #[test]
+    fn test_membership_state_truncate_ok() {
+        let m0 = build_membership([vec![1]]);
+        let mut membership_state = MembershipState::new(m0.clone());
+        assert_eq!(*membership_state.committed(), m0);
+
+        let m1 = build_membership([vec![1], vec![1, 2]]);
+        membership_state.append(1, m1.clone());
+        let m2 = build_membership([vec![1, 2]]);
+        membership_state.append(2, m2.clone());
+        let m3 = build_membership([vec![1, 2], vec![1, 2, 3]]);
+        membership_state.append(3, m3.clone());
+        let m4 = build_membership([vec![1, 2, 3]]);
+        membership_state.append(4, m4.clone());
+
+        assert_eq!(*membership_state.effective(), m4);
+
+        membership_state.commit(2);
+        membership_state.truncate(3);
+
+        assert_eq!(*membership_state.committed(), m2);
+        assert_eq!(*membership_state.effective(), m3);
+    }
+
+    #[test]
+    fn test_membership_changes_ok() {
+        let mut index = 1;
+        let mut membership_state = MembershipState::new(build_membership([vec![1]]));
+        let mut apply_changes = |state: &mut MembershipState, changes: Vec<Membership>| {
+            for change in changes {
+                state.append(index, change);
+                state.commit(index);
+                index += 1;
+            }
+        };
+
+        let changes =
+            membership_state.changes([Change::Add(Node::new(2, NodeMetadata::default()))]);
+        assert_eq!(
+            changes,
+            vec![build_membership_with_learners([vec![1]], [2])]
+        );
+        apply_changes(&mut membership_state, changes.clone());
+
+        let changes = membership_state.changes([Change::Promote(2)]);
+        assert_eq!(
+            changes,
+            vec![
+                build_membership([vec![1], vec![1, 2]]),
+                build_membership([vec![1, 2]])
+            ]
+        );
+        apply_changes(&mut membership_state, changes.clone());
+
+        let changes = membership_state.changes([Change::Demote(2)]);
+        assert_eq!(
+            changes,
+            vec![
+                build_membership([vec![1, 2], vec![1]]),
+                build_membership_with_learners([vec![1]], [2])
+            ]
+        );
+        apply_changes(&mut membership_state, changes.clone());
+
+        let changes = membership_state.changes([Change::Remove(2)]);
+        assert_eq!(changes, vec![build_membership([vec![1]])]);
+        apply_changes(&mut membership_state, changes.clone());
+    }
+
+    #[test]
+    fn test_membership_changes_reject_uncommitted() {
+        let mut index = 1;
+        let mut membership_state = MembershipState::new(build_membership([vec![1]]));
+        let changes =
+            membership_state.changes([Change::Add(Node::new(2, NodeMetadata::default()))]);
+        for change in changes {
+            // append but not committed
+            membership_state.append(index, change);
+            index += 1;
+        }
+
+        assert!(membership_state.changes([Change::Promote(2)]).is_empty());
     }
 }
