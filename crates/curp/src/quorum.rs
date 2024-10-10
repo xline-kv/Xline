@@ -30,18 +30,12 @@ where
 {
     /// Generates a new coherent joint quorum set
     pub(crate) fn coherent(&self, other: Self) -> Self {
-        if self.is_superset(&other) {
+        if other.sets.iter().any(|set| self.sets.contains(set)) {
             return other;
         }
-
         // TODO: select the config where the leader is in
         let last = self.sets.last().cloned();
         Self::new(last.into_iter().chain(other.sets).collect())
-    }
-
-    /// Checks if `self` is a superset of `other`
-    fn is_superset(&self, other: &Self) -> bool {
-        other.sets.iter().all(|s| self.sets.contains(s))
     }
 }
 
@@ -117,5 +111,57 @@ where
 
     fn is_recover_quorum(&self, ids: I) -> bool {
         self.sets.iter().all(|s| s.is_recover_quorum(ids.clone()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, PartialEq, Clone)]
+    struct MockQuorumSet;
+
+    fn assert_coherent(from: &[BTreeSet<u64>], to: &[BTreeSet<u64>], expect: &[BTreeSet<u64>]) {
+        let joint_from = Joint::new(from.to_vec());
+        let joint_to = Joint::new(to.to_vec());
+        let joint_coherent = joint_from.coherent(joint_to);
+        assert_eq!(
+            joint_coherent.sets, expect,
+            "from: {from:?}, to: {to:?}, expect: {expect:?}"
+        );
+    }
+
+    #[test]
+    fn test_joint_coherent() {
+        assert_coherent(
+            &[BTreeSet::from([1, 2, 3])],
+            &[BTreeSet::from([1, 2, 3])],
+            &[BTreeSet::from([1, 2, 3])],
+        );
+        assert_coherent(
+            &[BTreeSet::from([1, 2, 3])],
+            &[BTreeSet::from([1, 2, 3, 4])],
+            &[BTreeSet::from([1, 2, 3]), BTreeSet::from([1, 2, 3, 4])],
+        );
+        assert_coherent(
+            &[BTreeSet::from([1, 2, 3])],
+            &[BTreeSet::from([4, 5])],
+            &[BTreeSet::from([1, 2, 3]), BTreeSet::from([4, 5])],
+        );
+        assert_coherent(
+            &[BTreeSet::from([1, 2, 3]), BTreeSet::from([1, 2, 3, 4])],
+            &[BTreeSet::from([1, 2, 3, 4])],
+            &[BTreeSet::from([1, 2, 3, 4])],
+        );
+        assert_coherent(
+            &[BTreeSet::from([1, 2, 3]), BTreeSet::from([4, 5])],
+            &[BTreeSet::from([4, 5])],
+            &[BTreeSet::from([4, 5])],
+        );
+        assert_coherent(
+            &[BTreeSet::from([4, 5])],
+            &[BTreeSet::from([1, 2, 3]), BTreeSet::from([4, 5])],
+            &[BTreeSet::from([1, 2, 3]), BTreeSet::from([4, 5])],
+        );
     }
 }
