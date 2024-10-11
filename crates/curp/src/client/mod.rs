@@ -292,9 +292,9 @@ impl ClientBuilder {
                     .collect();
                 let membership = Membership::new(vec![member_ids], metas);
                 let cluster_state =
-                    cluster_state::ClusterStateReady::new(leader_id, term, connects, membership);
+                    cluster_state::ClusterStateFull::new(leader_id, term, connects, membership);
 
-                ClusterState::Ready(cluster_state)
+                ClusterState::Full(cluster_state)
             }
         }
     }

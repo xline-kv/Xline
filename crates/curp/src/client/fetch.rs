@@ -12,7 +12,7 @@ use crate::{
     rpc::{self, connect::ConnectApi, CurpError, FetchMembershipRequest, MembershipResponse},
 };
 
-use super::cluster_state::{ClusterState, ClusterStateInit, ClusterStateReady, ForEachServer};
+use super::cluster_state::{ClusterState, ClusterStateFull, ClusterStateInit, ForEachServer};
 use super::config::Config;
 
 /// Connect to cluster
@@ -74,7 +74,7 @@ impl Fetch {
     pub(crate) async fn fetch_cluster(
         &self,
         state: impl Into<ClusterState>,
-    ) -> Result<(ClusterStateReady, MembershipResponse), CurpError> {
+    ) -> Result<(ClusterStateFull, MembershipResponse), CurpError> {
         let resp = self
             .fetch_one(&state.into())
             .await
@@ -109,13 +109,13 @@ impl Fetch {
     pub(crate) fn build_cluster_state_from_response(
         connect_to: &dyn ConnectToCluster,
         resp: MembershipResponse,
-    ) -> ClusterStateReady {
+    ) -> ClusterStateFull {
         let connects = (connect_to)(&resp);
-        ClusterStateReady::new(resp.leader_id, resp.term, connects, resp.into_membership())
+        ClusterStateFull::new(resp.leader_id, resp.term, connects, resp.into_membership())
     }
 
     /// Fetch the term of the cluster. This ensures that the current leader is the latest.
-    fn fetch_term(&self, state: ClusterStateReady) -> impl Future<Output = bool> {
+    fn fetch_term(&self, state: ClusterStateFull) -> impl Future<Output = bool> {
         let timeout = self.timeout;
         let term = state.term();
         let fetch_membership = move |c: Arc<dyn ConnectApi>| async move {
@@ -132,8 +132,8 @@ impl Fetch {
     /// Fetch cluster state from leader
     fn fetch_from_leader(
         &self,
-        state: &ClusterStateReady,
-    ) -> impl Future<Output = Result<(ClusterStateReady, MembershipResponse), CurpError>> {
+        state: &ClusterStateFull,
+    ) -> impl Future<Output = Result<(ClusterStateFull, MembershipResponse), CurpError>> {
         let timeout = self.timeout;
         let connect_to = self.connect_to.clone_box();
         state.map_leader(|c| async move {
@@ -186,7 +186,7 @@ mod test {
 
     use crate::{
         client::{
-            cluster_state::{ClusterState, ClusterStateInit, ClusterStateReady, ForEachServer},
+            cluster_state::{ClusterState, ClusterStateFull, ClusterStateInit, ForEachServer},
             config::Config,
             tests::init_mocked_connects,
         },
@@ -353,7 +353,7 @@ mod test {
             vec![(0..4).collect()],
             (0..4).map(|i| (i, NodeMetadata::default())).collect(),
         );
-        let cluster_state = ClusterStateReady::new(0, 1, connects, membership);
+        let cluster_state = ClusterStateFull::new(0, 1, connects, membership);
         let (_, res) = fetch.fetch_cluster(cluster_state).await.unwrap();
         assert_eq!(res.members[0].set, vec![0, 1, 2, 3, 4]);
         assert_eq!(res.leader_id, 0);
@@ -387,7 +387,7 @@ mod test {
             vec![(0..4).collect()],
             (0..4).map(|i| (i, NodeMetadata::default())).collect(),
         );
-        let cluster_state = ClusterStateReady::new(0, 1, connects, membership);
+        let cluster_state = ClusterStateFull::new(0, 1, connects, membership);
         let (_, res) = fetch.fetch_cluster(cluster_state).await.unwrap();
         assert_eq!(res.members[0].set, vec![0, 1, 2, 3, 4]);
         assert_eq!(res.leader_id, 2);
@@ -420,7 +420,7 @@ mod test {
             vec![(0..4).collect()],
             (0..4).map(|i| (i, NodeMetadata::default())).collect(),
         );
-        let cluster_state = ClusterStateReady::new(0, 1, connects, membership);
+        let cluster_state = ClusterStateFull::new(0, 1, connects, membership);
         let (_, res) = fetch.fetch_cluster(cluster_state).await.unwrap();
         assert_eq!(res.members[0].set, vec![0, 1, 2, 3, 4]);
         assert_eq!(res.leader_id, 2);
@@ -453,7 +453,7 @@ mod test {
             vec![(0..5).collect()],
             (0..5).map(|i| (i, NodeMetadata::default())).collect(),
         );
-        let cluster_state = ClusterStateReady::new(0, 1, connects, membership);
+        let cluster_state = ClusterStateFull::new(0, 1, connects, membership);
         fetch.fetch_cluster(cluster_state).await.unwrap_err();
     }
 }
