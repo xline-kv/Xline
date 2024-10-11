@@ -367,4 +367,17 @@ mod tests {
             .unwrap_err();
         assert_eq!(keep_alive.wait_id_update(0).await, 10);
     }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_stream_client_keep_alive_on_cluster_shutdown() {
+        let connects = init_mocked_stream_connects(5, 0, 2, move |client_id| {
+            Box::pin(async move { Err(CurpError::ShuttingDown(())) })
+        });
+        let mut keep_alive = init_stream_client(connects, 1, 1);
+        /// handle should exit on shutdown
+        tokio::time::timeout(Duration::from_millis(10), &mut keep_alive.handle)
+            .await
+            .unwrap();
+    }
 }
