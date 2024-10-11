@@ -230,3 +230,90 @@ impl NodeState {
         (connect, sync_event, remove_event)
     }
 }
+#[cfg(test)]
+mod tests {
+    use utils::parking_lot_lock::RwLockMap;
+
+    use super::*;
+    use crate::rpc::connect::{InnerConnectApiWrapper, MockInnerConnectApi};
+    use std::sync::Arc;
+
+    fn build_new_connect(id: u64) -> InnerConnectApiWrapper {
+        let mut connect = MockInnerConnectApi::new();
+        connect.expect_id().returning(move || id);
+        InnerConnectApiWrapper::new_from_arc(Arc::new(connect))
+    }
+
+    fn build_initial_node_states() -> NodeStates {
+        let init = (0..3).map(|id| (id, build_new_connect(id)));
+        let node_states = NodeStates::new_from_connects(init);
+        let ids: Vec<_> = node_states.states.map_read(|s| s.keys().copied().collect());
+        assert_eq!(ids, [0, 1, 2]);
+        node_states
+    }
+
+    #[test]
+    fn test_node_state_update_case0() {
+        let node_states = build_initial_node_states();
+        node_states.update_match_index(2, 1);
+        node_states.update_next_index(2, 2);
+
+        // adds some nodes
+        let new_connects = (0..5).map(|id| (id, build_new_connect(id))).collect();
+        let new_states = node_states.update_with(new_connects);
+        assert_eq!(new_states.keys().copied().collect::<Vec<_>>(), [3, 4]);
+
+        let ids: Vec<_> = node_states.states.map_read(|s| s.keys().copied().collect());
+        assert_eq!(ids, [0, 1, 2, 3, 4]);
+        // makes sure that index won't be override
+        assert_eq!(node_states.get_match_index(2), Some(1));
+        assert_eq!(node_states.get_next_index(2), Some(2));
+    }
+
+    #[test]
+    fn test_node_state_update_case1() {
+        let node_states = build_initial_node_states();
+
+        // remove some nodes
+        let new_connects = (0..2).map(|id| (id, build_new_connect(id))).collect();
+        let new_states = node_states.update_with(new_connects);
+        assert_eq!(new_states.keys().count(), 0);
+
+        let ids: Vec<_> = node_states.states.map_read(|s| s.keys().copied().collect());
+        assert_eq!(ids, [0, 1]);
+    }
+
+    #[test]
+    fn test_update_and_get_indices() {
+        let node_states = build_initial_node_states();
+        node_states.update_match_index(0, 1);
+        node_states.update_match_index(1, 2);
+        node_states.update_match_index(2, 3);
+
+        node_states.update_next_index(0, 1);
+        node_states.update_next_index(1, 2);
+        node_states.update_next_index(2, 3);
+
+        assert_eq!(node_states.get_match_index(0), Some(1));
+        assert_eq!(node_states.get_match_index(1), Some(2));
+        assert_eq!(node_states.get_match_index(2), Some(3));
+
+        assert_eq!(node_states.get_next_index(0), Some(1));
+        assert_eq!(node_states.get_next_index(1), Some(2));
+        assert_eq!(node_states.get_next_index(2), Some(3));
+    }
+
+    #[test]
+    fn test_map_status() {
+        let node_states = build_initial_node_states();
+        let ids: Vec<_> = node_states.map_status(|(id, _status)| *id).collect();
+        assert_eq!(ids, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_get_connects() {
+        let node_states = build_initial_node_states();
+        let ids: Vec<_> = node_states.connects(&[1, 2]).map(|c| c.id()).collect();
+        assert_eq!(ids, vec![1, 2]);
+    }
+}
