@@ -227,6 +227,17 @@ impl ClusterStateShared {
     pub(crate) fn update_with(&self, cluster_state: ClusterStateFull) {
         *self.inner.write() = ClusterState::Full(cluster_state);
     }
+
+    /// Retrieves the cluster state
+    #[cfg(test)]
+    pub(crate) fn unwrap_full_state(&self) -> ClusterStateFull {
+        let current = self.inner.read().clone();
+        match current {
+            ClusterState::Init(_) => unreachable!("initial state"),
+            ClusterState::Full(ready) => ready,
+        }
+    }
+
 }
 
 /// The retry client automatically retry the requests of the inner client api
@@ -375,6 +386,12 @@ where
         }
 
         Ok(())
+    }
+
+    /// Returns the shared cluster state
+    #[cfg(test)]
+    pub(crate) fn cluster_state(&self) -> &ClusterStateShared {
+        &self.cluster_state
     }
 }
 

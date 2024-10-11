@@ -26,8 +26,8 @@ use crate::{
     rpc::{
         self,
         connect::{ConnectApi, MockConnectApi},
-        CurpError, MembershipResponse, Node, NodeMetadata, OpResponse, ProposeId, ProposeResponse,
-        ReadIndexResponse, RecordResponse, ResponseOp, SyncedResponse,
+        Change, CurpError, MembershipResponse, Node, NodeMetadata, OpResponse, ProposeId,
+        ProposeResponse, ReadIndexResponse, RecordResponse, ResponseOp, SyncedResponse,
     },
 };
 
@@ -89,12 +89,7 @@ pub(super) fn build_default_membership() -> Membership {
     let members = (0..5).collect::<BTreeSet<_>>();
     let nodes = members
         .iter()
-        .map(|id| {
-            (
-                *id,
-                NodeMetadata::new(format!("{id}"), vec!["addr"], vec!["addr"]),
-            )
-        })
+        .map(|id| (*id, NodeMetadata::default()))
         .collect();
     Membership::new(vec![members], nodes)
 }
@@ -103,6 +98,7 @@ fn build_membership_resp(
     leader_id: Option<u64>,
     term: u64,
     members: impl IntoIterator<Item = u64>,
+    learners: impl IntoIterator<Item = u64>,
 ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
     let leader_id = leader_id.ok_or(CurpError::leader_transfer("no current leader"))?;
 
@@ -110,6 +106,7 @@ fn build_membership_resp(
     let nodes: Vec<Node> = members
         .clone()
         .into_iter()
+        .chain(learners)
         .map(|node_id| Node {
             node_id,
             meta: Some(NodeMetadata::default()),
@@ -347,7 +344,7 @@ async fn test_retry_propose_return_retry_error() {
         let connects = init_mocked_connects(5, |id, conn| {
             conn.expect_fetch_membership()
                 .returning(move |_req, _timeout| {
-                    build_membership_resp(Some(0), 2, vec![0, 1, 2, 3, 4])
+                    build_membership_resp(Some(0), 2, vec![0, 1, 2, 3, 4], [])
                 });
             if id == 0 {
                 let err = early_err.clone();
@@ -375,6 +372,75 @@ async fn test_retry_propose_return_retry_error() {
             .await
             .unwrap_err();
     }
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_retry_will_update_state_on_error() {
+    let connects = init_mocked_connects(5, |_id, conn| {
+        conn.expect_propose_stream()
+            .returning(move |_req, _token, _timeout| Err(CurpError::wrong_cluster_version()));
+
+        conn.expect_fetch_membership()
+            .returning(move |_req, _timeout| {
+                build_membership_resp(Some(0), 1, vec![0, 1, 2, 3], [4])
+            });
+    });
+    let unary = init_unary_client(None, None);
+    let cluster_state = ClusterStateFull::new(0, 1, connects.clone(), build_default_membership());
+    let retry = Retry::new(
+        unary,
+        RetryConfig::new_fixed(Duration::from_millis(10), 5),
+        KeepAlive::new(Duration::from_secs(1)),
+        Fetch::new(Duration::from_secs(1), move |_| connects.clone()),
+        ClusterState::Full(cluster_state),
+    );
+    let _err = retry
+        .propose(&TestCommand::new_put(vec![1], 1), None, false)
+        .await
+        .unwrap_err();
+
+    // The state should update to the new membership
+    let state = retry.cluster_state().unwrap_full_state();
+    let members = (0..4).collect::<BTreeSet<_>>();
+    let nodes = (0..5).map(|id| (id, NodeMetadata::default())).collect();
+    let expect_membership = Membership::new(vec![members], nodes);
+    assert_eq!(*state.membership(), expect_membership);
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_retry_will_update_state_on_change_membership() {
+    let connects = init_mocked_connects(5, |_id, conn| {
+        conn.expect_fetch_membership()
+            .returning(move |_req, _timeout| {
+                build_membership_resp(Some(0), 2, vec![0, 1, 2, 3, 4], [])
+            });
+        conn.expect_change_membership()
+            .returning(move |_req, _timeout| {
+                build_membership_resp(Some(0), 2, vec![0, 1, 2, 3], [4])
+            });
+    });
+    let unary = init_unary_client(None, None);
+    let cluster_state = ClusterStateFull::new(0, 1, connects, build_default_membership());
+    let retry = Retry::new(
+        unary,
+        RetryConfig::new_fixed(Duration::from_millis(10), 5),
+        KeepAlive::new(Duration::from_secs(1)),
+        Fetch::new_disable(),
+        ClusterState::Full(cluster_state),
+    );
+
+    retry
+        .change_membership(vec![Change::Demote(4)])
+        .await
+        .unwrap();
+    // The state should update to the changed membership
+    let state = retry.cluster_state().unwrap_full_state();
+    let members = (0..4).collect::<BTreeSet<_>>();
+    let nodes = (0..5).map(|id| (id, NodeMetadata::default())).collect();
+    let expect_membership = Membership::new(vec![members], nodes);
+    assert_eq!(*state.membership(), expect_membership);
 }
 
 #[traced_test]

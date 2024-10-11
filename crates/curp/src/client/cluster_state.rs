@@ -250,6 +250,12 @@ impl ClusterStateFull {
     pub(crate) fn cluster_version(&self) -> u64 {
         self.membership.version()
     }
+
+    /// Returns the membership of the state
+    #[cfg(test)]
+    pub(crate) fn membership(&self) -> &Membership {
+        &self.membership
+    }
 }
 
 #[cfg(test)]
