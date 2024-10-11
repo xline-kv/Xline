@@ -251,3 +251,208 @@ impl ClusterStateFull {
         self.membership.version()
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::time::Duration;
+
+    use curp_test_utils::test_cmd::TestCommand;
+    use tonic::Response;
+    use tracing_test::traced_test;
+
+    use crate::{
+        client::tests::{build_default_membership, init_mocked_connects},
+        rpc::{NodeMetadata, ProposeId, RecordRequest, RecordResponse},
+    };
+
+    use super::*;
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_cluster_state_full_map_leader_ok() {
+        let connects = init_mocked_connects(5, |id, conn| {
+            match id {
+                0 => {
+                    conn.expect_record().returning(|_req, _timeout| {
+                        Ok(Response::new(RecordResponse { conflict: true }))
+                    });
+                }
+                1 | 2 | 3 | 4 => {
+                    conn.expect_record().returning(|_req, _timeout| {
+                        Ok(Response::new(RecordResponse { conflict: false }))
+                    });
+                }
+                _ => unreachable!("there are only 5 nodes"),
+            };
+        });
+        let req = RecordRequest::new(ProposeId::default(), &TestCommand::default());
+        let membership = build_default_membership();
+        let state = ClusterStateFull::new(0, 1, connects, membership);
+        let conflict = state
+            .map_leader(move |conn| async move { conn.record(req, Duration::from_secs(1)).await })
+            .await
+            .unwrap()
+            .into_inner()
+            .conflict;
+
+        assert!(conflict);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_cluster_state_full_map_server_ok() {
+        let connects = init_mocked_connects(5, |id, conn| {
+            match id {
+                2 => {
+                    conn.expect_record().returning(|_req, _timeout| {
+                        Ok(Response::new(RecordResponse { conflict: true }))
+                    });
+                }
+                0 | 1 | 3 | 4 => {
+                    conn.expect_record().returning(|_req, _timeout| {
+                        Ok(Response::new(RecordResponse { conflict: false }))
+                    });
+                }
+                _ => unreachable!("there are only 5 nodes"),
+            };
+        });
+        let req = RecordRequest::new(ProposeId::default(), &TestCommand::default());
+        let membership = build_default_membership();
+        let state = ClusterStateFull::new(0, 1, connects, membership);
+        let conflict = state
+            .map_server(2, move |conn| async move {
+                conn.record(req, Duration::from_secs(1)).await
+            })
+            .unwrap()
+            .await
+            .unwrap()
+            .into_inner()
+            .conflict;
+
+        assert!(conflict);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_cluster_state_full_for_each_follower_ok() {
+        let connects = init_mocked_connects(5, |id, conn| {
+            match id {
+                0 => {
+                    conn.expect_record().returning(|_req, _timeout| {
+                        Ok(Response::new(RecordResponse { conflict: true }))
+                    });
+                }
+                1 | 2 | 3 | 4 => {
+                    conn.expect_record().returning(|_req, _timeout| {
+                        Ok(Response::new(RecordResponse { conflict: false }))
+                    });
+                }
+                _ => unreachable!("there are only 5 nodes"),
+            };
+        });
+        let req = RecordRequest::new(ProposeId::default(), &TestCommand::default());
+        let membership = build_default_membership();
+        let state = ClusterStateFull::new(0, 1, connects, membership);
+        let conflicts: Vec<_> = state
+            .for_each_follower({
+                move |conn| {
+                    let req = req.clone();
+                    async move { conn.record(req, Duration::from_secs(1)).await }
+                }
+            })
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|r| r.unwrap().into_inner().conflict)
+            .collect();
+
+        assert_eq!(conflicts.len(), 4);
+        assert!(conflicts.into_iter().all(|c| !c));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_cluster_state_full_for_each_follower_with_quorum_ok() {
+        let connects = init_mocked_connects(5, |id, conn| {
+            match id {
+                0 | 1 => {
+                    conn.expect_record().returning(|_req, _timeout| {
+                        Ok(Response::new(RecordResponse { conflict: false }))
+                    });
+                }
+                2 | 3 | 4 => {
+                    conn.expect_record().returning(|_req, _timeout| {
+                        Ok(Response::new(RecordResponse { conflict: true }))
+                    });
+                }
+                _ => unreachable!("there are only 5 nodes"),
+            };
+        });
+        let req = RecordRequest::new(ProposeId::default(), &TestCommand::default());
+        let membership = build_default_membership();
+        let state = ClusterStateFull::new(0, 1, connects, membership);
+        let record = move |conn: Arc<dyn ConnectApi>| {
+            let req = req.clone();
+            async move { conn.record(req, Duration::from_secs(1)).await }
+        };
+
+        let ok = state
+            .for_each_follower_with_quorum(
+                record,
+                |res| res.is_ok_and(|resp| resp.get_ref().conflict),
+                |qs, ids| QuorumSet::is_quorum(qs, ids),
+            )
+            .await;
+
+        assert!(ok);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_cluster_state_full_for_each_server_ok() {
+        let connects = init_mocked_connects(5, |id, conn| {
+            match id {
+                0 | 1 | 2 | 3 | 4 => {
+                    conn.expect_record().returning(|_req, _timeout| {
+                        Ok(Response::new(RecordResponse { conflict: false }))
+                    });
+                }
+                _ => unreachable!("there are only 5 nodes"),
+            };
+        });
+        let req = RecordRequest::new(ProposeId::default(), &TestCommand::default());
+        let membership = build_default_membership();
+        let state = ClusterStateFull::new(0, 1, connects, membership);
+        let record = move |conn: Arc<dyn ConnectApi>| {
+            let req = req.clone();
+            async move { conn.record(req, Duration::from_secs(1)).await }
+        };
+
+        let conflicts: Vec<_> = state.for_each_server(record).collect().await;
+        assert_eq!(conflicts.len(), 5);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_cluster_state_init_for_each_server_ok() {
+        let connects = init_mocked_connects(5, |id, conn| {
+            match id {
+                0 | 1 | 2 | 3 | 4 => {
+                    conn.expect_record().returning(|_req, _timeout| {
+                        Ok(Response::new(RecordResponse { conflict: false }))
+                    });
+                }
+                _ => unreachable!("there are only 5 nodes"),
+            };
+        });
+        let req = RecordRequest::new(ProposeId::default(), &TestCommand::default());
+        let state = ClusterStateInit::new(connects.into_values().collect());
+        let record = move |conn: Arc<dyn ConnectApi>| {
+            let req = req.clone();
+            async move { conn.record(req, Duration::from_secs(1)).await }
+        };
+
+        let conflicts: Vec<_> = state.for_each_server(record).collect().await;
+        assert_eq!(conflicts.len(), 5);
+    }
+}

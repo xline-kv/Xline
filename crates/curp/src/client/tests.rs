@@ -85,7 +85,7 @@ fn build_empty_response() -> OpResponse {
     OpResponse { op: None }
 }
 
-fn build_default_membership() -> Membership {
+pub(super) fn build_default_membership() -> Membership {
     let members = (0..5).collect::<BTreeSet<_>>();
     let nodes = members
         .iter()
