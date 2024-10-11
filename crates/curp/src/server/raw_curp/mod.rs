@@ -1409,6 +1409,18 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     pub(super) fn client_tls_config(&self) -> Option<&ClientTlsConfig> {
         self.ctx.client_tls_config.as_ref()
     }
+
+    /// Get a range of log entry
+    #[cfg(test)]
+    pub(crate) fn get_log_from(&self, idx: u64) -> Vec<Arc<LogEntry<C>>> {
+        self.log.read().get_from(idx)
+    }
+
+    /// Trigger the propose id
+    #[cfg(test)]
+    pub(crate) fn trigger_all(&self) {
+        self.ctx.id_barrier.trigger_all();
+    }
 }
 
 // Utils

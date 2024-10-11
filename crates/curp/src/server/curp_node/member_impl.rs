@@ -37,11 +37,20 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         request: ChangeMembershipRequest,
     ) -> Result<MembershipResponse, CurpError> {
-        self.ensure_leader()?;
         let changes = request
             .changes
             .into_iter()
             .map(MembershipChange::into_inner);
+
+        self.change_membership_inner(changes).await
+    }
+
+    /// Performs a membership change to the cluster
+    pub(crate) async fn change_membership_inner(
+        &self,
+        changes: impl IntoIterator<Item = Change>,
+    ) -> Result<MembershipResponse, CurpError> {
+        self.ensure_leader()?;
         let changes = Self::ensure_non_overlapping(changes)?;
         let configs = self.curp.generate_membership(changes);
         if configs.is_empty() {
@@ -112,7 +121,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             return Ok(changes);
         }
 
-        Err(CurpError::InvalidConfig(()))
+        Err(CurpError::InvalidMemberChange(()))
     }
 
     /// Ensures that the current node is the leader
@@ -187,5 +196,214 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 )
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::time::Duration;
+
+    use curp_test_utils::{
+        mock_role_change,
+        test_cmd::{TestCE, TestCommand},
+        TestRoleChange,
+    };
+    use engine::MemorySnapshotAllocator;
+    use parking_lot::RwLock;
+    use tokio::sync::mpsc;
+    use tracing_test::traced_test;
+    use utils::{config::EngineConfig, task_manager::TaskManager};
+
+    use crate::{
+        rpc::NodeMetadata,
+        server::{cmd_board::CommandBoard, RawCurp, StorageApi, DB},
+    };
+
+    use super::*;
+
+    fn build_curp_node() -> CurpNode<TestCommand, TestCE, TestRoleChange> {
+        let curp = Arc::new(RawCurp::new_test(
+            3,
+            mock_role_change(),
+            Arc::new(TaskManager::new()),
+        ));
+        let db_dir = tempfile::tempdir().unwrap().into_path();
+        let storage_cfg = EngineConfig::RocksDB(db_dir.clone());
+        let db = DB::<TestCommand>::open(&storage_cfg).unwrap();
+        let (exe_tx, _exe_rx) = mpsc::unbounded_channel();
+        let (tas_tx, _tas_rx) = mpsc::unbounded_channel();
+        let (as_tx, _as_rx) = flume::unbounded();
+        let (propose_tx, _propose_rx) = flume::unbounded();
+        let ce = TestCE::new("testce".to_owned(), exe_tx, tas_tx, storage_cfg);
+        let _ignore = db.recover().unwrap();
+
+        CurpNode {
+            curp: Arc::clone(&curp),
+            cmd_board: Arc::new(RwLock::new(CommandBoard::new())),
+            storage: Arc::new(db),
+            snapshot_allocator: Box::new(MemorySnapshotAllocator::default()),
+            cmd_executor: Arc::new(ce),
+            as_tx,
+            propose_tx,
+        }
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_handle_append_entries_will_update_membership() {
+        let curp_node = build_curp_node();
+        let curp = Arc::clone(&curp_node.curp);
+        let init_membership = Membership::new(
+            vec![(0..3).collect()],
+            (0..3)
+                .map(|i| (i, NodeMetadata::new(format!("S{i}"), ["addr"], ["addr"])))
+                .collect(),
+        );
+
+        let membership = Membership::new(
+            vec![(0..4).collect()],
+            (0..4)
+                .map(|i| (i, NodeMetadata::new(format!("S{i}"), ["addr"], ["addr"])))
+                .collect(),
+        );
+        let entry_data = EntryData::Member(membership.clone());
+        let entry = LogEntry::new(1, 0, ProposeId::default(), entry_data);
+
+        let resp = curp_node
+            .append_entries_inner(vec![entry.clone()], 0, 1, 0, 0, 0)
+            .unwrap();
+        assert!(resp.success);
+
+        // append entries should update effective membership
+        assert_eq!(curp.effective_membership(), membership);
+        // append entries should update node states
+        assert!(curp.node_states().contains_key(&3));
+        // append entries should spawn new sync task
+        assert_eq!(
+            curp.task_manager()
+                .num_handles(TaskName::SyncFollower)
+                .unwrap(),
+            1
+        );
+        // append entries should update the in-memory log structure
+        assert_eq!(*curp.get_log_from(1)[0].as_ref(), entry);
+        // append entries should persistent the membership
+        let (id, ms) = curp.persisted_membership().unwrap();
+        assert_eq!(id, 0);
+        assert_eq!(*ms.effective(), membership);
+        assert_eq!(*ms.committed(), init_membership);
+    }
+
+    fn commit_memberhip(curp: &RawCurp<TestCommand, TestRoleChange>, index: u64) {
+        // for follower [1, 2]
+        for id in 1..3 {
+            assert!(curp
+                .handle_append_entries_resp(id, Some(index), 1, true, index + 1)
+                .unwrap());
+        }
+        curp.trigger_all();
+    }
+
+    async fn change_membership(
+        curp_node: Arc<CurpNode<TestCommand, TestCE, TestRoleChange>>,
+        change: Change,
+    ) -> u64 {
+        let curp = Arc::clone(&curp_node.curp);
+        let mut commit_index = curp.last_log_index();
+        let mut handle =
+            tokio::spawn(async move { curp_node.change_membership_inner([change]).await });
+        // change membership should wait before commit
+        while {
+            tokio::time::timeout(Duration::from_millis(100), &mut handle)
+                .await
+                .is_err()
+        } {
+            commit_index += 1;
+            commit_memberhip(&curp, commit_index);
+        }
+
+        commit_index
+    }
+
+    //#[traced_test]
+    #[tokio::test]
+    async fn test_change_membership_will_update_membership() {
+        let curp_node = Arc::new(build_curp_node());
+        let curp = Arc::clone(&curp_node.curp);
+        let init_membership = Membership::new(
+            vec![(0..3).collect()],
+            (0..3)
+                .map(|i| (i, NodeMetadata::new(format!("S{i}"), ["addr"], ["addr"])))
+                .collect(),
+        );
+        let change1 = Change::Add(rpc::Node::new(
+            3,
+            NodeMetadata::new("S3".to_owned(), ["addr"], ["addr"]),
+        ));
+        let membership1 = Membership::new(
+            vec![(0..3).collect()],
+            (0..4)
+                .map(|i| (i, NodeMetadata::new(format!("S{i}"), ["addr"], ["addr"])))
+                .collect(),
+        );
+        let last_index = change_membership(Arc::clone(&curp_node), change1).await;
+        // committed one membership log entry
+        assert_eq!(last_index, 1);
+
+        // append entries should update effective membership
+        assert_eq!(curp.effective_membership(), membership1.clone());
+        // append entries should update node states
+        assert!(curp.node_states().contains_key(&3));
+        // append entries should spawn new sync task
+        assert_eq!(
+            curp.task_manager()
+                .num_handles(TaskName::SyncFollower)
+                .unwrap(),
+            1
+        );
+        // append entries should update the in-memory log structure
+        let EntryData::Member(entry) = curp.get_log_from(1)[0].as_ref().entry_data.clone() else {
+            unreachable!()
+        };
+        assert_eq!(entry, membership1);
+        // append entries should persistent the membership
+        let (id, ms) = curp.persisted_membership().unwrap();
+        assert_eq!(id, 0);
+        assert_eq!(*ms.effective(), membership1);
+        assert_eq!(*ms.committed(), init_membership);
+
+        // promote the learner added previously
+        let change2 = Change::Promote(3);
+        let membership2 = Membership::new(
+            vec![(0..4).collect()],
+            (0..4)
+                .map(|i| (i, NodeMetadata::new(format!("S{i}"), ["addr"], ["addr"])))
+                .collect(),
+        );
+        let last_index = change_membership(curp_node, change2).await;
+        // committed two membership(from 2 ot 3) log entry
+        assert_eq!(last_index, 3);
+        assert_eq!(curp.effective_membership(), membership2.clone());
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_change_membership_will_reject_duplicate_ids() {
+        let curp_node = build_curp_node();
+        let change1 = Change::Add(rpc::Node::new(
+            3,
+            NodeMetadata::new("S3".to_owned(), ["addr"], ["addr"]),
+        ));
+        let change2 = Change::Add(rpc::Node::new(
+            3,
+            NodeMetadata::new("S3".to_owned(), ["addr1"], ["addr1"]),
+        ));
+        assert_eq!(
+            curp_node
+                .change_membership_inner([change1, change2])
+                .await
+                .unwrap_err(),
+            CurpError::InvalidMemberChange(())
+        );
     }
 }

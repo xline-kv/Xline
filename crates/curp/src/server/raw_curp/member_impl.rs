@@ -106,6 +106,18 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             st_w.leader_id = None;
         }
     }
+
+    /// Returns the current membership state
+    #[cfg(test)]
+    pub(crate) fn node_states(&self) -> BTreeMap<u64, NodeState> {
+        self.ctx.node_states.all_states()
+    }
+
+    /// Return the current persisted membership
+    #[cfg(test)]
+    pub(crate) fn persisted_membership(&self) -> Option<(u64, crate::member::MembershipState)> {
+        self.ctx.curp_storage.recover_membership().unwrap()
+    }
 }
 
 #[cfg(test)]

@@ -55,4 +55,14 @@ where
             let _ignore = event.notify(usize::MAX);
         }
     }
+
+    /// Trigger all barriers, used in tests
+    #[inline]
+    #[doc(hidden)]
+    pub fn trigger_all(&self) {
+        let barriers = self.barriers.lock();
+        for (_id, event) in barriers.iter() {
+            let _ignore = event.notify(usize::MAX);
+        }
+    }
 }

@@ -374,13 +374,37 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         req: &AppendEntriesRequest,
     ) -> Result<AppendEntriesResponse, CurpError> {
         let entries = req.entries()?;
+        let leader_id = req.leader_id;
+        let term = req.term;
+        let prev_log_index = req.prev_log_index;
+        let prev_log_term = req.prev_log_term;
         let leader_commit = req.leader_commit;
+        self.append_entries_inner(
+            entries,
+            leader_id,
+            term,
+            prev_log_index,
+            prev_log_term,
+            leader_commit,
+        )
+    }
+
+    /// Handle `AppendEntries` requests
+    pub(super) fn append_entries_inner(
+        &self,
+        entries: Vec<LogEntry<C>>,
+        leader_id: u64,
+        req_term: u64,
+        prev_log_index: u64,
+        prev_log_term: u64,
+        leader_commit: u64,
+    ) -> Result<AppendEntriesResponse, CurpError> {
         let membership_entries: Vec<_> = Self::filter_membership_entries(&entries).collect();
         let result = self.curp.handle_append_entries(
-            req.term,
-            req.leader_id,
-            req.prev_log_index,
-            req.prev_log_term,
+            req_term,
+            leader_id,
+            prev_log_index,
+            prev_log_term,
             entries,
             leader_commit,
         );

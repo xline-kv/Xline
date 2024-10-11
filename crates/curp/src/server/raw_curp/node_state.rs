@@ -162,6 +162,12 @@ impl NodeStates {
             .zip(states_r.values().map(NodeState::connect).cloned())
             .collect()
     }
+
+    /// Get all node states
+    #[cfg(test)]
+    pub(super) fn all_states(&self) -> BTreeMap<u64, NodeState> {
+        self.states.read().clone()
+    }
 }
 
 /// The state of a node

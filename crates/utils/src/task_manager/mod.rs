@@ -268,6 +268,14 @@ impl TaskManager {
         }
         true
     }
+
+    /// Get the number of running handles of the give task
+    #[doc(hidden)]
+    #[inline]
+    #[must_use]
+    pub fn num_handles(&self, name: TaskName) -> Option<usize> {
+        self.tasks.get(&name).map(|t| t.handle.len())
+    }
 }
 
 impl Default for TaskManager {
