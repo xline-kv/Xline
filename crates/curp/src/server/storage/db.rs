@@ -130,14 +130,21 @@ impl<C> DB<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::{error::Error, sync::Arc};
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        error::Error,
+        sync::Arc,
+    };
 
     use curp_test_utils::{sleep_secs, test_cmd::TestCommand};
     use test_macros::abort_on_panic;
     use tokio::fs::remove_dir_all;
 
     use super::*;
-    use crate::rpc::ProposeId;
+    use crate::{
+        member::Membership,
+        rpc::{NodeMetadata, ProposeId},
+    };
 
     #[tokio::test]
     #[abort_on_panic]
@@ -172,5 +179,26 @@ mod tests {
         remove_dir_all(db_dir).await?;
 
         Ok(())
+    }
+
+    #[test]
+    fn put_and_recover_membership() {
+        let db_dir = tempfile::tempdir().unwrap().into_path();
+        let storage_cfg = EngineConfig::RocksDB(db_dir.clone());
+        let membership = Membership::new(
+            vec![BTreeSet::from([1])],
+            BTreeMap::from([(1, NodeMetadata::default())]),
+        );
+        let ms = MembershipState::new(membership);
+        {
+            let s = DB::<TestCommand>::open(&storage_cfg).unwrap();
+            s.put_membership(1, &ms).unwrap();
+        }
+        {
+            let s = DB::<TestCommand>::open(&storage_cfg).unwrap();
+            let (id, ms_recovered) = s.recover_membership().unwrap().unwrap();
+            assert_eq!(id, 1);
+            assert_eq!(ms, ms_recovered);
+        }
     }
 }

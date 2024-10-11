@@ -113,7 +113,7 @@ impl NodeMembershipState {
 }
 
 /// Membership state stored in current node
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
 pub struct MembershipState {
     /// Membership entries
     entries: Vec<MembershipEntry>,
@@ -122,7 +122,7 @@ pub struct MembershipState {
 #[allow(clippy::unwrap_used)] // `entries` should contains at least one entry
 impl MembershipState {
     /// Creates a new `MembershipState`
-    fn new(initial_membership: Membership) -> Self {
+    pub(crate) fn new(initial_membership: Membership) -> Self {
         let initial_entry = MembershipEntry::new(0, initial_membership);
         Self {
             entries: vec![initial_entry],
