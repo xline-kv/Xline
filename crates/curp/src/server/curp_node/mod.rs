@@ -37,7 +37,7 @@ use super::{
 use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
-    member::MembershipInfo,
+    member::{MembershipConfig, MembershipInfo},
     response::ResponseSender,
     role_change::RoleChange,
     rpc::{
@@ -729,9 +729,13 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         sps: Vec<SpObject<C>>,
         ucps: Vec<UcpObject<C>>,
     ) -> Result<Self, CurpError> {
-        let peer_addrs: HashMap<_, _> = membership_info
-            .init_members
-            .clone()
+        let ms = storage.recover_membership()?;
+        let membership_config = ms.map_or(
+            MembershipConfig::Init(membership_info),
+            MembershipConfig::Recovered,
+        );
+        let peer_addrs: HashMap<_, _> = membership_config
+            .members()
             .into_iter()
             .map(|(id, meta)| (id, meta.into_peer_urls()))
             .collect();
@@ -765,7 +769,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 .as_tx(as_tx.clone())
                 .resp_txs(Arc::new(Mutex::default()))
                 .id_barrier(Arc::new(IdBarrier::new()))
-                .membership_info(membership_info)
+                .membership_config(membership_config)
                 .member_connects(member_connects)
                 .build_raw_curp()
                 .map_err(|e| CurpError::internal(format!("build raw curp failed, {e}")))?,

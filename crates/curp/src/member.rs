@@ -14,6 +14,32 @@ use crate::quorum::QuorumSet;
 use crate::rpc::Change;
 use crate::rpc::NodeMetadata;
 
+/// Represents the configuration of a membership.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum MembershipConfig {
+    /// Initial membership information.
+    Init(MembershipInfo),
+    /// Recovered membership state.
+    Recovered((u64, MembershipState)),
+}
+
+impl MembershipConfig {
+    /// Returns all members in this config
+    #[inline]
+    #[must_use]
+    pub fn members(&self) -> BTreeMap<u64, NodeMetadata> {
+        match *self {
+            MembershipConfig::Init(ref conf) => conf.init_members.clone(),
+            MembershipConfig::Recovered((_, ref conf)) => conf
+                .effective()
+                .members()
+                .map(|(id, meta)| (id, meta.clone()))
+                .collect(),
+        }
+    }
+}
+
 /// The membership info, used to build the initial states
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -58,12 +84,20 @@ pub(crate) struct NodeMembershipState {
 
 impl NodeMembershipState {
     /// Creates a new `NodeMembershipState` with initial state
-    pub(crate) fn new(info: MembershipInfo) -> Self {
-        let node_id = info.node_id;
-        let cluster_state = MembershipState::new(info.into_membership());
-        Self {
-            node_id,
-            cluster_state,
+    pub(crate) fn new(config: MembershipConfig) -> Self {
+        match config {
+            MembershipConfig::Init(info) => {
+                let node_id = info.node_id;
+                let cluster_state = MembershipState::new(info.into_membership());
+                Self {
+                    node_id,
+                    cluster_state,
+                }
+            }
+            MembershipConfig::Recovered((node_id, cluster_state)) => Self {
+                node_id,
+                cluster_state,
+            },
         }
     }
 

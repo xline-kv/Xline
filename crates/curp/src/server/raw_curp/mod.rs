@@ -64,7 +64,7 @@ use crate::cmd::Command;
 use crate::log_entry::EntryData;
 use crate::log_entry::LogEntry;
 use crate::member::Membership;
-use crate::member::MembershipInfo;
+use crate::member::MembershipConfig;
 use crate::member::NodeMembershipState;
 use crate::members::ServerId;
 use crate::quorum::QuorumSet;
@@ -123,7 +123,7 @@ pub struct RawCurp<C: Command, RC: RoleChange> {
 #[builder(name = "RawCurpBuilder")]
 pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     /// Membership information
-    membership_info: MembershipInfo,
+    membership_config: MembershipConfig,
     /// Member connects
     member_connects: BTreeMap<u64, InnerConnectApiWrapper>,
     /// Current node is leader or not
@@ -207,7 +207,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             log,
             ctx,
             task_manager: args.task_manager,
-            ms: RwLock::new(NodeMembershipState::new(args.membership_info)),
+            ms: RwLock::new(NodeMembershipState::new(args.membership_config)),
         };
 
         if args.is_leader {

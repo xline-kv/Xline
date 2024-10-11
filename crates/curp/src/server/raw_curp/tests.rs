@@ -9,6 +9,7 @@ use utils::config::{
 
 use super::*;
 use crate::{
+    member::MembershipInfo,
     rpc::{self, Change, Node, NodeMetadata, Redirect},
     server::{
         cmd_board::CommandBoard,
@@ -65,8 +66,9 @@ impl RawCurp<TestCommand, TestRoleChange> {
             .map(|id| (id, NodeMetadata::new(format!("S{id}"), ["addr"], ["addr"])))
             .collect();
         let membership_info = MembershipInfo::new(0, init_members);
-        let peer_addrs: HashMap<_, _> = membership_info
-            .init_members
+        let membership_config = MembershipConfig::Init(membership_info);
+        let peer_addrs: HashMap<_, _> = membership_config
+            .members()
             .clone()
             .into_iter()
             .map(|(id, meta)| (id, meta.into_peer_urls()))
@@ -86,7 +88,7 @@ impl RawCurp<TestCommand, TestRoleChange> {
             .as_tx(as_tx)
             .resp_txs(resp_txs)
             .id_barrier(id_barrier)
-            .membership_info(membership_info)
+            .membership_config(membership_config)
             .member_connects(member_connects)
             .build_raw_curp()
             .unwrap()
