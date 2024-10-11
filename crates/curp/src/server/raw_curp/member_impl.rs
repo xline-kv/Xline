@@ -107,3 +107,65 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+
+    use curp_test_utils::mock_role_change;
+    use utils::task_manager::TaskManager;
+
+    use crate::rpc::NodeMetadata;
+
+    use super::*;
+
+    #[test]
+    fn test_update_membership_state_ok() {
+        let curp = RawCurp::new_test(3, mock_role_change(), Arc::new(TaskManager::new()));
+        let membership1 = Membership::new(
+            vec![(0..4).collect()],
+            (0..4).map(|id| (id, NodeMetadata::default())).collect(),
+        );
+        let membership2 = Membership::new(
+            vec![(0..5).collect()],
+            (0..5).map(|id| (id, NodeMetadata::default())).collect(),
+        );
+
+        curp.update_membership_state(None, [(1, membership1.clone())], None);
+        assert_eq!(*curp.ms.read().cluster().effective(), membership1);
+        curp.update_membership_state(None, [(2, membership2.clone())], None);
+        assert_eq!(*curp.ms.read().cluster().effective(), membership2);
+        curp.update_membership_state(Some(1), [], None);
+        assert_eq!(*curp.ms.read().cluster().effective(), membership1);
+
+        curp.update_membership_state(None, [(2, membership2.clone())], None);
+        curp.update_membership_state(None, [], Some(2));
+        assert_eq!(*curp.ms.read().cluster().effective(), membership2);
+        assert_eq!(*curp.ms.read().cluster().committed(), membership2);
+    }
+
+    #[test]
+    fn test_update_role_ok() {
+        let curp = RawCurp::new_test(3, mock_role_change(), Arc::new(TaskManager::new()));
+        assert_eq!(curp.st.read().role, Role::Leader);
+        // self is 0
+        let membership1 = Membership::new(
+            vec![(1..3).collect()],
+            (1..3).map(|id| (id, NodeMetadata::default())).collect(),
+        );
+        let membership2 = Membership::new(
+            vec![(0..3).collect()],
+            (0..3).map(|id| (id, NodeMetadata::default())).collect(),
+        );
+
+        // remove from membership
+        curp.update_membership_state(None, [(1, membership1.clone())], None);
+        curp.update_role();
+        assert_eq!(curp.st.read().role, Role::Learner);
+
+        // add back
+        curp.update_membership_state(None, [(2, membership2.clone())], None);
+        curp.update_role();
+        assert_eq!(curp.st.read().role, Role::Follower);
+    }
+}
