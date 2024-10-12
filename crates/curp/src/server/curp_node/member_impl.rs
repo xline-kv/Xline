@@ -12,6 +12,9 @@ use curp_external_api::cmd::Command;
 use curp_external_api::cmd::CommandExecutor;
 use curp_external_api::role_change::RoleChange;
 use curp_external_api::LogIndex;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
+use tracing::debug;
 use utils::task_manager::tasks::TaskName;
 
 use super::CurpNode;
@@ -28,6 +31,8 @@ use crate::rpc::MembershipChange;
 use crate::rpc::MembershipResponse;
 use crate::rpc::ProposeId;
 use crate::rpc::Redirect;
+use crate::rpc::WaitLearnerRequest;
+use crate::rpc::WaitLearnerResponse;
 use crate::server::raw_curp::node_state::NodeState;
 
 // Leader methods
@@ -43,6 +48,38 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .map(MembershipChange::into_inner);
 
         self.change_membership_inner(changes).await
+    }
+
+    /// Handle `ProposeStream` requests
+    pub(crate) fn wait_learner(
+        &self,
+        req: WaitLearnerRequest,
+        tx: flume::Sender<Result<WaitLearnerResponse, tonic::Status>>,
+    ) {
+        let rxs = self.curp.register_monitoring(req.node_ids);
+        let _handle = tokio::spawn(async move {
+            let mut fused = futures::stream::select_all(rxs.into_iter().map(|(id, rx)| {
+                let stream = BroadcastStream::new(rx);
+                stream.map(move |res| res.map(|x| (id, x)))
+            }))
+            // ignores entry that has been removed
+            .filter_map(Result::ok);
+
+            while let Some(res) = fused.next().await {
+                let (node_id, (current_idx, latest_idx)) = res;
+                if tx
+                    .send(Ok(WaitLearnerResponse {
+                        node_id,
+                        current_idx,
+                        latest_idx,
+                    }))
+                    .is_err()
+                {
+                    debug!("wait learner stream unexpectedly closed");
+                    break;
+                }
+            }
+        });
     }
 
     /// Performs a membership change to the cluster

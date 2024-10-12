@@ -52,6 +52,8 @@ pub use self::proto::{
         ShutdownRequest,
         ShutdownResponse,
         SyncedResponse,
+        WaitLearnerRequest,
+        WaitLearnerResponse,
         WaitSyncedRequest,
         WaitSyncedResponse,
     },

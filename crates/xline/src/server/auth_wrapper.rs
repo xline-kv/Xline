@@ -7,6 +7,7 @@ use curp::{
         FetchReadStateResponse, LeaseKeepAliveMsg, MembershipResponse, MoveLeaderRequest,
         MoveLeaderResponse, OpResponse, ProposeRequest, Protocol, ReadIndexRequest,
         ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
+        WaitLearnerRequest, WaitLearnerResponse,
     },
 };
 use flume::r#async::RecvStream;
@@ -112,5 +113,14 @@ impl Protocol for AuthWrapper {
         request: tonic::Request<ChangeMembershipRequest>,
     ) -> Result<tonic::Response<MembershipResponse>, tonic::Status> {
         self.curp_server.change_membership(request).await
+    }
+
+    type WaitLearnerStream = RecvStream<'static, Result<WaitLearnerResponse, tonic::Status>>;
+
+    async fn wait_learner(
+        &self,
+        request: tonic::Request<WaitLearnerRequest>,
+    ) -> Result<tonic::Response<Self::WaitLearnerStream>, tonic::Status> {
+        self.curp_server.wait_learner(request).await
     }
 }

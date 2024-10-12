@@ -49,6 +49,8 @@ use crate::rpc::TryBecomeLeaderNowRequest;
 use crate::rpc::TryBecomeLeaderNowResponse;
 use crate::rpc::VoteRequest;
 use crate::rpc::VoteResponse;
+use crate::rpc::WaitLearnerRequest;
+use crate::rpc::WaitLearnerResponse;
 
 /// Command worker to do execution and after sync
 mod cmd_worker;
@@ -201,6 +203,21 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
             .await
             .map(tonic::Response::new)
             .map_err(Into::into)
+    }
+
+    type WaitLearnerStream = RecvStream<'static, Result<WaitLearnerResponse, tonic::Status>>;
+
+    #[instrument(skip_all, name = "wait_learner")]
+    async fn wait_learner(
+        &self,
+        request: tonic::Request<WaitLearnerRequest>,
+    ) -> Result<tonic::Response<Self::WaitLearnerStream>, tonic::Status> {
+        /// Max stream channel size
+        const CHANNEL_SIZE: usize = 1024;
+        let (tx, rx) = flume::bounded(CHANNEL_SIZE);
+        self.inner.wait_learner(request.into_inner(), tx);
+
+        Ok(tonic::Response::new(rx.into_stream()))
     }
 }
 

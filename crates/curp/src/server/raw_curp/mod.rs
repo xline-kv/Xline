@@ -31,6 +31,7 @@ use opentelemetry::KeyValue;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockUpgradableReadGuard;
+use tokio::sync::broadcast;
 use tokio::sync::oneshot;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
@@ -99,6 +100,9 @@ mod member_impl;
 
 /// Unified state for each node
 pub(crate) mod node_state;
+
+/// Node monitor implementation
+mod monitor;
 
 /// The curp state machine
 pub struct RawCurp<C: Command, RC: RoleChange> {
@@ -310,6 +314,9 @@ enum Role {
     Learner,
 }
 
+/// (current index, latest index)
+type MonitorResult = (LogIndex, LogIndex);
+
 /// Relevant context for Curp
 ///
 /// WARN: To avoid deadlock, the lock order should be:
@@ -349,6 +356,8 @@ struct Context<C: Command, RC: RoleChange> {
     id_barrier: Arc<IdBarrier<ProposeId>>,
     /// States of nodes in the cluster
     node_states: Arc<NodeStates>,
+    /// Node collection to monitor state
+    monitoring: Arc<RwLock<HashMap<u64, broadcast::Sender<MonitorResult>>>>,
 }
 
 impl<C: Command, RC: RoleChange> Context<C, RC> {
@@ -412,6 +421,7 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("node_states")),
             },
+            monitoring: Arc::new(RwLock::default()),
         })
     }
 }
@@ -778,9 +788,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             return Ok(true);
         };
 
-        self.ctx
-            .node_states
-            .update_match_index(follower_id, last_sent_index);
+        self.update_match_index(follower_id, last_sent_index);
 
         // check if commit_index needs to be updated
         let log_r = self.log.upgradable_read();
@@ -1069,9 +1077,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         if cur_role != Role::Leader {
             return Err(());
         }
-        self.ctx
-            .node_states
-            .update_match_index(follower_id, meta.last_included_index.numeric_cast());
+        self.update_match_index(follower_id, meta.last_included_index.numeric_cast());
         Ok(())
     }
 
@@ -1766,5 +1772,23 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let _ignore_er = cb.er_buffer.swap_remove(&id);
         let _ignore_asr = cb.asr_buffer.swap_remove(&id);
         let _ignore_conf = cb.conf_buffer.swap_remove(&id);
+    }
+
+    /// Update match index, also updates the monitoring ids
+    fn update_match_index(&self, id: u64, index: LogIndex) {
+        self.ctx.node_states.update_match_index(id, index);
+        let latest = self.log.read().last_log_index();
+        // removes the entry if the node is up-to-date.
+        let to_remove = self.ctx.monitoring.map_read(|m| {
+            m.get(&id).map_or(false, |tx| {
+                if tx.send((index, latest)).is_err() {
+                    error!("broadcast rx closed");
+                }
+                index == latest
+            })
+        });
+        if to_remove {
+            let _ignore = self.ctx.monitoring.write().remove(&id);
+        }
     }
 }
