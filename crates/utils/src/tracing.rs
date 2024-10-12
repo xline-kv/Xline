@@ -117,7 +117,7 @@ mod test {
         let provider = opentelemetry_otlp::new_pipeline()
             .tracing()
             .with_exporter(otlp_exporter)
-            .install_simple()?;
+            .install_batch(opentelemetry_sdk::runtime::Tokio)?;
         global::set_tracer_provider(provider.clone());
         let tracer = provider.tracer("xline");
         let jaeger_online_layer = tracing_opentelemetry::layer().with_tracer(tracer);
