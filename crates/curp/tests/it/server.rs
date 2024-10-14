@@ -9,7 +9,7 @@ use clippy_utilities::NumericCast;
 use curp::{
     client::{ClientApi, ClientBuilder},
     member::MembershipInfo,
-    rpc::{Change, CurpError, Node, NodeMetadata},
+    rpc::{Change, CurpError, MembershipResponse, Node, NodeMetadata},
 };
 use curp_test_utils::{
     init_logger, sleep_millis,
@@ -20,6 +20,7 @@ use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
 use tokio::net::TcpListener;
 use tokio_stream::StreamExt;
+use tracing_test::traced_test;
 use utils::config::ClientConfig;
 
 use crate::common::curp_group::{
@@ -712,4 +713,127 @@ async fn move_leader_should_move_leadership_to_target_node() {
 
     assert_eq!(target, new_leader);
     assert_ne!(old_leader, new_leader);
+}
+
+// A full single step change cycle
+#[traced_test]
+#[tokio::test(flavor = "multi_thread")]
+async fn membership_change_ok_case0() {
+    let group = CurpGroup::new(3).await;
+    let client = group.new_client().await;
+    assert_eq!(client.fetch_cluster(true).await.unwrap().leader_id, 0);
+
+    let change = Change::Add(Node::new(3, NodeMetadata::default()));
+    client.change_membership(vec![change]).await.unwrap();
+    let resp = client.fetch_cluster(true).await.unwrap();
+    assert_membership_response(resp, [0, 1, 2], [0, 1, 2, 3]);
+
+    let change = Change::Promote(3);
+    client.change_membership(vec![change]).await.unwrap();
+    let resp = client.fetch_cluster(true).await.unwrap();
+    assert_membership_response(resp, [0, 1, 2, 3], [0, 1, 2, 3]);
+
+    let change = Change::Demote(2);
+    client.change_membership(vec![change]).await.unwrap();
+    let resp = client.fetch_cluster(true).await.unwrap();
+    assert_membership_response(resp, [0, 1, 3], [0, 1, 2, 3]);
+
+    let change = Change::Remove(2);
+    client.change_membership(vec![change]).await.unwrap();
+    let resp = client.fetch_cluster(true).await.unwrap();
+    assert_membership_response(resp, [0, 1, 3], [0, 1, 3]);
+}
+
+// Mixed membership change
+#[tokio::test(flavor = "multi_thread")]
+async fn membership_change_ok_case1() {
+    init_logger();
+    let mut group = CurpGroup::new(3).await;
+    let client = group.new_client().await;
+    assert_eq!(client.fetch_cluster(true).await.unwrap().leader_id, 0);
+
+    let listen3 = TcpListener::bind("0.0.0.0:0").await.unwrap();
+    let addr3 = listen3.local_addr().unwrap().to_string();
+    let listen4 = TcpListener::bind("0.0.0.0:0").await.unwrap();
+    let addr4 = listen4.local_addr().unwrap().to_string();
+
+    let change0 = Change::Add(Node::new(3, NodeMetadata::new("node3", [&addr3], [&addr3])));
+    let change1 = Change::Add(Node::new(4, NodeMetadata::new("node4", [&addr4], [&addr4])));
+    client
+        .change_membership(vec![change0, change1])
+        .await
+        .unwrap();
+    group
+        .run_node(
+            listen3,
+            "node3".to_owned(),
+            MembershipInfo::new(3, BTreeMap::default()),
+        )
+        .await;
+    group
+        .run_node(
+            listen4,
+            "node4".to_owned(),
+            MembershipInfo::new(3, BTreeMap::default()),
+        )
+        .await;
+    let resp = client.fetch_cluster(true).await.unwrap();
+    assert_membership_response(resp, [0, 1, 2], [0, 1, 2, 3, 4]);
+
+    let change0 = Change::Promote(3);
+    let change1 = Change::Demote(2);
+    client
+        .change_membership(vec![change0, change1])
+        .await
+        .unwrap();
+    let resp = client.fetch_cluster(true).await.unwrap();
+    assert_membership_response(resp, [0, 1, 3], [0, 1, 2, 3, 4]);
+
+    let change0 = Change::Promote(4);
+    let change1 = Change::Remove(2);
+    client
+        .change_membership(vec![change0, change1])
+        .await
+        .unwrap();
+    let resp = client.fetch_cluster(true).await.unwrap();
+    assert_membership_response(resp, [0, 1, 3, 4], [0, 1, 3, 4]);
+}
+
+// Remove the leader
+#[tokio::test(flavor = "multi_thread")]
+async fn membership_change_ok_case2() {
+    init_logger();
+    let group = CurpGroup::new(5).await;
+    let client = group.new_client().await;
+    assert_eq!(client.fetch_cluster(true).await.unwrap().leader_id, 0);
+
+    let change = Change::Demote(0);
+    client.change_membership(vec![change]).await.unwrap();
+    let resp = client.fetch_cluster(true).await.unwrap();
+    assert_membership_response(resp, [1, 2, 3, 4], [0, 1, 2, 3, 4]);
+
+    let change = Change::Remove(0);
+    // workaround for clinet id expiry
+    while client
+        .change_membership(vec![change.clone()])
+        .await
+        .is_err()
+    {}
+    let resp = client.fetch_cluster(true).await.unwrap();
+    assert_membership_response(resp, [1, 2, 3, 4], [1, 2, 3, 4]);
+}
+
+fn assert_membership_response(
+    resp: MembershipResponse,
+    expect_member_ids: impl IntoIterator<Item = u64>,
+    expect_node_ids: impl IntoIterator<Item = u64>,
+) {
+    println!("leader: {}", resp.leader_id);
+    let member_ids: BTreeSet<_> = resp.members.into_iter().flat_map(|s| s.set).collect();
+    let expect_member_ids: BTreeSet<_> = expect_member_ids.into_iter().collect();
+    assert_eq!(member_ids, expect_member_ids);
+
+    let node_ids: BTreeSet<_> = resp.nodes.into_iter().map(|n| n.node_id).collect();
+    let expect_node_ids: BTreeSet<_> = expect_node_ids.into_iter().collect();
+    assert_eq!(node_ids, expect_node_ids);
 }
