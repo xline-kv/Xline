@@ -27,7 +27,7 @@ futures = "0.3.30"
 getset = "0.1"
 interval_map = { version = "0.1", package = "rb-interval-map" }
 opentelemetry = { version = "0.24.0", features = ["trace"] }
-opentelemetry_sdk = { version = "0.24.1", features = ["trace"] }
+opentelemetry_sdk = { version = "0.26.0", features = ["trace"] }
 parking_lot = { version = "0.12.3", optional = true }
 pbkdf2 = { version = "0.12.2", features = ["simple"] }
 regex = "1.10.5"
