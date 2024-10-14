@@ -33,7 +33,7 @@ itertools = "0.13"
 jsonwebtoken = "9.3.0"
 log = "0.4.22"
 merged_range = "0.1.0"
-nix = "0.28.0"
+nix = "0.29.0"
 opentelemetry = { version = "0.24.0", features = ["metrics"] }
 opentelemetry-contrib = { version = "0.16.0", features = [
   "jaeger_json_exporter",
