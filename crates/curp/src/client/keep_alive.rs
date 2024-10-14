@@ -159,6 +159,7 @@ mod tests {
             FetchReadStateRequest, FetchReadStateResponse, MembershipResponse, MoveLeaderRequest,
             MoveLeaderResponse, Node, NodeMetadata, OpResponse, ProposeRequest, QuorumSet,
             ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
+            WaitLearnerRequest, WaitLearnerResponse,
         },
     };
 
@@ -276,6 +277,17 @@ mod tests {
             _request: ChangeMembershipRequest,
             _timeout: Duration,
         ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
+            unreachable!("please use MockedConnectApi")
+        }
+
+        async fn wait_learner(
+            &self,
+            request: WaitLearnerRequest,
+            timeout: Duration,
+        ) -> Result<
+            tonic::Response<Box<dyn Stream<Item = Result<WaitLearnerResponse, Status>> + Send>>,
+            CurpError,
+        > {
             unreachable!("please use MockedConnectApi")
         }
     }

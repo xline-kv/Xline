@@ -1,5 +1,5 @@
 pub use auth::AuthClient;
-pub use cluster::ClusterClient;
+pub use cluster::{ClusterClient, LearnerStatus};
 pub use election::ElectionClient;
 pub use kv::KvClient;
 pub use lease::LeaseClient;

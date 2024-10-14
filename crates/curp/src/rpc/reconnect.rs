@@ -14,6 +14,8 @@ use crate::{
     },
 };
 
+use super::{WaitLearnerRequest, WaitLearnerResponse};
+
 /// Auto reconnect of a connection
 pub(super) struct Reconnect<C> {
     /// Connect id
@@ -170,5 +172,17 @@ impl<C: ConnectApi> ConnectApi for Reconnect<C> {
         timeout: Duration,
     ) -> Result<tonic::Response<MembershipResponse>, CurpError> {
         execute_with_reconnect!(self, ConnectApi::change_membership, request, timeout)
+    }
+
+    /// Send `WaitLearnerRequest`
+    async fn wait_learner(
+        &self,
+        request: WaitLearnerRequest,
+        timeout: Duration,
+    ) -> Result<
+        tonic::Response<Box<dyn Stream<Item = Result<WaitLearnerResponse, tonic::Status>> + Send>>,
+        CurpError,
+    > {
+        execute_with_reconnect!(self, ConnectApi::wait_learner, request, timeout)
     }
 }

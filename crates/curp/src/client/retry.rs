@@ -1,11 +1,11 @@
 use std::{
     ops::SubAssign,
     sync::{atomic::AtomicU64, Arc},
-    time::Duration,
+    time::Duration, collections::BTreeSet,
 };
 
 use async_trait::async_trait;
-use futures::Future;
+use futures::{Future, Stream};
 use parking_lot::RwLock;
 use tracing::{debug, warn};
 
@@ -19,7 +19,7 @@ use super::{
 };
 use crate::{
     members::ServerId,
-    rpc::{CurpError, ReadState, Redirect, ProposeId, MembershipResponse, NodeMetadata, Node, Change}, tracker::Tracker,
+    rpc::{CurpError, ReadState, Redirect, ProposeId, MembershipResponse, NodeMetadata, Node, Change, WaitLearnerResponse}, tracker::Tracker,
 };
 
 /// Backoff config
@@ -465,6 +465,16 @@ where
 
         Ok(())
     }
+
+    /// Send wait learner of the give ids, returns a stream of updating response stream
+    async fn wait_learner(
+        &self,
+        node_ids: BTreeSet<u64>,
+    ) -> Result<Box<dyn Stream<Item = Result<WaitLearnerResponse, Self::Error>> + Send>, Self::Error> {
+        self.retry::<_, _>(|client, ctx| client.wait_learner(node_ids.clone(), ctx))
+            .await
+    }
+
 }
 
 /// Tests for backoff

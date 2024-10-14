@@ -1,10 +1,11 @@
 /// Client propose implementation
 mod propose_impl;
 
-use std::marker::PhantomData;
+use std::{collections::BTreeSet, marker::PhantomData};
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
+use futures::Stream;
 use tracing::warn;
 
 use super::{
@@ -14,7 +15,8 @@ use super::{
 };
 use crate::rpc::{
     Change, ChangeMembershipRequest, CurpError, FetchReadStateRequest, MembershipChange,
-    MembershipResponse, MoveLeaderRequest, ReadState, ShutdownRequest,
+    MembershipResponse, MoveLeaderRequest, ReadState, ShutdownRequest, WaitLearnerRequest,
+    WaitLearnerResponse,
 };
 
 /// The unary client
@@ -123,6 +125,27 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         let resp = ctx
             .cluster_state()
             .map_leader(|conn| async move { conn.change_membership(req, timeout).await })
+            .await?
+            .into_inner();
+
+        Ok(resp)
+    }
+
+    /// Send wait learner of the give ids, returns a stream of updating response stream
+    async fn wait_learner(
+        &self,
+        node_ids: BTreeSet<u64>,
+        ctx: Context,
+    ) -> Result<
+        Box<dyn Stream<Item = Result<WaitLearnerResponse, tonic::Status>> + Send>,
+        Self::Error,
+    > {
+        let node_ids = node_ids.into_iter().collect();
+        let req = WaitLearnerRequest { node_ids };
+        let timeout = self.config.wait_synced_timeout();
+        let resp = ctx
+            .cluster_state()
+            .map_leader(|conn| async move { conn.wait_learner(req, timeout).await })
             .await?
             .into_inner();
 

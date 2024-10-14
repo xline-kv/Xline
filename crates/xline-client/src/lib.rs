@@ -277,7 +277,7 @@ impl Client {
         );
         let auth = AuthClient::new(Arc::clone(&curp_client), channel.clone(), token.clone());
         let maintenance = MaintenanceClient::new(channel.clone(), token.clone());
-        let cluster = ClusterClient::new(channel.clone(), token.clone());
+        let cluster = ClusterClient::new(Arc::clone(&curp_client), channel.clone(), token.clone());
         let watch = WatchClient::new(channel, token);
         let election = ElectionClient::new();
         let member = MemberClient::new(curp_client);

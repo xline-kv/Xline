@@ -54,7 +54,7 @@ use super::{
     proto::commandpb::{ReadIndexRequest, ReadIndexResponse},
     reconnect::Reconnect,
     ChangeMembershipRequest, FetchMembershipRequest, MembershipResponse, OpResponse, RecordRequest,
-    RecordResponse,
+    RecordResponse, WaitLearnerRequest, WaitLearnerResponse,
 };
 
 /// Install snapshot chunk size: 64KB
@@ -232,6 +232,16 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         request: ChangeMembershipRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<MembershipResponse>, CurpError>;
+
+    /// Send `WaitLearnerRequest`
+    async fn wait_learner(
+        &self,
+        request: WaitLearnerRequest,
+        timeout: Duration,
+    ) -> Result<
+        tonic::Response<Box<dyn Stream<Item = Result<WaitLearnerResponse, tonic::Status>> + Send>>,
+        CurpError,
+    >;
 }
 
 /// Inner Connect interface among different servers
@@ -512,6 +522,20 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         let req = tonic::Request::new(request);
         with_timeout!(timeout, client.change_membership(req)).map_err(Into::into)
     }
+
+    async fn wait_learner(
+        &self,
+        request: WaitLearnerRequest,
+        timeout: Duration,
+    ) -> Result<
+        tonic::Response<Box<dyn Stream<Item = Result<WaitLearnerResponse, tonic::Status>> + Send>>,
+        CurpError,
+    > {
+        let mut client = self.rpc_connect.clone();
+        let req = tonic::Request::new(request);
+        let resp = with_timeout!(timeout, client.wait_learner(req))?.into_inner();
+        Ok(tonic::Response::new(Box::new(resp)))
+    }
 }
 
 #[allow(clippy::let_and_return)] // for metrics
@@ -788,6 +812,21 @@ where
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.change_membership(req).await.map_err(Into::into)
+    }
+
+    async fn wait_learner(
+        &self,
+        request: WaitLearnerRequest,
+        _timeout: Duration,
+    ) -> Result<
+        tonic::Response<Box<dyn Stream<Item = Result<WaitLearnerResponse, tonic::Status>> + Send>>,
+        CurpError,
+    > {
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
+        req.metadata_mut().inject_current();
+        let resp = self.server.wait_learner(req).await?.into_inner();
+        Ok(tonic::Response::new(Box::new(resp)))
     }
 }
 

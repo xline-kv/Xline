@@ -18,7 +18,8 @@ use crate::{
         FetchMembershipRequest, FetchReadStateRequest, FetchReadStateResponse,
         InstallSnapshotResponse, MembershipResponse, MoveLeaderRequest, MoveLeaderResponse,
         OpResponse, ProposeRequest, ReadIndexResponse, RecordRequest, RecordResponse,
-        ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
+        ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse, WaitLearnerRequest,
+        WaitLearnerResponse,
     },
     snapshot::Snapshot,
 };
@@ -253,5 +254,18 @@ impl ConnectApi for ConnectLazy<ProtocolClient<Channel>> {
             .unwrap()
             .change_membership(request, timeout)
             .await
+    }
+
+    async fn wait_learner(
+        &self,
+        request: WaitLearnerRequest,
+        timeout: Duration,
+    ) -> Result<
+        tonic::Response<Box<dyn Stream<Item = Result<WaitLearnerResponse, tonic::Status>> + Send>>,
+        CurpError,
+    > {
+        let mut inner = self.inner.lock().await;
+        self.connect_inner(&mut inner);
+        inner.as_ref().unwrap().wait_learner(request, timeout).await
     }
 }

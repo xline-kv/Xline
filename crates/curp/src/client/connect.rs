@@ -1,9 +1,12 @@
+use std::collections::BTreeSet;
+
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
+use futures::Stream;
 
 use crate::{
     members::ServerId,
-    rpc::{Change, MembershipResponse, ReadState},
+    rpc::{Change, MembershipResponse, ReadState, WaitLearnerResponse},
 };
 
 use super::retry::Context;
@@ -58,6 +61,12 @@ pub trait ClientApi {
 
     /// Performs membership change
     async fn change_membership(&self, changes: Vec<Change>) -> Result<(), Self::Error>;
+
+    /// Send wait learner of the give ids, returns a stream of updating response stream
+    async fn wait_learner(
+        &self,
+        node_ids: BTreeSet<u64>,
+    ) -> Result<Box<dyn Stream<Item = Result<WaitLearnerResponse, Self::Error>> + Send>, Self::Error>;
 }
 
 /// This trait override some unrepeatable methods in ClientApi, and a client with this trait will be able to retry.
@@ -98,4 +107,14 @@ pub(crate) trait RepeatableClientApi {
         changes: Vec<Change>,
         ctx: Context,
     ) -> Result<MembershipResponse, Self::Error>;
+
+    /// Send wait learner of the give ids, returns a stream of updating response stream
+    async fn wait_learner(
+        &self,
+        node_ids: BTreeSet<u64>,
+        ctx: Context,
+    ) -> Result<
+        Box<dyn Stream<Item = Result<WaitLearnerResponse, tonic::Status>> + Send>,
+        Self::Error,
+    >;
 }
