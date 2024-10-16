@@ -246,7 +246,7 @@ mod test {
         TestRoleChange,
     };
     use engine::MemorySnapshotAllocator;
-    use parking_lot::RwLock;
+    use parking_lot::{Mutex, RwLock};
     use tokio::sync::mpsc;
     use tracing_test::traced_test;
     use utils::{config::EngineConfig, task_manager::TaskManager};
@@ -282,6 +282,7 @@ mod test {
             cmd_executor: Arc::new(ce),
             as_tx,
             propose_tx,
+            replication_handles: Mutex::default(),
         }
     }
 

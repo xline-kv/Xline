@@ -63,6 +63,9 @@ use crate::{
 /// `CurpNode` member implementation
 mod member_impl;
 
+/// Log replication implementation
+mod replication;
+
 /// After sync entry, composed of a log entry and response sender
 pub(crate) type AfterSyncEntry<C> = (Arc<LogEntry<C>>, Option<Arc<ResponseSender>>);
 
@@ -133,6 +136,8 @@ pub(super) struct CurpNode<C: Command, CE: CommandExecutor<C>, RC: RoleChange> {
     as_tx: flume::Sender<TaskType<C>>,
     /// Tx to send to propose task
     propose_tx: flume::Sender<Propose<C>>,
+    /// All handles of the replication tasks
+    replication_handles: Mutex<replication::Handles>,
 }
 
 /// Handlers for clients
@@ -826,6 +831,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             cmd_executor,
             as_tx,
             propose_tx,
+            replication_handles: Mutex::default(),
         })
     }
 

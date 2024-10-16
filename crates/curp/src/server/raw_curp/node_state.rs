@@ -164,7 +164,6 @@ impl NodeStates {
     }
 
     /// Get all node states
-    #[cfg(test)]
     pub(super) fn all_states(&self) -> BTreeMap<u64, NodeState> {
         self.states.read().clone()
     }
@@ -199,8 +198,13 @@ impl NodeState {
         &self.status
     }
 
+    /// Get the next index of the current node
+    pub(crate) fn next_index(&self) -> LogIndex {
+        self.status.next_index
+    }
+
     /// Get the connection to the node
-    pub(super) fn connect(&self) -> &InnerConnectApiWrapper {
+    pub(crate) fn connect(&self) -> &InnerConnectApiWrapper {
         &self.connect
     }
 
@@ -210,7 +214,7 @@ impl NodeState {
     }
 
     /// Get the sync event trigger for a follower
-    pub(super) fn sync_event(&self) -> &Event {
+    pub(crate) fn sync_event(&self) -> &Arc<Event> {
         &self.sync_event
     }
 

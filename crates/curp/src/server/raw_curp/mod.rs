@@ -50,6 +50,7 @@ use utils::task_manager::TaskManager;
 use utils::ClientTlsConfig;
 
 use self::log::Log;
+use self::node_state::NodeState;
 use self::node_state::NodeStates;
 use self::state::CandidateState;
 use self::state::LeaderState;
@@ -280,6 +281,36 @@ pub(super) struct Vote {
     pub(super) is_pre_vote: bool,
 }
 
+/// A heartbeat
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Heartbeat {
+    /// Leader's term
+    term: u64,
+    /// Leader's id
+    leader_id: ServerId,
+}
+
+impl Heartbeat {
+    /// Creates a new `Heartbeat`
+    pub(super) fn new(term: u64, leader_id: ServerId) -> Self {
+        Self { term, leader_id }
+    }
+}
+
+impl From<Heartbeat> for crate::rpc::AppendEntriesRequest {
+    fn from(hb: Heartbeat) -> Self {
+        Self {
+            term: hb.term,
+            leader_id: hb.leader_id,
+            // not used for a heartbeat
+            prev_log_index: 0,
+            prev_log_term: 0,
+            leader_commit: 0,
+            entries: vec![],
+        }
+    }
+}
+
 /// Invoked by leader to replicate log entries; also used as heartbeat
 pub(super) struct AppendEntries<C> {
     /// Leader's term
@@ -294,6 +325,26 @@ pub(super) struct AppendEntries<C> {
     pub(super) leader_commit: LogIndex,
     /// New entries to be appended to the follower
     pub(super) entries: Vec<Arc<LogEntry<C>>>,
+}
+
+impl<C: Command> From<&AppendEntries<C>> for crate::rpc::AppendEntriesRequest {
+    fn from(ae: &AppendEntries<C>) -> Self {
+        let entries_serialized = ae
+            .entries
+            .iter()
+            .map(bincode::serialize)
+            .collect::<bincode::Result<Vec<Vec<u8>>>>()
+            .unwrap_or_else(|e| unreachable!("bincode serialization should never fail, err: {e}"));
+
+        Self {
+            term: ae.term,
+            leader_id: ae.leader_id,
+            prev_log_index: ae.prev_log_index,
+            prev_log_term: ae.prev_log_term,
+            leader_commit: ae.leader_commit,
+            entries: entries_serialized,
+        }
+    }
 }
 
 /// Curp Role
@@ -805,6 +856,20 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         Ok(true)
     }
 
+    /// Check if `commit_index` needs to be updated
+    pub(super) fn try_update_commit_index(&self, index: LogIndex, term: u64) {
+        let log_r = self.log.upgradable_read();
+        if self.can_update_commit_index_to(&log_r, index, term) {
+            let mut log_w = RwLockUpgradableReadGuard::upgrade(log_r);
+            if index > log_w.commit_index {
+                log_w.commit_to(index);
+                self.update_membership_state(None, None, Some(index));
+                debug!("{} updates commit index to {index}", self.id());
+                self.apply(&mut *log_w);
+            }
+        }
+    }
+
     /// Handle `vote`
     /// Return `Ok(term, spec_pool)` if the vote is granted
     /// Return `Err(Some(term))` if the vote is rejected
@@ -1279,6 +1344,49 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
     }
 
+    /// Get `append_entries` request for `follower_id` that contains the latest
+    /// log entries
+    pub(super) fn sync_from(&self, next_index: LogIndex) -> SyncAction<C> {
+        let term = self.st.read().term;
+        let log_r = self.log.read();
+
+        if next_index <= log_r.base_index {
+            // the log has already been compacted
+            let entry = log_r.get(log_r.last_exe).unwrap_or_else(|| {
+                unreachable!(
+                    "log entry {} should not have been compacted yet, needed for snapshot",
+                    log_r.last_as
+                )
+            });
+            // TODO: buffer a local snapshot: if a follower is down for a long time,
+            // the leader will take a snapshot itself every time `sync` is called in effort
+            // to calibrate it. Since taking a snapshot will block the leader's
+            // execute workers, we should not take snapshot so often. A better
+            // solution would be to keep a snapshot cache.
+            let meta = SnapshotMeta {
+                last_included_index: entry.index,
+                last_included_term: entry.term,
+            };
+            let (tx, rx) = oneshot::channel();
+            if let Err(e) = self.ctx.as_tx.send(TaskType::Snapshot(meta, tx)) {
+                error!("failed to send task to after sync: {e}");
+            }
+            SyncAction::Snapshot(rx)
+        } else {
+            let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
+            let entries = log_r.get_from(next_index);
+            let ae = AppendEntries {
+                term,
+                leader_id: self.id(),
+                prev_log_index,
+                prev_log_term,
+                leader_commit: log_r.commit_index,
+                entries,
+            };
+            SyncAction::AppendEntries(ae)
+        }
+    }
+
     /// Get a reference to `CurpConfig`
     pub(super) fn cfg(&self) -> &CurpConfig {
         self.ctx.cfg.as_ref()
@@ -1416,8 +1524,24 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.ctx.client_tls_config.as_ref()
     }
 
-    /// Get a range of log entry
+    /// Leader step down
+    pub(crate) fn step_down(&self, term: u64) {
+        let mut st = self.st.write();
+        self.update_to_term_and_become_follower(&mut st, term);
+    }
+
+    /// Updates the next index of the give node
+    pub(crate) fn update_next_index(&self, node_id: u64, index: LogIndex) {
+        self.ctx.node_states.update_next_index(node_id, index);
+    }
+
+    /// Get all node states
+    pub(super) fn all_node_states(&self) -> BTreeMap<u64, NodeState> {
+        self.ctx.node_states.all_states()
+    }
+
     #[cfg(test)]
+    /// Get a range of log entry
     pub(crate) fn get_log_from(&self, idx: u64) -> Vec<Arc<LogEntry<C>>> {
         self.log.read().get_from(idx)
     }
@@ -1775,7 +1899,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Update match index, also updates the monitoring ids
-    fn update_match_index(&self, id: u64, index: LogIndex) {
+    pub(crate) fn update_match_index(&self, id: u64, index: LogIndex) {
         self.ctx.node_states.update_match_index(id, index);
         let latest = self.log.read().last_log_index();
         // removes the entry if the node is up-to-date.
