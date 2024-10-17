@@ -57,7 +57,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .collect();
         let self_next_index = curp.last_log_index() + 1;
         let (action_tx, action_rx) = flume::bounded(ACTION_CHANNEL_SIZE);
-        HANDLES.lock().iter().for_each(JoinHandle::abort);
+        Self::abort_replication();
 
         let state_handle = tokio::spawn(Self::state_machine_worker(curp, action_rx));
         let heartbeat_handle = tokio::spawn(Self::heartbeat_worker(
@@ -84,6 +84,11 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .chain([state_handle])
             .chain([heartbeat_handle])
             .collect();
+    }
+
+    /// Aborts all ongoing replication tasks
+    pub(super) fn abort_replication() {
+        HANDLES.lock().iter().for_each(JoinHandle::abort);
     }
 
     /// A worker responsible for synchronizing data with the curp state machine

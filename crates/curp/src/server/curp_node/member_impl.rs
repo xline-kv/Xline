@@ -104,6 +104,12 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             self.wait_commit(Some(propose_id)).await;
         }
 
+        // leader step down
+        if !self.curp.is_leader() {
+            debug!("leader step down, aborting replication");
+            Self::abort_replication();
+        }
+
         self.build_membership_response()
     }
 
