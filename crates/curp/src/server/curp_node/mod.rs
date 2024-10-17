@@ -5,9 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use clippy_utilities::{NumericCast, OverflowArithmetic};
+use clippy_utilities::NumericCast;
 use engine::{SnapshotAllocator, SnapshotApi};
-use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, FutureExt, Stream, StreamExt};
 use madsim::rand::{thread_rng, Rng};
 use opentelemetry::KeyValue;
@@ -15,13 +14,17 @@ use parking_lot::{Mutex, RwLock};
 use tokio::{sync::oneshot, time::MissedTickBehavior};
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 #[cfg(madsim)]
-use utils::ClientTlsConfig;
 use utils::{
     barrier::IdBarrier,
     config::CurpConfig,
     task_manager::{tasks::TaskName, Listener, State, TaskManager},
+};
+use utils::{
+    barrier::IdBarrier,
+    config::CurpConfig,
+    task_manager::{tasks::TaskName, Listener, TaskManager},
 };
 
 use super::{
@@ -31,19 +34,17 @@ use super::{
     conflict::uncommitted_pool::{UcpObject, UncommittedPool},
     gc::gc_client_lease,
     lease_manager::LeaseManager,
-    raw_curp::{AppendEntries, RawCurp, Vote},
+    raw_curp::{RawCurp, Vote},
     storage::StorageApi,
 };
 use crate::{
     cmd::{Command, CommandExecutor},
-    log_entry::{EntryData, LogEntry},
+    log_entry::LogEntry,
     member::{MembershipConfig, MembershipInfo},
     response::ResponseSender,
     role_change::RoleChange,
     rpc::{
-        self,
-        connect::{InnerConnectApi, InnerConnectApiWrapper},
-        AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchMembershipRequest,
+        self, AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchMembershipRequest,
         FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
         InstallSnapshotResponse, LeaseKeepAliveMsg, MembershipResponse, MoveLeaderRequest,
         MoveLeaderResponse, PoolEntry, ProposeId, ProposeRequest, ProposeResponse,
@@ -54,7 +55,6 @@ use crate::{
     server::{
         cmd_worker::{after_sync, worker_reset, worker_snapshot},
         metrics,
-        raw_curp::SyncAction,
         storage::db::DB,
     },
     snapshot::{Snapshot, SnapshotMeta},
@@ -643,73 +643,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         }
     }
 
-    /// This task will keep a follower up-to-data when current node is leader,
-    /// and it will wait for `leader_event` if current node is not leader
-    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // tokio select internal triggered
-    pub(crate) async fn sync_follower_task(
-        curp: Arc<RawCurp<C, RC>>,
-        connect: InnerConnectApiWrapper,
-        sync_event: Arc<Event>,
-        remove_event: Arc<Event>,
-        shutdown_listener: Listener,
-    ) {
-        debug!("{} to {} sync follower task start", curp.id(), connect.id());
-        let _guard = shutdown_listener.sync_follower_guard();
-        let mut ticker = tokio::time::interval(curp.cfg().heartbeat_interval);
-        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let connect_id = connect.id();
-        let batch_timeout = curp.cfg().batch_timeout;
-        let leader_event = curp.leader_event();
-
-        if !curp.is_leader() {
-            tokio::select! {
-                _ = shutdown_listener.wait_state() => return,
-                _ = remove_event.listen() => return,
-                _ = leader_event.listen() => {}
-            }
-        }
-        let mut hb_opt = false;
-        let mut is_shutdown_state = false;
-        let mut ae_fail_count = 0;
-        loop {
-            // a sync is either triggered by an heartbeat timeout event or when new log
-            // entries arrive
-            tokio::select! {
-                state = shutdown_listener.wait_state(), if !is_shutdown_state => {
-                    match state {
-                        State::Running => unreachable!("wait state should not return Run"),
-                        State::Shutdown => return,
-                        State::ClusterShutdown => is_shutdown_state = true,
-                    }
-                },
-                _ = remove_event.listen() => return,
-                _now = ticker.tick() => hb_opt = false,
-                res = tokio::time::timeout(batch_timeout, sync_event.listen()) => {
-                    if let Err(_e) = res {
-                        hb_opt = true;
-                    }
-                }
-            }
-
-            let Some(sync_action) = curp.sync(connect_id) else {
-                break;
-            };
-            if Self::handle_sync_action(
-                sync_action,
-                &mut hb_opt,
-                is_shutdown_state,
-                &mut ae_fail_count,
-                connect.as_ref(),
-                curp.as_ref(),
-            )
-            .await
-            {
-                break;
-            };
-        }
-        debug!("{} to {} sync follower task exits", curp.id(), connect.id());
-    }
-
     /// After sync task
     async fn after_sync_task(
         curp: Arc<RawCurp<C, RC>>,
@@ -848,25 +781,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             Self::election_task(Arc::clone(&curp), n)
         });
 
-        let self_id = curp.id();
-        curp.with_member_connects(|connects| {
-            for (id, c) in connects {
-                if *id == self_id {
-                    continue;
-                }
-                let (sync_event, remove_event) = curp.events(c.id());
-                task_manager.spawn(TaskName::SyncFollower, |n| {
-                    Self::sync_follower_task(
-                        Arc::clone(&curp),
-                        c.clone(),
-                        sync_event,
-                        Arc::clone(&remove_event),
-                        n,
-                    )
-                });
-            }
-        });
-
         task_manager.spawn(TaskName::HandlePropose, |_n| {
             Self::handle_propose_task(Arc::clone(&cmd_executor), Arc::clone(&curp), propose_rx)
         });
@@ -946,172 +860,9 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         None
     }
 
-    /// Send `append_entries` request
-    /// Return `tonic::Error` if meet network issue
-    /// Return (`leader_retires`, `ae_succeed`)
-    #[allow(clippy::arithmetic_side_effects)] // won't overflow
-    async fn send_ae(
-        connect: &(impl InnerConnectApi + ?Sized),
-        curp: &RawCurp<C, RC>,
-        ae: AppendEntries<C>,
-    ) -> Result<(bool, bool), CurpError> {
-        let last_sent_index = (!ae.entries.is_empty())
-            .then(|| ae.prev_log_index + ae.entries.len().numeric_cast::<u64>());
-        let is_heartbeat = ae.entries.is_empty();
-        let req = AppendEntriesRequest::new(
-            ae.term,
-            ae.leader_id,
-            ae.prev_log_index,
-            ae.prev_log_term,
-            ae.entries,
-            ae.leader_commit,
-        )?;
-
-        if is_heartbeat {
-            trace!("{} send heartbeat to {}", curp.id(), connect.id());
-        } else {
-            debug!("{} send append_entries to {}", curp.id(), connect.id());
-        }
-
-        let resp = connect
-            .append_entries(req, curp.cfg().rpc_timeout)
-            .await?
-            .into_inner();
-
-        let Ok(ae_succeed) = curp.handle_append_entries_resp(
-            connect.id(),
-            last_sent_index,
-            resp.term,
-            resp.success,
-            resp.hint_index,
-        ) else {
-            return Ok((true, false));
-        };
-
-        Ok((false, ae_succeed))
-    }
-
-    /// Send snapshot
-    /// Return `tonic::Error` if meet network issue
-    /// Return `leader_retires`
-    async fn send_snapshot(
-        connect: &(impl InnerConnectApi + ?Sized),
-        curp: &RawCurp<C, RC>,
-        snapshot: Snapshot,
-    ) -> Result<bool, CurpError> {
-        let meta = snapshot.meta;
-        let resp = connect
-            .install_snapshot(curp.term(), curp.id(), snapshot)
-            .await?
-            .into_inner();
-        Ok(curp
-            .handle_snapshot_resp(connect.id(), meta, resp.term)
-            .is_err())
-    }
-
     /// Get `RawCurp`
     pub(super) fn raw_curp(&self) -> Arc<RawCurp<C, RC>> {
         Arc::clone(&self.curp)
-    }
-
-    /// Handle `SyncAction`
-    /// If no longer need to sync to this node, return true
-    async fn handle_sync_action(
-        sync_action: SyncAction<C>,
-        hb_opt: &mut bool,
-        is_shutdown_state: bool,
-        ae_fail_count: &mut u32,
-        connect: &(impl InnerConnectApi + ?Sized),
-        curp: &RawCurp<C, RC>,
-    ) -> bool {
-        let connect_id = connect.id();
-        match sync_action {
-            SyncAction::AppendEntries(ae) => {
-                let is_empty = ae.entries.is_empty();
-                let is_commit_shutdown = ae.entries.last().is_some_and(|e| {
-                    matches!(e.entry_data, EntryData::Shutdown) && e.index == ae.leader_commit
-                });
-                // (hb_opt, entries) status combination
-                // (false, empty) => send heartbeat to followers
-                // (true, empty) => indicates that `batch_timeout` expired, and during this
-                // period there is not any log generated. Do nothing
-                // (true | false, not empty) => send append entries
-                if !*hb_opt || !is_empty {
-                    match Self::send_ae(connect, curp, ae).await {
-                        Ok((true, _)) => return true,
-                        Ok((false, ae_succeed)) => {
-                            if ae_succeed {
-                                *hb_opt = true;
-                                if curp
-                                    .get_transferee()
-                                    .is_some_and(|transferee| transferee == connect_id)
-                                    && curp
-                                        .get_match_index(connect_id)
-                                        .is_some_and(|idx| idx == curp.last_log_index())
-                                {
-                                    if let Err(e) = connect
-                                        .try_become_leader_now(curp.cfg().wait_synced_timeout)
-                                        .await
-                                    {
-                                        warn!(
-                                            "{} send try become leader now to {} failed: {:?}",
-                                            curp.id(),
-                                            connect_id,
-                                            e
-                                        );
-                                    };
-                                }
-                            } else {
-                                debug!("ae rejected by {}", connect.id());
-                            }
-                            // Check Follower shutdown
-                            // When the leader is in the shutdown state, its last log must be
-                            // shutdown, and if the follower is
-                            // already synced with leader and current AE is a heartbeat, then the
-                            // follower will commit the shutdown
-                            // log after AE, or when the follower is not synced with the leader, the
-                            // current AE will send and directly commit
-                            // shutdown log.
-                            if is_shutdown_state
-                                && ((curp.is_synced(connect_id) && is_empty)
-                                    || (!curp.is_synced(connect_id) && is_commit_shutdown))
-                            {
-                                if let Err(e) = connect.trigger_shutdown().await {
-                                    warn!("trigger shutdown to {} failed, {e}", connect_id);
-                                } else {
-                                    debug!("trigger shutdown to {} success", connect_id);
-                                }
-                                return true;
-                            }
-                        }
-                        Err(err) => {
-                            if is_empty {
-                                metrics::get().heartbeat_send_failures.add(1, &[]);
-                            }
-                            warn!("ae to {} failed, {err:?}", connect.id());
-                            if is_shutdown_state {
-                                *ae_fail_count = ae_fail_count.overflow_add(1);
-                                if *ae_fail_count >= 5 {
-                                    warn!("the follower {} may have been shutdown", connect_id);
-                                    return true;
-                                }
-                            }
-                        }
-                    };
-                }
-            }
-            SyncAction::Snapshot(rx) => match rx.await {
-                Ok(snapshot) => match Self::send_snapshot(connect, curp, snapshot).await {
-                    Ok(true) => return true,
-                    Err(err) => warn!("snapshot to {} failed, {err:?}", connect.id()),
-                    Ok(false) => {}
-                },
-                Err(err) => {
-                    warn!("failed to receive snapshot result, {err}");
-                }
-            },
-        }
-        false
     }
 }
 
@@ -1126,12 +877,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Debug for CurpNode<C, C
 
 #[cfg(test)]
 mod tests {
-    use curp_test_utils::{mock_role_change, sleep_secs, test_cmd::TestCE};
-    use tracing_test::traced_test;
-
-    use super::*;
-    use crate::rpc::connect::MockInnerConnectApi;
-
+    #[cfg(ignore)] // TODO : rewrite this
     #[traced_test]
     #[tokio::test]
     async fn sync_task_will_send_hb() {

@@ -40,7 +40,6 @@ use tracing::error;
 use tracing::log::log_enabled;
 use tracing::log::Level;
 use tracing::trace;
-use tracing::warn;
 use utils::barrier::IdBarrier;
 use utils::config::CurpConfig;
 use utils::parking_lot_lock::MutexMap;
@@ -800,62 +799,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         Ok((term, truncate_at, to_persist))
     }
 
-    /// Handle `append_entries` response
-    /// Return `Ok(ae_succeeded)`
-    /// Return `Err(())` if self is no longer the leader
-    pub(super) fn handle_append_entries_resp(
-        &self,
-        follower_id: ServerId,
-        last_sent_index: Option<LogIndex>, // None means the ae is a heartbeat
-        term: u64,
-        success: bool,
-        hint_index: LogIndex,
-    ) -> Result<bool, ()> {
-        // validate term
-        let (cur_term, cur_role) = self.st.map_read(|st_r| (st_r.term, st_r.role));
-        if cur_term < term {
-            let mut st_w = self.st.write();
-            self.update_to_term_and_become_follower(&mut st_w, term);
-            return Err(());
-        }
-        if cur_role != Role::Leader {
-            return Err(());
-        }
-
-        if !success {
-            self.ctx
-                .node_states
-                .update_next_index(follower_id, hint_index);
-            debug!(
-                "{} updates follower {}'s next_index to {hint_index} because it rejects ae",
-                self.id(),
-                follower_id,
-            );
-            return Ok(false);
-        }
-
-        // if ae is a heartbeat, return
-        let Some(last_sent_index) = last_sent_index else {
-            return Ok(true);
-        };
-
-        self.update_match_index(follower_id, last_sent_index);
-
-        // check if commit_index needs to be updated
-        let log_r = self.log.upgradable_read();
-        if self.can_update_commit_index_to(&log_r, last_sent_index, cur_term) {
-            let mut log_w = RwLockUpgradableReadGuard::upgrade(log_r);
-            if last_sent_index > log_w.commit_index {
-                log_w.commit_to(last_sent_index);
-                self.update_membership_state(None, None, Some(last_sent_index));
-                debug!("{} updates commit index to {last_sent_index}", self.id());
-                self.apply(&mut *log_w);
-            }
-        }
-
-        Ok(true)
-    }
-
     /// Check if `commit_index` needs to be updated
     pub(super) fn try_update_commit_index(&self, index: LogIndex, term: u64) {
         let log_r = self.log.upgradable_read();
@@ -1123,29 +1066,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         validate
     }
 
-    /// Handle `install_snapshot` resp
-    /// Return Err(()) if the current node isn't a leader or current term is
-    /// less than the given term
-    pub(super) fn handle_snapshot_resp(
-        &self,
-        follower_id: ServerId,
-        meta: SnapshotMeta,
-        term: u64,
-    ) -> Result<(), ()> {
-        // validate term
-        let (cur_term, cur_role) = self.st.map_read(|st_r| (st_r.term, st_r.role));
-        if cur_term < term {
-            let mut st_w = self.st.write();
-            self.update_to_term_and_become_follower(&mut st_w, term);
-            return Err(());
-        }
-        if cur_role != Role::Leader {
-            return Err(());
-        }
-        self.update_match_index(follower_id, meta.last_included_index.numeric_cast());
-        Ok(())
-    }
-
     /// Handle `fetch_read_state`
     pub(super) fn handle_fetch_read_state(&self, cmd: Arc<C>) -> ReadState {
         let ids: Vec<_> = self
@@ -1290,62 +1210,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Get `append_entries` request for `follower_id` that contains the latest
     /// log entries
-    pub(super) fn sync(&self, follower_id: ServerId) -> Option<SyncAction<C>> {
-        let term = {
-            let st_r = self.st.read();
-            if st_r.role != Role::Leader {
-                return None;
-            }
-            st_r.term
-        };
-
-        let Some(next_index) = self.ctx.node_states.get_next_index(follower_id) else {
-            warn!(
-                "follower {} is not found, it maybe has been removed",
-                follower_id
-            );
-            return None;
-        };
-        let log_r = self.log.read();
-        if next_index <= log_r.base_index {
-            // the log has already been compacted
-            let entry = log_r.get(log_r.last_exe).unwrap_or_else(|| {
-                unreachable!(
-                    "log entry {} should not have been compacted yet, needed for snapshot",
-                    log_r.last_as
-                )
-            });
-            // TODO: buffer a local snapshot: if a follower is down for a long time,
-            // the leader will take a snapshot itself every time `sync` is called in effort
-            // to calibrate it. Since taking a snapshot will block the leader's
-            // execute workers, we should not take snapshot so often. A better
-            // solution would be to keep a snapshot cache.
-            let meta = SnapshotMeta {
-                last_included_index: entry.index,
-                last_included_term: entry.term,
-            };
-            let (tx, rx) = oneshot::channel();
-            if let Err(e) = self.ctx.as_tx.send(TaskType::Snapshot(meta, tx)) {
-                error!("failed to send task to after sync: {e}");
-            }
-            Some(SyncAction::Snapshot(rx))
-        } else {
-            let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
-            let entries = log_r.get_from(next_index);
-            let ae = AppendEntries {
-                term,
-                leader_id: self.id(),
-                prev_log_index,
-                prev_log_term,
-                leader_commit: log_r.commit_index,
-                entries,
-            };
-            Some(SyncAction::AppendEntries(ae))
-        }
-    }
-
-    /// Get `append_entries` request for `follower_id` that contains the latest
-    /// log entries
     pub(super) fn sync_from(&self, next_index: LogIndex) -> SyncAction<C> {
         let term = self.st.read().term;
         let log_r = self.log.read();
@@ -1395,11 +1259,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Is leader?
     pub(super) fn is_leader(&self) -> bool {
         self.st.read().role == Role::Leader
-    }
-
-    /// Get leader event
-    pub(super) fn leader_event(&self) -> Arc<Event> {
-        Arc::clone(&self.ctx.leader_event)
     }
 
     /// Reset log base
@@ -1456,30 +1315,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         Arc::clone(&self.task_manager)
     }
 
-    /// Check if the specified follower has caught up with the leader
-    pub(super) fn is_synced(&self, node_id: ServerId) -> bool {
-        let log_r = self.log.read();
-        let leader_commit_index = log_r.commit_index;
-        self.ctx
-            .node_states
-            .get_match_index(node_id)
-            .is_some_and(|match_index| match_index == leader_commit_index)
-    }
-
     /// Get rpc connect connects by ids
     pub(super) fn connects<'a, Ids: IntoIterator<Item = &'a u64>>(
         &self,
         ids: Ids,
     ) -> impl Iterator<Item = InnerConnectApiWrapper> {
         self.ctx.node_states.connects(ids)
-    }
-
-    /// Get all connects
-    pub(super) fn with_member_connects<F, R>(&self, mut op: F) -> R
-    where
-        F: FnMut(&BTreeMap<u64, InnerConnectApiWrapper>) -> R,
-    {
-        op(&self.ctx.node_states.all_connects())
     }
 
     /// Get voters connects
@@ -1496,11 +1337,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Get transferee
     pub(super) fn get_transferee(&self) -> Option<ServerId> {
         self.lst.get_transferee()
-    }
-
-    /// Get match index of a node
-    pub(super) fn get_match_index(&self, id: ServerId) -> Option<u64> {
-        self.ctx.node_states.get_match_index(id)
     }
 
     /// Get last log index

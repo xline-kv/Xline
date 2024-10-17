@@ -273,28 +273,6 @@ impl SyncedResponse {
 }
 
 impl AppendEntriesRequest {
-    /// Create a new `append_entries` request
-    pub(crate) fn new<C: Command>(
-        term: u64,
-        leader_id: ServerId,
-        prev_log_index: LogIndex,
-        prev_log_term: u64,
-        entries: Vec<Arc<LogEntry<C>>>,
-        leader_commit: LogIndex,
-    ) -> bincode::Result<Self> {
-        Ok(Self {
-            term,
-            leader_id,
-            prev_log_index,
-            prev_log_term,
-            entries: entries
-                .into_iter()
-                .map(|e| bincode::serialize(&e))
-                .collect::<bincode::Result<Vec<Vec<u8>>>>()?,
-            leader_commit,
-        })
-    }
-
     /// Get log entries
     pub(crate) fn entries<C: Command>(&self) -> bincode::Result<Vec<LogEntry<C>>> {
         self.entries

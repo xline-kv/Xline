@@ -90,6 +90,8 @@ impl NodeStates {
             warn!("follower {} is not found, it maybe has been removed", id);
         };
     }
+
+    #[cfg(test)]
     /// Get `next_index` for server
     pub(super) fn get_next_index(&self, id: u64) -> Option<LogIndex> {
         let states_r = self.states.read();
@@ -151,16 +153,6 @@ impl NodeStates {
             .filter_map(|id| states_r.get(id).map(NodeState::connect).cloned())
             .collect::<Vec<_>>()
             .into_iter()
-    }
-
-    /// Get all rpc connects
-    pub(super) fn all_connects(&self) -> BTreeMap<u64, InnerConnectApiWrapper> {
-        let states_r = self.states.read();
-        states_r
-            .keys()
-            .copied()
-            .zip(states_r.values().map(NodeState::connect).cloned())
-            .collect()
     }
 
     /// Get all node states
@@ -227,19 +219,8 @@ impl NodeState {
     pub(super) fn status_mut(&mut self) -> &mut NodeStatus {
         &mut self.status
     }
-
-    /// Decomposes the `NodeState` into its constituent parts.
-    pub(crate) fn into_parts(self) -> (InnerConnectApiWrapper, Arc<Event>, Arc<Event>) {
-        let NodeState {
-            connect,
-            sync_event,
-            remove_event,
-            ..
-        } = self;
-
-        (connect, sync_event, remove_event)
-    }
 }
+
 #[cfg(test)]
 mod tests {
     use utils::parking_lot_lock::RwLockMap;
