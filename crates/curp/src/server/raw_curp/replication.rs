@@ -2,8 +2,6 @@ use curp_external_api::{cmd::Command, role_change::RoleChange, LogIndex};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info};
 
-use crate::rpc::{AppendEntriesResponse, InstallSnapshotResponse};
-
 use super::{AppendEntries, RawCurp, SyncAction};
 
 /// Represents various actions that can be performed on the `RawCurp` state machine
@@ -92,5 +90,145 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             return Action::StepDown(other_term);
         }
         Action::UpdateMatchIndex((node_id, last_include_index))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+
+    use curp_test_utils::{mock_role_change, test_cmd::TestCommand, TestRoleChange};
+    use tracing_test::traced_test;
+    use utils::task_manager::TaskManager;
+
+    use crate::server::raw_curp::Role;
+
+    use super::*;
+
+    type TestRawCurp = RawCurp<TestCommand, TestRoleChange>;
+
+    #[traced_test]
+    #[test]
+    fn replication_entries_will_calibrate_term() {
+        let curp = RawCurp::new_test(3, mock_role_change(), Arc::new(TaskManager::new()));
+        let ae = AppendEntries::<TestCommand> {
+            term: 1,
+            leader_id: 1,
+            prev_log_index: 2,
+            prev_log_term: 1,
+            leader_commit: 1,
+            entries: vec![],
+        };
+        let action = TestRawCurp::append_entries_action(2, false, 1, &ae, 2, 1);
+        curp.sync_state_machine(action);
+
+        let st_r = curp.st.read();
+        assert_eq!(st_r.term, 2);
+        assert_eq!(st_r.role, Role::Follower);
+    }
+
+    #[traced_test]
+    #[test]
+    fn heartbeat_will_calibrate_term() {
+        let curp = RawCurp::new_test(3, mock_role_change(), Arc::new(TaskManager::new()));
+        let action = TestRawCurp::heartbeat_action(2, 1).unwrap();
+        curp.sync_state_machine(action);
+
+        let st_r = curp.st.read();
+        assert_eq!(st_r.term, 2);
+        assert_eq!(st_r.role, Role::Follower);
+    }
+
+    #[traced_test]
+    #[test]
+    fn snapshot_will_calibrate_term() {
+        let curp = RawCurp::new_test(3, mock_role_change(), Arc::new(TaskManager::new()));
+        let action = TestRawCurp::snapshot_action(2, 1, 1, 1);
+        curp.sync_state_machine(action);
+
+        let st_r = curp.st.read();
+        assert_eq!(st_r.term, 2);
+        assert_eq!(st_r.role, Role::Follower);
+    }
+
+    #[traced_test]
+    #[test]
+    fn snapshot_will_calibrate_index() {
+        let curp = RawCurp::new_test(3, mock_role_change(), Arc::new(TaskManager::new()));
+
+        let s1_id = curp.get_id_by_name("S1").unwrap();
+        assert_eq!(curp.ctx.node_states.get_match_index(s1_id), Some(0));
+
+        let action = TestRawCurp::snapshot_action(1, s1_id, 1, 1);
+        curp.sync_state_machine(action);
+
+        let st_r = curp.st.read();
+        assert_eq!(st_r.term, 1);
+        assert_eq!(curp.ctx.node_states.get_match_index(s1_id), Some(1));
+    }
+
+    #[traced_test]
+    #[test]
+    fn replication_entries_will_calibrate_next_index() {
+        let curp = RawCurp::new_test(3, mock_role_change(), Arc::new(TaskManager::new()));
+
+        let s1_id = curp.get_id_by_name("S1").unwrap();
+        assert_eq!(curp.ctx.node_states.get_next_index(s1_id), Some(1));
+
+        let ae = AppendEntries::<TestCommand> {
+            term: 1,
+            leader_id: 1,
+            prev_log_index: 1,
+            prev_log_term: 1,
+            leader_commit: 1,
+            entries: vec![],
+        };
+        let action = TestRawCurp::append_entries_action(1, false, 2, &ae, s1_id, 1);
+        curp.sync_state_machine(action);
+
+        let st_r = curp.st.read();
+        assert_eq!(st_r.term, 1);
+        assert_eq!(curp.ctx.node_states.get_next_index(s1_id), Some(2));
+    }
+
+    #[traced_test]
+    #[test]
+    fn replication_entries_will_calibrate_match_index() {
+        let curp = RawCurp::new_test(3, mock_role_change(), Arc::new(TaskManager::new()));
+
+        let s1_id = curp.get_id_by_name("S1").unwrap();
+        assert_eq!(curp.ctx.node_states.get_match_index(s1_id), Some(0));
+
+        let ae = AppendEntries::<TestCommand> {
+            term: 1,
+            leader_id: 1,
+            prev_log_index: 1,
+            prev_log_term: 1,
+            leader_commit: 1,
+            entries: vec![],
+        };
+        let action = TestRawCurp::append_entries_action(1, true, 2, &ae, s1_id, 1);
+        curp.sync_state_machine(action);
+
+        let st_r = curp.st.read();
+        assert_eq!(st_r.term, 1);
+        assert_eq!(curp.ctx.node_states.get_match_index(s1_id), Some(1));
+    }
+
+    #[traced_test]
+    #[test]
+    fn handle_ae_will_calibrate_term() {
+        let task_manager = Arc::new(TaskManager::new());
+        let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
+        curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
+        let s2_id = curp.get_id_by_name("S2").unwrap();
+
+        let result = curp.handle_append_entries(2, s2_id, 0, 0, vec![], 0);
+        assert!(result.is_ok());
+
+        let st_r = curp.st.read();
+        assert_eq!(st_r.term, 2);
+        assert_eq!(st_r.role, Role::Follower);
+        assert_eq!(st_r.leader_id, Some(s2_id));
     }
 }

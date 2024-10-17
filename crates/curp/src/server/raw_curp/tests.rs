@@ -211,58 +211,6 @@ fn follower_handle_propose_will_reject_conflicted() {
     assert!(matches!(res, Err(CurpError::KeyConflict(()))));
 }
 
-/*************** tests for append_entries(heartbeat) **************/
-
-#[cfg(ignore)] // TODO: rewrite this test
-#[traced_test]
-#[test]
-fn heartbeat_will_calibrate_term() {
-    let task_manager = Arc::new(TaskManager::new());
-    let curp = { RawCurp::new_test(3, mock_role_change(), task_manager) };
-
-    let s1_id = curp.get_id_by_name("S1").unwrap();
-    let result = curp.handle_append_entries_resp(s1_id, None, 2, false, 1);
-    assert!(result.is_err());
-
-    let st_r = curp.st.read();
-    assert_eq!(st_r.term, 2);
-    assert_eq!(st_r.role, Role::Follower);
-}
-
-#[cfg(ignore)] // TODO: rewrite this test
-#[traced_test]
-#[test]
-fn heartbeat_will_calibrate_next_index() {
-    let task_manager = Arc::new(TaskManager::new());
-    let curp = RawCurp::new_test(3, mock_role_change(), task_manager);
-
-    let s1_id = curp.get_id_by_name("S1").unwrap();
-    let result = curp.handle_append_entries_resp(s1_id, None, 0, false, 1);
-    assert_eq!(result, Ok(false));
-
-    let st_r = curp.st.read();
-    assert_eq!(st_r.term, 1);
-    assert_eq!(curp.ctx.node_states.get_next_index(s1_id), Some(1));
-}
-
-#[cfg(ignore)] // TODO: rewrite this test
-#[traced_test]
-#[test]
-fn handle_ae_will_calibrate_term() {
-    let task_manager = Arc::new(TaskManager::new());
-    let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
-    curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
-    let s2_id = curp.get_id_by_name("S2").unwrap();
-
-    let result = curp.handle_append_entries(2, s2_id, 0, 0, vec![], 0);
-    assert!(result.is_ok());
-
-    let st_r = curp.st.read();
-    assert_eq!(st_r.term, 2);
-    assert_eq!(st_r.role, Role::Follower);
-    assert_eq!(st_r.leader_id, Some(s2_id));
-}
-
 #[traced_test]
 #[test]
 fn handle_ae_will_set_leader_id() {
