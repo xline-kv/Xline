@@ -22,6 +22,7 @@ pub(crate) trait ForEachServer {
     ) -> FuturesUnordered<F>;
 }
 
+#[allow(variant_size_differences)] // not an issue
 /// Cluster State
 #[derive(Debug, Clone)]
 pub(crate) enum ClusterState {
@@ -29,6 +30,8 @@ pub(crate) enum ClusterState {
     Init(ClusterStateInit),
     /// Ready cluster state
     Full(ClusterStateFull),
+    /// Error state, containing the previous state
+    Errored(Box<ClusterState>),
 }
 
 impl From<ClusterStateInit> for ClusterState {
@@ -51,6 +54,7 @@ impl ForEachServer for ClusterState {
         match *self {
             ClusterState::Init(ref init) => init.for_each_server(f),
             ClusterState::Full(ref ready) => ready.for_each_server(f),
+            ClusterState::Errored(ref state) => state.for_each_server(f),
         }
     }
 }

@@ -107,10 +107,7 @@ impl KeepAlive {
                     }
                     Err(e) => {
                         warn!("keep alive failed: {e:?}");
-                        if let Err(err) = cluster_state.fetch_and_update().await {
-                            warn!("fetch cluster failed: {err:?}");
-                            tokio::time::sleep(FAIL_SLEEP_DURATION).await;
-                        }
+                        cluster_state.errored();
                     }
                 }
 

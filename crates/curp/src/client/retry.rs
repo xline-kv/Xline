@@ -1,7 +1,8 @@
 use std::{
+    collections::BTreeSet,
     ops::SubAssign,
     sync::{atomic::AtomicU64, Arc},
-    time::Duration, collections::BTreeSet,
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -10,7 +11,7 @@ use parking_lot::RwLock;
 use tracing::{debug, warn};
 
 use super::{
-    cluster_state::{ClusterState, ClusterStateInit, ClusterStateFull},
+    cluster_state::{ClusterState, ClusterStateFull, ClusterStateInit},
     config::Config,
     connect::{ProposeResponse, RepeatableClientApi},
     fetch::Fetch,
@@ -19,7 +20,11 @@ use super::{
 };
 use crate::{
     members::ServerId,
-    rpc::{CurpError, ReadState, Redirect, ProposeId, MembershipResponse, NodeMetadata, Node, Change, WaitLearnerResponse}, tracker::Tracker,
+    rpc::{
+        Change, CurpError, MembershipResponse, Node, NodeMetadata, ProposeId, ReadState, Redirect,
+        WaitLearnerResponse,
+    },
+    tracker::Tracker,
 };
 
 /// Backoff config
@@ -202,25 +207,19 @@ impl ClusterStateShared {
         }
     }
 
-    /// Fetch and updates current state
-    ///
-    /// Returns the fetched cluster state
-    pub(crate) async fn fetch_and_update(&self) -> Result<ClusterStateFull, CurpError> {
-        let current = self.inner.read().clone();
-        let (new_state, _) = self.fetch.fetch_cluster(current).await?;
-        *self.inner.write() = ClusterState::Full(new_state.clone());
-        debug!("cluster state updates to: {new_state:?}");
-
-        Ok(new_state)
-    }
-
     /// Retrieves the cluster state if it's ready, or fetches and updates it if not.
     pub(crate) async fn ready_or_fetch(&self) -> Result<ClusterStateFull, CurpError> {
         let current = self.inner.read().clone();
         match current {
-            ClusterState::Init(init) => self.fetch_and_update().await,
+            ClusterState::Init(_) | ClusterState::Errored(_) => self.fetch_and_update().await,
             ClusterState::Full(ready) => Ok(ready),
         }
+    }
+
+    /// Marks the current state as errored by updating the inner state to `ClusterState::Errored`.
+    pub(crate) fn errored(&self) {
+        let mut inner_w = self.inner.write();
+        *inner_w = ClusterState::Errored(Box::new(inner_w.clone()));
     }
 
     /// Updates the current state with the provided `ClusterStateReady`.
@@ -233,11 +232,22 @@ impl ClusterStateShared {
     pub(crate) fn unwrap_full_state(&self) -> ClusterStateFull {
         let current = self.inner.read().clone();
         match current {
-            ClusterState::Init(_) => unreachable!("initial state"),
+            ClusterState::Init(_) | ClusterState::Errored(_) => unreachable!("initial state"),
             ClusterState::Full(ready) => ready,
         }
     }
 
+    /// Fetch and updates current state
+    ///
+    /// Returns the fetched cluster state
+    async fn fetch_and_update(&self) -> Result<ClusterStateFull, CurpError> {
+        let current = self.inner.read().clone();
+        let (new_state, _) = self.fetch.fetch_cluster(current).await?;
+        *self.inner.write() = ClusterState::Full(new_state.clone());
+        debug!("cluster state updates to: {new_state:?}");
+
+        Ok(new_state)
+    }
 }
 
 /// The retry client automatically retry the requests of the inner client api
@@ -319,7 +329,14 @@ where
         let propose_id_guard = self.tracker.gen_propose_id(client_id);
         let first_incomplete = self.tracker.first_incomplete();
         while let Some(delay) = backoff.next_delay() {
-            let cluster_state = self.cluster_state.ready_or_fetch().await?;
+            let fetch_result = self.cluster_state.ready_or_fetch().await;
+            let cluster_state = match fetch_result {
+                Ok(x) => x,
+                Err(err) => {
+                    self.on_error(err, delay, &mut last_err).await?;
+                    continue;
+                }
+            };
             let context = Context::new(*propose_id_guard, first_incomplete, cluster_state.clone());
             let result = tokio::select! {
                 result = f(&self.inner, context) => result,
@@ -327,21 +344,10 @@ where
                     return Err(CurpError::expired_client_id().into());
                 },
             };
-            let err = match result {
+            match result {
                 Ok(res) => return Ok(res),
-                Err(err) => err,
+                Err(err) => self.on_error(err, delay, &mut last_err).await?,
             };
-            self.handle_err(&err, cluster_state).await?;
-
-            #[cfg(feature = "client-metrics")]
-            super::metrics::get().client_retry_count.add(1, &[]);
-
-            warn!(
-                "got error: {err:?}, retry on {} seconds later",
-                delay.as_secs_f32()
-            );
-            last_err = Some(err);
-            tokio::time::sleep(delay).await;
         }
 
         Err(tonic::Status::deadline_exceeded(format!(
@@ -350,12 +356,30 @@ where
         )))
     }
 
-    /// Handles errors before another retry
-    async fn handle_err(
+    /// Actions performs on error
+    async fn on_error(
         &self,
-        err: &CurpError,
-        cluster_state: ClusterStateFull,
+        err: CurpError,
+        delay: Duration,
+        last_err: &mut Option<CurpError>,
     ) -> Result<(), tonic::Status> {
+        self.handle_err(&err)?;
+
+        #[cfg(feature = "client-metrics")]
+        super::metrics::get().client_retry_count.add(1, &[]);
+
+        warn!(
+            "got error: {err:?}, retry on {} seconds later",
+            delay.as_secs_f32()
+        );
+        *last_err = Some(err);
+        tokio::time::sleep(delay).await;
+
+        Ok(())
+    }
+
+    /// Handles errors before another retry
+    fn handle_err(&self, err: &CurpError) -> Result<(), tonic::Status> {
         match *err {
             // some errors that should not retry
             CurpError::Duplicated(())
@@ -363,7 +387,7 @@ where
             | CurpError::InvalidConfig(())
             | CurpError::NodeNotExists(())
             | CurpError::NodeAlreadyExists(())
-            | CurpError::LearnerNotCatchUp(()) 
+            | CurpError::LearnerNotCatchUp(())
             | CurpError::InvalidMemberChange(())
             => {
                 return Err(tonic::Status::from(err.clone()));
@@ -380,8 +404,7 @@ where
             | CurpError::WrongClusterVersion(())
             | CurpError::Redirect(_) // FIXME: The redirect error needs to include full cluster state
             | CurpError::Zombie(()) => {
-                // TODO: Prevent concurrent updating cluster state
-                let _ignore = self.cluster_state.fetch_and_update().await?;
+                self.cluster_state.errored();
             }
         }
 
@@ -444,21 +467,21 @@ where
     /// know who the leader is.)
     ///
     /// Note: The fetched cluster may still be outdated if `linearizable` is false
-    async fn fetch_cluster(
-        &self,
-        linearizable: bool,
-    ) -> Result<MembershipResponse, tonic::Status> {
+    async fn fetch_cluster(&self, linearizable: bool) -> Result<MembershipResponse, tonic::Status> {
         self.retry::<_, _>(|client, ctx| async move {
-            let (_, resp) = self.fetch.fetch_cluster(ClusterState::Full(ctx.cluster_state())).await?;
+            let (_, resp) = self
+                .fetch
+                .fetch_cluster(ClusterState::Full(ctx.cluster_state()))
+                .await?;
             Ok(resp)
         })
         .await
     }
 
-
     /// Performs membership change
     async fn change_membership(&self, changes: Vec<Change>) -> Result<(), Self::Error> {
-        let resp = self.retry::<_, _>(|client, ctx| client.change_membership(changes.clone(), ctx))
+        let resp = self
+            .retry::<_, _>(|client, ctx| client.change_membership(changes.clone(), ctx))
             .await?;
         let cluster_state = Fetch::build_cluster_state_from_response(self.fetch.connect_to(), resp);
         self.cluster_state.update_with(cluster_state);
@@ -470,11 +493,11 @@ where
     async fn wait_learner(
         &self,
         node_ids: BTreeSet<u64>,
-    ) -> Result<Box<dyn Stream<Item = Result<WaitLearnerResponse, Self::Error>> + Send>, Self::Error> {
+    ) -> Result<Box<dyn Stream<Item = Result<WaitLearnerResponse, Self::Error>> + Send>, Self::Error>
+    {
         self.retry::<_, _>(|client, ctx| client.wait_learner(node_ids.clone(), ctx))
             .await
     }
-
 }
 
 /// Tests for backoff
