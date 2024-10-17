@@ -104,6 +104,9 @@ pub(crate) mod node_state;
 /// Node monitor implementation
 mod monitor;
 
+/// Log replication implementation
+pub(crate) mod replication;
+
 /// The curp state machine
 pub struct RawCurp<C: Command, RC: RoleChange> {
     /// Curp state
@@ -258,7 +261,7 @@ impl<C: Command, RC: RoleChange> Debug for RawCurp<C, RC> {
 }
 
 /// Actions of syncing
-pub(super) enum SyncAction<C> {
+pub(crate) enum SyncAction<C> {
     /// Use append entries to calibrate
     AppendEntries(AppendEntries<C>),
     /// Use snapshot to calibrate
@@ -311,7 +314,7 @@ impl From<Heartbeat> for crate::rpc::AppendEntriesRequest {
 }
 
 /// Invoked by leader to replicate log entries; also used as heartbeat
-pub(super) struct AppendEntries<C> {
+pub(crate) struct AppendEntries<C> {
     /// Leader's term
     pub(super) term: u64,
     /// Leader's id
