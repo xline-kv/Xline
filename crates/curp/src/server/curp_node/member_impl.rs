@@ -185,7 +185,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     pub(crate) fn update_states_with_membership(&self, membership: &Membership) {
         let connects = self.connect_other_nodes(membership);
         let _new_states = self.curp.update_node_states(connects);
-        self.curp.update_role();
+        self.curp.update_role(membership);
     }
 
     /// Filter out membership log entries

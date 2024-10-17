@@ -90,19 +90,20 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Updates the role of the node based on the current membership state
-    pub(crate) fn update_role(&self) {
-        let ms = self.ms.read();
+    pub(crate) fn update_role(&self, membership: &Membership) {
         let mut st_w = self.st.write();
-        if ms.is_self_member() {
+        if membership.contains_member(self.node_id()) {
             if matches!(st_w.role, Role::Learner) {
                 st_w.role = Role::Follower;
             }
-        } else {
             st_w.role = Role::Learner;
         }
 
         // updates leader id
-        if st_w.leader_id.map_or(false, |id| !ms.is_member(id)) {
+        if st_w
+            .leader_id
+            .map_or(false, |id| !membership.contains_member(id))
+        {
             st_w.leader_id = None;
         }
     }
@@ -172,12 +173,12 @@ mod test {
 
         // remove from membership
         curp.update_membership_state(None, [(1, membership1.clone())], None);
-        curp.update_role();
+        curp.update_role(&membership1);
         assert_eq!(curp.st.read().role, Role::Learner);
 
         // add back
         curp.update_membership_state(None, [(2, membership2.clone())], None);
-        curp.update_role();
+        curp.update_role(&membership2);
         assert_eq!(curp.st.read().role, Role::Follower);
     }
 }
