@@ -28,6 +28,7 @@ fs2 = "0.4.3"
 futures = "0.3.21"
 indexmap = "2.2.6"
 itertools = "0.13"
+lazy_static = "1.5.0"
 madsim = { version = "0.2.27", features = ["rpc", "macros"] }
 opentelemetry = { version = "0.24.0", features = ["metrics"] }
 parking_lot = "0.12.3"

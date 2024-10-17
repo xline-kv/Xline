@@ -1,4 +1,3 @@
-#![allow(unused)]
 use std::{sync::Arc, time::Duration};
 
 use curp_external_api::{
@@ -6,11 +5,11 @@ use curp_external_api::{
     role_change::RoleChange,
     LogIndex,
 };
-use futures::{future::join_all, Future, FutureExt};
+use parking_lot::Mutex;
 use tokio::{sync::oneshot, task::JoinHandle, time::MissedTickBehavior};
 use tonic::Response;
 use tracing::{debug, error, info, warn};
-use utils::{config::CurpConfig, parking_lot_lock::MutexMap};
+use utils::config::CurpConfig;
 
 use crate::{
     rpc::{
@@ -26,28 +25,10 @@ use crate::{
 
 use super::CurpNode;
 
-/// All handles of the replication tasks
-#[derive(Default)]
-pub(super) struct Handles {
-    /// Handles
-    inner: Vec<JoinHandle<()>>,
-}
-
-impl Handles {
-    /// Abort all replication tasks
-    fn abort_all(&mut self) -> impl Future<Output = ()> {
-        for handle in &self.inner {
-            handle.abort();
-        }
-        join_all(self.inner.drain(..)).map(|results| {
-            debug!("aborted replication tasks, results: {results:?}");
-        })
-    }
-
-    /// Replace with new handles
-    fn replace_with(&mut self, handles: impl IntoIterator<Item = JoinHandle<()>>) {
-        self.inner.extend(handles);
-    }
+// TODO: replace `lazy_static` with `LazyLock` after Rust version 1.80.0
+lazy_static::lazy_static! {
+    /// Replication handles
+    static ref HANDLES: Mutex<Vec<JoinHandle<()>>> = Mutex::new(Vec::new());
 }
 
 /// Represents various actions that can be performed on the `RawCurp` state machine
@@ -78,11 +59,14 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// This method must be called under the following conditions:
     /// * When a new leader is elected
     /// * When membership changes
-    pub(super) async fn respawn_replication(&self) {
-        let self_id = self.curp.id();
-        let cfg = self.curp.cfg().clone();
-        let self_term = self.curp.term();
-        let mut node_states = self.curp.all_node_states();
+    pub(super) fn respawn_replication(curp: Arc<RawCurp<C, RC>>) {
+        /// The size of the action channel
+        const ACTION_CHANNEL_SIZE: usize = 0x1000;
+
+        let self_id = curp.id();
+        let cfg = curp.cfg().clone();
+        let self_term = curp.term();
+        let mut node_states = curp.all_node_states();
         // we don't needs to sync to self
         let _ignore = node_states.remove(&self_id);
         let connects = node_states
@@ -90,13 +74,9 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .map(NodeState::connect)
             .cloned()
             .collect();
-        let self_next_index = self.curp.last_log_index() + 1;
-        // TODO: use bounded
-        let (action_tx, action_rx) = flume::unbounded();
-        let curp = Arc::clone(&self.curp);
-        self.replication_handles
-            .map_lock(|mut h| h.abort_all())
-            .await;
+        let self_next_index = curp.last_log_index() + 1;
+        let (action_tx, action_rx) = flume::bounded(ACTION_CHANNEL_SIZE);
+        HANDLES.lock().iter().for_each(JoinHandle::abort);
 
         let state_handle = tokio::spawn(Self::state_machine_worker(curp, action_rx));
         let heartbeat_handle = tokio::spawn(Self::heartbeat_worker(
@@ -117,12 +97,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 self_next_index,
             ))
         });
-
-        self.replication_handles.lock().replace_with(
-            replication_handles
-                .chain([state_handle])
-                .chain([heartbeat_handle]),
-        );
+        *HANDLES.lock() = replication_handles
+            .chain([state_handle])
+            .chain([heartbeat_handle])
+            .collect();
     }
 
     /// A worker responsible for synchronizing data with the curp state machine
@@ -176,12 +154,35 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         loop {
             let _inst = ticker.tick().await;
             for connect in &connects {
-                if let Err(err) = connect.append_entries(heartbeat.into(), timeout).await {
-                    warn!("heartbeat to {} failed, {err:?}", connect.id());
-                    metrics::get().heartbeat_send_failures.add(1, &[]);
+                let result = Self::send_heartbeat(connect, heartbeat, timeout).await;
+                match result {
+                    Ok(other_term) if self_term < other_term => {
+                        info!("heartbeat worker exiting");
+                        return;
+                    }
+                    Err(err) => {
+                        warn!("heartbeat to {} failed, {err:?}", connect.id());
+                        metrics::get().heartbeat_send_failures.add(1, &[]);
+                    }
+                    Ok(_) => {}
                 }
             }
         }
+    }
+
+    /// Send the heartbeat to the give node, returns the term of that node
+    async fn send_heartbeat(
+        connect: &InnerConnectApiWrapper,
+        heartbeat: Heartbeat,
+        timeout: Duration,
+    ) -> Result<u64, CurpError> {
+        debug!("sending heartbeat to: {}", connect.id());
+        connect
+            .append_entries(heartbeat.into(), timeout)
+            .await
+            .map(Response::into_inner)
+            .map(|resp| resp.term)
+            .map_err(Into::into)
     }
 
     /// A worker responsible for appending log entries to other nodes in the cluster
@@ -208,8 +209,14 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         loop {
             let _ignore = tokio::time::timeout(batch_timeout, sync_event.listen()).await;
             let (tx, rx) = oneshot::channel();
-            if let Err(err) = action_tx.send(Action::GetLogFrom((next_index, tx))) {
-                error!("action_rx unexpectedly closed: {err}");
+            if action_tx
+                .send(Action::GetLogFrom((next_index, tx)))
+                .is_err()
+            {
+                debug!(
+                    "action_rx closed because the leader stepped down, exiting replication worker"
+                );
+                break;
             }
 
             let action = match rx.await {
@@ -229,9 +236,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 if let Action::UpdateNextIndex((_, index)) = action {
                     next_index = index;
                 }
-                if let Err(err) = action_tx.send(action) {
-                    error!("action_rx was accidentally dropped: {err}");
-                }
+                let __ignore = action_tx.send(action);
             }
         }
     }
@@ -307,7 +312,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .map_err(|err| warn!("failed to receive snapshot result, {err}"))
             .ok()?;
         let last_include_index = snapshot.meta.last_included_index;
-        Self::send_snapshot1(connect, snapshot, self_id, self_term)
+        Self::send_snapshot(connect, snapshot, self_id, self_term)
             .await
             .map(|resp| Self::snapshot_action(resp, connect.id(), self_term, last_include_index))
             .map_err(|err| warn!("snapshot to {} failed, {err:?}", connect.id()))
@@ -315,7 +320,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     }
 
     /// Send snapshot
-    async fn send_snapshot1(
+    async fn send_snapshot(
         connect: &InnerConnectApiWrapper,
         snapshot: Snapshot,
         self_id: u64,

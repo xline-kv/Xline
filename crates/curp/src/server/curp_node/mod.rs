@@ -136,8 +136,6 @@ pub(super) struct CurpNode<C: Command, CE: CommandExecutor<C>, RC: RoleChange> {
     as_tx: flume::Sender<TaskType<C>>,
     /// Tx to send to propose task
     propose_tx: flume::Sender<Propose<C>>,
-    /// All handles of the replication tasks
-    replication_handles: Mutex<replication::Handles>,
 }
 
 /// Handlers for clients
@@ -630,14 +628,24 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 // bcast pre vote or vote, if it is a pre vote and success, it will return
                 // Some(vote) then we need to bcast normal vote, and bcast
                 // normal vote always return None
-                if let Some(vote) = Self::bcast_vote(curp.as_ref(), pre_vote_or_vote.clone()).await
+                if let BCastVoteResult::PreVoteSuccess(vote) =
+                    Self::bcast_vote(curp.as_ref(), pre_vote_or_vote.clone()).await
                 {
                     debug_assert!(
                         !vote.is_pre_vote,
                         "bcast pre vote should return Some(normal_vote)"
                     );
-                    let opt = Self::bcast_vote(curp.as_ref(), vote).await;
-                    debug_assert!(opt.is_none(), "bcast normal vote should always return None");
+                    let result = Self::bcast_vote(curp.as_ref(), vote).await;
+                    debug_assert!(
+                        matches!(
+                            result,
+                            BCastVoteResult::VoteSuccess | BCastVoteResult::VoteFail
+                        ),
+                        "bcast normal vote should always return Vote variants"
+                    );
+                    if matches!(result, BCastVoteResult::VoteSuccess) {
+                        Self::respawn_replication(Arc::clone(&curp));
+                    }
                 }
             }
         }
@@ -756,6 +764,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             as_rx,
         );
 
+        if is_leader {
+            Self::respawn_replication(Arc::clone(&curp));
+        }
+
         Ok(Self {
             curp,
             cmd_board,
@@ -764,7 +776,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             cmd_executor,
             as_tx,
             propose_tx,
-            replication_handles: Mutex::default(),
         })
     }
 
@@ -790,12 +801,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     }
 
     /// Candidate or pre candidate broadcasts votes
-    ///
-    /// # Returns
-    ///
-    /// - `Some(vote)` if bcast pre vote and success
-    /// - `None` if bcast pre vote and fail or bcast vote
-    async fn bcast_vote(curp: &RawCurp<C, RC>, vote: Vote) -> Option<Vote> {
+    async fn bcast_vote(curp: &RawCurp<C, RC>, vote: Vote) -> BCastVoteResult {
         let self_id = curp.id();
         if vote.is_pre_vote {
             debug!("{self_id} broadcasts pre votes to all servers");
@@ -833,12 +839,12 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             if vote.is_pre_vote {
                 if resp.shutdown_candidate {
                     curp.task_manager().shutdown(false).await;
-                    return None;
+                    return BCastVoteResult::PreVoteFail;
                 }
                 let result = curp.handle_pre_vote_resp(id, resp.term, resp.vote_granted);
                 match result {
                     Ok(None) | Err(()) => {}
-                    Ok(Some(v)) => return Some(v),
+                    Ok(Some(v)) => return BCastVoteResult::PreVoteSuccess(v),
                 }
             } else {
                 // collect follower spec pool
@@ -853,11 +859,13 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                     curp.handle_vote_resp(id, resp.term, resp.vote_granted, follower_spec_pool);
                 match result {
                     Ok(false) => {}
-                    Ok(true) | Err(()) => return None,
+                    Ok(true) => return BCastVoteResult::VoteSuccess,
+                    Err(()) => return BCastVoteResult::VoteFail,
                 }
             };
         }
-        None
+
+        BCastVoteResult::PreVoteFail
     }
 
     /// Get `RawCurp`
@@ -873,6 +881,18 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Debug for CurpNode<C, C
             .field("cmd_board", &self.cmd_board)
             .finish()
     }
+}
+
+/// Represents the result of broadcasting a vote in the consensus process.
+enum BCastVoteResult {
+    /// Indicates that the pre-vote phase was successful.
+    PreVoteSuccess(Vote),
+    /// Indicates that the pre-vote phase failed.
+    PreVoteFail,
+    /// Indicates that the vote phase was successful.
+    VoteSuccess,
+    /// Indicates that the vote phase failed.
+    VoteFail,
 }
 
 #[cfg(test)]

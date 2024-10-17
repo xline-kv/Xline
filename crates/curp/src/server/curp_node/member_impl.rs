@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use curp_external_api::cmd::Command;
 use curp_external_api::cmd::CommandExecutor;
@@ -96,6 +97,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             self.update_states_with_membership(&config);
             self.curp
                 .update_membership_state(None, Some((index, config)), None);
+            Self::respawn_replication(Arc::clone(&self.curp));
             self.curp.persistent_membership_state()?;
             // Leader also needs to update transferee
             self.curp.update_transferee();
