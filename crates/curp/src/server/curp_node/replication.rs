@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use curp_external_api::{
     cmd::{Command, CommandExecutor},
@@ -50,10 +50,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         let mut node_states = curp.all_node_states();
         // we don't needs to sync to self
         let _ignore = node_states.remove(&self_id);
-        let connects = node_states
-            .values()
-            .map(NodeState::connect)
-            .cloned()
+        let connects: BTreeMap<_, _> = node_states
+            .keys()
+            .copied()
+            .zip(node_states.values().map(NodeState::connect).cloned())
             .collect();
         let self_next_index = curp.last_log_index() + 1;
         let (action_tx, action_rx) = flume::bounded(ACTION_CHANNEL_SIZE);
@@ -71,6 +71,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             let cfg = cfg.clone();
             info!("spawning replication task for {id}");
             tokio::spawn(Self::replication_worker(
+                id,
                 state,
                 action_tx.clone(),
                 self_id,
@@ -105,7 +106,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// A worker responsible for sending heartbeat to the cluster
     async fn heartbeat_worker(
         action_tx: flume::Sender<Action<C>>,
-        connects: Vec<InnerConnectApiWrapper>,
+        connects: BTreeMap<u64, InnerConnectApiWrapper>,
         cfg: CurpConfig,
         self_id: u64,
         self_term: u64,
@@ -116,9 +117,9 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         let heartbeat = Heartbeat::new(self_term, self_id);
         loop {
             let _inst = ticker.tick().await;
-            for connect in &connects {
+            for (id, connect) in &connects {
                 if let Some(action) =
-                    Self::send_heartbeat(connect, heartbeat, self_term, timeout).await
+                    Self::send_heartbeat(*id, connect, heartbeat, self_term, timeout).await
                 {
                     // step down
                     let _ignore = action_tx.send(action);
@@ -131,19 +132,20 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
 
     /// Send the heartbeat to the give node, returns the term of that node
     async fn send_heartbeat(
+        id: u64,
         connect: &InnerConnectApiWrapper,
         heartbeat: Heartbeat,
         self_term: u64,
         timeout: Duration,
     ) -> Option<Action<C>> {
-        debug!("sending heartbeat to: {}", connect.id());
+        debug!("sending heartbeat to: {id}");
         connect
             .append_entries(heartbeat.into(), timeout)
             .await
             .map(Response::into_inner)
             .map(|resp| RawCurp::<C, RC>::heartbeat_action(resp.term, self_term))
             .map_err(|err| {
-                warn!("heartbeat to {} failed, {err:?}", connect.id());
+                warn!("heartbeat to {id} failed, {err:?}");
                 metrics::get().heartbeat_send_failures.add(1, &[]);
             })
             .ok()
@@ -152,6 +154,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
 
     /// A worker responsible for appending log entries to other nodes in the cluster
     async fn replication_worker(
+        node_id: u64,
         node_state: NodeState,
         action_tx: flume::Sender<Action<C>>,
         self_id: u64,
@@ -186,10 +189,18 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
 
             let action = match rx.await {
                 Ok(SyncAction::AppendEntries(ae)) => {
-                    Self::handle_append_entries(&ae, connect, rpc_timeout, self_id, self_term).await
+                    Self::handle_append_entries(
+                        &ae,
+                        node_id,
+                        connect,
+                        rpc_timeout,
+                        self_id,
+                        self_term,
+                    )
+                    .await
                 }
                 Ok(SyncAction::Snapshot(rx)) => {
-                    Self::handle_snapshot(rx, connect, self_id, self_term).await
+                    Self::handle_snapshot(rx, node_id, connect, self_id, self_term).await
                 }
                 Err(err) => {
                     error!("channel unexpectedly closed: {err}");
@@ -209,6 +220,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Handle append entries
     async fn handle_append_entries(
         ae: &AppendEntries<C>,
+        node_id: u64,
         connect: &InnerConnectApiWrapper,
         rpc_timeout: Duration,
         self_id: u64,
@@ -218,7 +230,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         if ae.entries.is_empty() {
             return None;
         }
-        Self::send_append_entries(connect, ae, rpc_timeout, self_id)
+        Self::send_append_entries(node_id, connect, ae, rpc_timeout, self_id)
             .await
             .map(|resp| {
                 RawCurp::<C, RC>::append_entries_action(
@@ -226,7 +238,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                     resp.success,
                     resp.hint_index,
                     ae,
-                    connect.id(),
+                    node_id,
                     self_term,
                 )
             })
@@ -234,24 +246,26 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
 
     /// Send `append_entries` request
     async fn send_append_entries(
+        node_id: u64,
         connect: &InnerConnectApiWrapper,
         ae: &AppendEntries<C>,
         timeout: Duration,
         self_id: u64,
     ) -> Option<AppendEntriesResponse> {
-        debug!("{self_id} send append_entries to {}", connect.id());
+        debug!("{self_id} send append_entries to {node_id}");
 
         connect
             .append_entries(ae.into(), timeout)
             .await
             .map(Response::into_inner)
-            .map_err(|err| warn!("ae to {} failed, {err:?}", connect.id()))
+            .map_err(|err| warn!("ae to {node_id} failed, {err:?}"))
             .ok()
     }
 
     /// Handle snapshot
     async fn handle_snapshot(
         rx: oneshot::Receiver<Snapshot>,
+        node_id: u64,
         connect: &InnerConnectApiWrapper,
         self_id: u64,
         self_term: u64,
@@ -261,20 +275,16 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .map_err(|err| warn!("failed to receive snapshot result, {err}"))
             .ok()?;
         let last_include_index = snapshot.meta.last_included_index;
-        Self::send_snapshot(connect, snapshot, self_id, self_term)
+        Self::send_snapshot(node_id, connect, snapshot, self_id, self_term)
             .await
             .map(|resp| {
-                RawCurp::<C, RC>::snapshot_action(
-                    resp.term,
-                    connect.id(),
-                    self_term,
-                    last_include_index,
-                )
+                RawCurp::<C, RC>::snapshot_action(resp.term, node_id, self_term, last_include_index)
             })
     }
 
     /// Send snapshot
     async fn send_snapshot(
+        node_id: u64,
         connect: &InnerConnectApiWrapper,
         snapshot: Snapshot,
         self_id: u64,
@@ -284,7 +294,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .install_snapshot(self_term, self_id, snapshot)
             .await
             .map(Response::into_inner)
-            .map_err(|err| warn!("snapshot to {} failed, {err:?}", connect.id()))
+            .map_err(|err| warn!("snapshot to {node_id} failed, {err:?}"))
             .ok()
     }
 }
