@@ -12,9 +12,7 @@ use tracing::{debug, error, info, warn};
 use utils::config::CurpConfig;
 
 use crate::{
-    rpc::{
-        connect::InnerConnectApiWrapper, AppendEntriesResponse, CurpError, InstallSnapshotResponse,
-    },
+    rpc::{connect::InnerConnectApiWrapper, AppendEntriesResponse, InstallSnapshotResponse},
     server::{
         metrics,
         raw_curp::{
@@ -119,18 +117,13 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         loop {
             let _inst = ticker.tick().await;
             for connect in &connects {
-                let result = Self::send_heartbeat(connect, heartbeat, self_term, timeout).await;
-                match result {
-                    Ok(Some(action)) => {
-                        let _ignore = action_tx.send(action);
-                        info!("heartbeat worker exiting");
-                        return;
-                    }
-                    Ok(None) => {}
-                    Err(err) => {
-                        warn!("heartbeat to {} failed, {err:?}", connect.id());
-                        metrics::get().heartbeat_send_failures.add(1, &[]);
-                    }
+                if let Some(action) =
+                    Self::send_heartbeat(connect, heartbeat, self_term, timeout).await
+                {
+                    // step down
+                    let _ignore = action_tx.send(action);
+                    info!("heartbeat worker exiting");
+                    return;
                 }
             }
         }
@@ -142,14 +135,19 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         heartbeat: Heartbeat,
         self_term: u64,
         timeout: Duration,
-    ) -> Result<Option<Action<C>>, CurpError> {
+    ) -> Option<Action<C>> {
         debug!("sending heartbeat to: {}", connect.id());
         connect
             .append_entries(heartbeat.into(), timeout)
             .await
             .map(Response::into_inner)
             .map(|resp| RawCurp::<C, RC>::heartbeat_action(resp.term, self_term))
-            .map_err(Into::into)
+            .map_err(|err| {
+                warn!("heartbeat to {} failed, {err:?}", connect.id());
+                metrics::get().heartbeat_send_failures.add(1, &[]);
+            })
+            .ok()
+            .flatten()
     }
 
     /// A worker responsible for appending log entries to other nodes in the cluster
@@ -232,8 +230,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                     self_term,
                 )
             })
-            .map_err(|err| warn!("ae to {} failed, {err:?}", connect.id()))
-            .ok()
     }
 
     /// Send `append_entries` request
@@ -242,14 +238,15 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         ae: &AppendEntries<C>,
         timeout: Duration,
         self_id: u64,
-    ) -> Result<AppendEntriesResponse, CurpError> {
+    ) -> Option<AppendEntriesResponse> {
         debug!("{self_id} send append_entries to {}", connect.id());
 
         connect
             .append_entries(ae.into(), timeout)
             .await
             .map(Response::into_inner)
-            .map_err(Into::into)
+            .map_err(|err| warn!("ae to {} failed, {err:?}", connect.id()))
+            .ok()
     }
 
     /// Handle snapshot
@@ -274,8 +271,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                     last_include_index,
                 )
             })
-            .map_err(|err| warn!("snapshot to {} failed, {err:?}", connect.id()))
-            .ok()
     }
 
     /// Send snapshot
@@ -284,11 +279,12 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         snapshot: Snapshot,
         self_id: u64,
         self_term: u64,
-    ) -> Result<InstallSnapshotResponse, CurpError> {
+    ) -> Option<InstallSnapshotResponse> {
         connect
             .install_snapshot(self_term, self_id, snapshot)
             .await
             .map(Response::into_inner)
-            .map_err(Into::into)
+            .map_err(|err| warn!("snapshot to {} failed, {err:?}", connect.id()))
+            .ok()
     }
 }
