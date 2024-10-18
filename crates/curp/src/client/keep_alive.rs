@@ -41,6 +41,18 @@ pub(crate) struct KeepAliveHandle {
 }
 
 impl KeepAliveHandle {
+    /// Gets the client id
+    pub(crate) async fn client_id(&self) -> u64 {
+        loop {
+            let listen_update = self.update_event.listen();
+            let latest = self.client_id.load(Ordering::Relaxed);
+            if latest != 0 {
+                return latest;
+            }
+            listen_update.await;
+        }
+    }
+
     /// Wait for the client id
     pub(crate) async fn wait_id_update(&self, current_id: u64) -> u64 {
         loop {

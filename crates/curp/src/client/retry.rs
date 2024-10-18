@@ -325,7 +325,7 @@ where
     {
         let mut backoff = self.retry_config.init_backoff();
         let mut last_err = None;
-        let client_id = self.keep_alive.wait_id_update(0).await;
+        let client_id = self.keep_alive.client_id().await;
         let propose_id_guard = self.tracker.gen_propose_id(client_id);
         let first_incomplete = self.tracker.first_incomplete();
         while let Some(delay) = backoff.next_delay() {
@@ -338,12 +338,7 @@ where
                 }
             };
             let context = Context::new(*propose_id_guard, first_incomplete, cluster_state.clone());
-            let result = tokio::select! {
-                result = f(&self.inner, context) => result,
-                _ = self.keep_alive.wait_id_update(client_id) => {
-                    return Err(CurpError::expired_client_id().into());
-                },
-            };
+            let result = f(&self.inner, context).await;
             match result {
                 Ok(res) => return Ok(res),
                 Err(err) => self.on_error(err, delay, &mut last_err).await?,
