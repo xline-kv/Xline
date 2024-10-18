@@ -84,7 +84,10 @@ impl NodeStates {
             }
             status.match_index = index;
             status.next_index = index + 1;
-            debug!("follower {id}'s match_index updated to {index}");
+            debug!(
+                "follower {id}'s match_index updated to {}, next_index updated to {}",
+                status.match_index, status.next_index
+            );
         });
         if opt.is_none() {
             warn!("follower {} is not found, it maybe has been removed", id);

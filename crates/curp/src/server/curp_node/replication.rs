@@ -156,6 +156,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .flatten()
     }
 
+    #[allow(clippy::arithmetic_side_effects)] // a log index(u64) should never overflow
     /// A worker responsible for appending log entries to other nodes in the cluster
     async fn replication_worker(
         node_id: u64,
@@ -206,8 +207,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             };
 
             if let Some(action) = action {
-                if let Action::UpdateNextIndex((_, index)) = action {
-                    next_index = index;
+                match action {
+                    Action::UpdateMatchIndex((_, index)) => next_index = index + 1,
+                    Action::UpdateNextIndex((_, index)) => next_index = index,
+                    Action::GetLogFrom(_) | Action::StepDown(_) => {}
                 }
                 let __ignore = action_tx.send(action);
             }
