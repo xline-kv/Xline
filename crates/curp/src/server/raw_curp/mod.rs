@@ -997,7 +997,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         for other in peers {
             self.ctx
                 .node_states
-                .update_next_index(other, last_log_index + 1); // iter from the end to front is more likely to match the follower
+                .update_next_index(other, last_log_index); // iter from the end to front is more likely to match the follower
         }
         if prev_last_log_index < last_log_index {
             // if some entries are recovered, sync with followers immediately
