@@ -23,9 +23,7 @@ use tokio_stream::StreamExt;
 use tracing_test::traced_test;
 use utils::config::ClientConfig;
 
-use crate::common::curp_group::{
-    commandpb::FetchMembershipRequest, CurpGroup, DEFAULT_SHUTDOWN_TIMEOUT,
-};
+use crate::common::curp_group::{CurpGroup, DEFAULT_SHUTDOWN_TIMEOUT};
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
@@ -596,25 +594,7 @@ async fn new_node_should_apply_old_cluster_logs() {
 
     sleep_millis(500).await; // wait for membership sync
 
-    // 2. fetch and check cluster from new node
-    let mut new_connect = group.get_connect(&node_id).await;
-    let res = new_connect
-        .fetch_membership(FetchMembershipRequest {})
-        .await
-        .unwrap()
-        .into_inner();
-    assert_eq!(res.nodes.len(), 4);
-    assert!(res
-        .nodes
-        .iter()
-        .any(|m| m.node_id == node_id && m.meta.as_ref().unwrap().name == "new_node"));
-    assert!(!res
-        .members
-        .iter()
-        .flat_map(|s| &s.set)
-        .any(|m| *m == node_id));
-
-    // 3. check if the new node syncs the command from old cluster
+    // 2. check if the new node syncs the command from old cluster
     let new_node = group.nodes.get_mut(&node_id).unwrap();
     let (cmd, _) = new_node.as_rx.recv().await.unwrap();
     assert_eq!(
