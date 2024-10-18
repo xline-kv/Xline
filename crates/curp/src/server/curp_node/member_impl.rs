@@ -86,6 +86,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         changes: impl IntoIterator<Item = Change>,
     ) -> Result<MembershipResponse, CurpError> {
         self.ensure_leader()?;
+        let (self_id, term) = (self.curp.id(), self.curp.term());
         let changes = Self::ensure_non_overlapping(changes)?;
         let configs = self.curp.generate_membership(changes);
         if configs.is_empty() {
@@ -110,12 +111,15 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             Self::abort_replication();
         }
 
-        self.build_membership_response()
+        self.build_membership_response(self_id, term)
     }
 
     /// Builds a `ChangeMembershipResponse` from the given membership.
-    pub(crate) fn build_membership_response(&self) -> Result<MembershipResponse, CurpError> {
-        let (leader_id, term, _) = self.curp.leader();
+    pub(crate) fn build_membership_response(
+        &self,
+        leader_id: u64,
+        term: u64,
+    ) -> Result<MembershipResponse, CurpError> {
         let Membership { members, nodes } = self.curp.effective_membership();
         let members = members
             .into_iter()
@@ -130,9 +134,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 meta: Some(meta),
             })
             .collect();
-
-        let leader_id =
-            leader_id.ok_or(CurpError::LeaderTransfer("no current leader".to_owned()))?;
 
         Ok(MembershipResponse {
             members,

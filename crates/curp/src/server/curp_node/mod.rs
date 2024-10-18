@@ -365,7 +365,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         _req: FetchMembershipRequest,
     ) -> Result<MembershipResponse, CurpError> {
-        self.build_membership_response()
+        let (leader_id, term, _) = self.curp.leader();
+        let leader_id =
+            leader_id.ok_or(CurpError::LeaderTransfer("no current leader".to_owned()))?;
+        self.build_membership_response(leader_id, term)
     }
 }
 
