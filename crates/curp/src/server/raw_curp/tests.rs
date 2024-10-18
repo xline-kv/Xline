@@ -637,7 +637,7 @@ fn add_node_should_add_new_node_to_curp() {
         .iter()
         .flatten()
         .any(|id| *id == 3));
-    let _ignore = curp.update_membership_state(None, Some((1, original_membership)), None);
+    let _ignore = curp.update_membership_state(Some(1), Some((1, original_membership)), None);
     assert!(!curp
         .effective_membership()
         .members
