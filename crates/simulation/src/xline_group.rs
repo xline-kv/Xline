@@ -12,14 +12,16 @@ use xline::server::XlineServer;
 use xline_client::{
     error::XlineClientError,
     types::{
-        kv::{CompactionResponse, PutOptions, PutResponse, RangeOptions, RangeResponse},
+        kv::{
+            CompactionResponse, PutOptions, PutResponse, RangeOptions, RangeResponse, TxnRequest,
+        },
         watch::{WatchOptions, WatchStreaming, Watcher},
     },
     Client, ClientOptions,
 };
 use xlineapi::{
     command::Command, ClusterClient, KvClient, MemberAddResponse, MemberListResponse, RequestUnion,
-    WatchClient,
+    TxnResponse, WatchClient,
 };
 
 pub struct XlineNode {
@@ -208,6 +210,14 @@ impl SimClient {
         let key = key.into();
         self.handle
             .spawn(async move { client.watch_client().watch(key, options).await })
+            .await
+            .unwrap()
+    }
+
+    pub async fn txn(&self, txn: TxnRequest) -> Result<TxnResponse, XlineClientError<Command>> {
+        let client = self.inner.clone();
+        self.handle
+            .spawn(async move { client.kv_client().txn(txn).await })
             .await
             .unwrap()
     }
