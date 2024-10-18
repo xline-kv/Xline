@@ -96,6 +96,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             if matches!(st_w.role, Role::Learner) {
                 st_w.role = Role::Follower;
             }
+        } else {
             st_w.role = Role::Learner;
         }
 
