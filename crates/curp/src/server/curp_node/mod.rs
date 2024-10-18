@@ -601,7 +601,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         _req: &TryBecomeLeaderNowRequest,
     ) -> Result<TryBecomeLeaderNowResponse, CurpError> {
         if let Some(vote) = self.curp.handle_try_become_leader_now() {
-            _ = Self::bcast_vote(self.curp.as_ref(), vote).await;
+            let result = Self::bcast_vote(self.curp.as_ref(), vote).await;
+            if matches!(result, BCastVoteResult::VoteSuccess) {
+                Self::respawn_replication(Arc::clone(&self.curp));
+            }
         }
         Ok(TryBecomeLeaderNowResponse::default())
     }
