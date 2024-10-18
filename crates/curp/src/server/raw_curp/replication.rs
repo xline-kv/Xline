@@ -37,7 +37,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 self.update_next_index(node_id, index);
             }
             Action::GetLogFrom((next, tx)) => {
-                debug!("getting log from index {next}");
                 let sync = self.sync_from(next);
                 if tx.send(sync).is_err() {
                     error!("send append entries failed");
