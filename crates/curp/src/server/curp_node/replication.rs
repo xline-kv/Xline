@@ -57,7 +57,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         let (action_tx, action_rx) = flume::bounded(ACTION_CHANNEL_SIZE);
         Self::abort_replication();
 
-        let state_handle = tokio::spawn(Self::state_machine_worker(curp, action_rx));
+        let state_handle = tokio::spawn(Self::state_machine_worker(curp, action_rx, self_term));
         let heartbeat_handle = tokio::spawn(Self::heartbeat_worker(
             action_tx.clone(),
             connects,
@@ -92,11 +92,13 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     async fn state_machine_worker(
         curp: Arc<RawCurp<C, RC>>,
         action_rx: flume::Receiver<Action<C>>,
+        // NOTE: `self_term` might differ from `curp.term()` due to external updates to curp
+        self_term: u64,
     ) {
         // As we spawn the workers on every leader update, the term remains consistent
         while let Ok(action) = action_rx.recv_async().await {
             let exit = matches!(action, Action::StepDown(_));
-            curp.sync_state_machine(action);
+            curp.sync_state_machine(self_term, action);
             if exit {
                 break;
             }

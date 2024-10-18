@@ -25,8 +25,7 @@ pub(crate) enum Action<C> {
 
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Synchronizes a action
-    pub(crate) fn sync_state_machine(&self, action: Action<C>) {
-        let self_term = self.term();
+    pub(crate) fn sync_state_machine(&self, self_term: u64, action: Action<C>) {
         match action {
             Action::UpdateMatchIndex((node_id, index)) => {
                 debug!("updating {node_id}'s match index to {index}");
@@ -45,7 +44,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 }
             }
             Action::StepDown(node_term) => {
-                debug_assert!(node_term > self_term, "node_term no greater than self_term");
+                debug_assert!(
+                    node_term > self_term,
+                    "node_term {node_term} no greater than self_term {self_term}, id: {}",
+                    self.id()
+                );
                 info!("received greater term: {node_term}, stepping down.");
                 self.step_down(node_term);
             }
@@ -120,7 +123,7 @@ mod test {
             entries: vec![],
         };
         let action = TestRawCurp::append_entries_action(2, false, 1, &ae, 2, 1);
-        curp.sync_state_machine(action);
+        curp.sync_state_machine(1, action);
 
         let st_r = curp.st.read();
         assert_eq!(st_r.term, 2);
@@ -132,7 +135,7 @@ mod test {
     fn heartbeat_will_calibrate_term() {
         let curp = RawCurp::new_test(3, mock_role_change(), Arc::new(TaskManager::new()));
         let action = TestRawCurp::heartbeat_action(2, 1).unwrap();
-        curp.sync_state_machine(action);
+        curp.sync_state_machine(1, action);
 
         let st_r = curp.st.read();
         assert_eq!(st_r.term, 2);
@@ -144,7 +147,7 @@ mod test {
     fn snapshot_will_calibrate_term() {
         let curp = RawCurp::new_test(3, mock_role_change(), Arc::new(TaskManager::new()));
         let action = TestRawCurp::snapshot_action(2, 1, 1, 1);
-        curp.sync_state_machine(action);
+        curp.sync_state_machine(1, action);
 
         let st_r = curp.st.read();
         assert_eq!(st_r.term, 2);
@@ -160,7 +163,7 @@ mod test {
         assert_eq!(curp.ctx.node_states.get_match_index(s1_id), Some(0));
 
         let action = TestRawCurp::snapshot_action(1, s1_id, 1, 1);
-        curp.sync_state_machine(action);
+        curp.sync_state_machine(1, action);
 
         let st_r = curp.st.read();
         assert_eq!(st_r.term, 1);
@@ -184,7 +187,7 @@ mod test {
             entries: vec![],
         };
         let action = TestRawCurp::append_entries_action(1, false, 2, &ae, s1_id, 1);
-        curp.sync_state_machine(action);
+        curp.sync_state_machine(1, action);
 
         let st_r = curp.st.read();
         assert_eq!(st_r.term, 1);
@@ -208,7 +211,7 @@ mod test {
             entries: vec![],
         };
         let action = TestRawCurp::append_entries_action(1, true, 2, &ae, s1_id, 1);
-        curp.sync_state_machine(action);
+        curp.sync_state_machine(1, action);
 
         let st_r = curp.st.read();
         assert_eq!(st_r.term, 1);
