@@ -3,7 +3,6 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use curp_external_api::{
     cmd::{Command, CommandExecutor},
     role_change::RoleChange,
-    LogIndex,
 };
 use parking_lot::Mutex;
 use tokio::{sync::oneshot, task::JoinHandle, time::MissedTickBehavior};
@@ -55,7 +54,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .copied()
             .zip(node_states.values().map(NodeState::connect).cloned())
             .collect();
-        let self_next_index = curp.last_log_index() + 1;
         let (action_tx, action_rx) = flume::bounded(ACTION_CHANNEL_SIZE);
         Self::abort_replication();
 
@@ -77,7 +75,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 self_id,
                 self_term,
                 cfg,
-                self_next_index,
             ))
         });
         *HANDLES.lock() = replication_handles
@@ -165,19 +162,12 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         self_id: u64,
         self_term: u64,
         cfg: CurpConfig,
-        self_next_index: LogIndex,
     ) {
         let rpc_timeout = cfg.rpc_timeout;
         let batch_timeout = cfg.batch_timeout;
         let connect = node_state.connect();
         let sync_event = node_state.sync_event();
         let mut next_index = node_state.next_index();
-        // The next_index could be zero if a new leader is elected and it does not have the
-        // infomations of other nodes. We set the initial index to the next index of the
-        // current node.
-        if next_index == 0 {
-            next_index = self_next_index;
-        }
 
         loop {
             let _ignore = tokio::time::timeout(batch_timeout, sync_event.listen()).await;
