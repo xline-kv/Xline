@@ -165,7 +165,9 @@ impl MembershipState {
 
     /// Append a membership change entry
     pub(crate) fn append(&mut self, index: LogIndex, membership: Membership) {
-        self.entries.push(MembershipEntry::new(index, membership));
+        if self.last().index < index {
+            self.entries.push(MembershipEntry::new(index, membership));
+        }
     }
 
     /// Truncate at the give log index
