@@ -33,8 +33,6 @@ pub struct TaskManager {
 pub struct ClusterShutdownTracker {
     /// Cluster shutdown notify
     notify: Notify,
-    /// Count of sync follower tasks.
-    sync_follower_task_count: AtomicU8,
     /// Shutdown Applied
     leader_notified: AtomicBool,
 }
@@ -46,30 +44,8 @@ impl ClusterShutdownTracker {
     pub fn new() -> Self {
         Self {
             notify: Notify::new(),
-            sync_follower_task_count: AtomicU8::new(0),
             leader_notified: AtomicBool::new(false),
         }
-    }
-
-    /// Sync follower task count inc
-    #[inline]
-    pub fn sync_follower_task_count_inc(&self) {
-        let n = self
-            .sync_follower_task_count
-            .fetch_add(1, Ordering::Relaxed);
-        debug!("sync follower task count inc to: {}", n.overflow_add(1));
-    }
-
-    /// Sync follower task count dec
-    #[inline]
-    pub fn sync_follower_task_count_dec(&self) {
-        let c = self
-            .sync_follower_task_count
-            .fetch_sub(1, Ordering::Relaxed);
-        if c == 1 {
-            self.notify.notify_one();
-        }
-        debug!("sync follower task count dec to: {}", c.overflow_sub(1));
     }
 
     /// Mark leader notified
@@ -82,9 +58,7 @@ impl ClusterShutdownTracker {
 
     /// Check if the cluster shutdown condition is met
     fn check(&self) -> bool {
-        let sync_follower_task_count = self.sync_follower_task_count.load(Ordering::Relaxed);
-        let leader_notified = self.leader_notified.load(Ordering::Relaxed);
-        sync_follower_task_count == 0 && leader_notified
+        self.leader_notified.load(Ordering::Relaxed)
     }
 }
 
@@ -144,7 +118,6 @@ impl TaskManager {
         Some(Listener::new(
             Arc::clone(&self.state),
             Arc::clone(&task.notifier),
-            Arc::clone(&self.cluster_shutdown_tracker),
         ))
     }
 
@@ -163,11 +136,7 @@ impl TaskManager {
             .tasks
             .get_mut(&name)
             .unwrap_or_else(|| unreachable!("task {:?} should exist", name));
-        let listener = Listener::new(
-            Arc::clone(&self.state),
-            Arc::clone(&task.notifier),
-            Arc::clone(&self.cluster_shutdown_tracker),
-        );
+        let listener = Listener::new(Arc::clone(&self.state), Arc::clone(&task.notifier));
         let handle = tokio::spawn(f(listener));
         task.handle.push(handle);
     }
@@ -234,9 +203,6 @@ impl TaskManager {
         self.state.store(2, Ordering::Release);
         let _ig = tokio::spawn(async move {
             info!("cluster shutdown start");
-            _ = tasks
-                .get(&TaskName::SyncFollower)
-                .map(|n| n.notifier.notify_waiters());
             loop {
                 if tracker.check() {
                     break;
@@ -340,22 +306,12 @@ pub struct Listener {
     notify: Arc<Notify>,
     /// State of task manager
     state: Arc<AtomicU8>,
-    /// Cluster shutdown tracker
-    cluster_shutdown_tracker: Arc<ClusterShutdownTracker>,
 }
 
 impl Listener {
     /// Create a new `Listener`
-    fn new(
-        state: Arc<AtomicU8>,
-        notify: Arc<Notify>,
-        cluster_shutdown_tracker: Arc<ClusterShutdownTracker>,
-    ) -> Self {
-        Self {
-            notify,
-            state,
-            cluster_shutdown_tracker,
-        }
+    fn new(state: Arc<AtomicU8>, notify: Arc<Notify>) -> Self {
+        Self { notify, state }
     }
 
     /// Get current state
@@ -396,30 +352,6 @@ impl Listener {
     pub fn is_shutdown(&self) -> bool {
         let state = self.state();
         matches!(state, State::Shutdown)
-    }
-
-    /// Get a sync follower guard
-    #[must_use]
-    #[inline]
-    pub fn sync_follower_guard(&self) -> SyncFollowerGuard {
-        self.cluster_shutdown_tracker.sync_follower_task_count_inc();
-        SyncFollowerGuard {
-            tracker: Arc::clone(&self.cluster_shutdown_tracker),
-        }
-    }
-}
-
-/// Sync follower guard, used to track sync follower task count
-#[derive(Debug)]
-pub struct SyncFollowerGuard {
-    /// Cluster shutdown tracker
-    tracker: Arc<ClusterShutdownTracker>,
-}
-
-impl Drop for SyncFollowerGuard {
-    #[inline]
-    fn drop(&mut self) {
-        self.tracker.sync_follower_task_count_dec();
     }
 }
 

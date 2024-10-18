@@ -42,7 +42,6 @@ enum_with_iter! {
     LeaseKeepAlive,
     TonicServer,
     Election,
-    SyncFollower,
     ConfChange,
     GcClientLease,
     RevokeExpiredLeases,
@@ -63,7 +62,6 @@ impl TaskName {
             | TaskName::LeaseKeepAlive
             | TaskName::TonicServer
             | TaskName::Election
-            | TaskName::SyncFollower
             | TaskName::ConfChange
             | TaskName::GcClientLease
             | TaskName::RevokeExpiredLeases
