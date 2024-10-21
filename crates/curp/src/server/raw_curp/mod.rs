@@ -39,7 +39,6 @@ use tracing::debug;
 use tracing::error;
 use tracing::log::log_enabled;
 use tracing::log::Level;
-use tracing::trace;
 use utils::barrier::IdBarrier;
 use utils::config::CurpConfig;
 use utils::parking_lot_lock::MutexMap;
@@ -759,53 +758,74 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         entries: Vec<LogEntry<C>>,
         leader_commit: LogIndex,
     ) -> Result<AppendEntriesSuccess<C>, AppendEntriesFailure> {
-        if entries.is_empty() {
-            trace!(
-                "{} received heartbeat from {}: term({}), commit({}), prev_log_index({}), prev_log_term({})",
-                self.id(), leader_id, term, leader_commit, prev_log_index, prev_log_term
-            );
-        } else {
-            debug!(
+        debug!(
                 "{} received append_entries from {}: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries",
                 self.id(), leader_id, term, leader_commit, prev_log_index, prev_log_term, entries.len()
             );
-        }
 
-        // validate term and set leader id
-        {
-            let st_r = self.st.upgradable_read();
-            match st_r.term.cmp(&term) {
-                std::cmp::Ordering::Less => {
-                    let mut st_w = RwLockUpgradableReadGuard::upgrade(st_r);
-                    self.update_to_term_and_become_follower(&mut st_w, term);
-                    st_w.leader_id = Some(leader_id);
-                }
-                std::cmp::Ordering::Equal => {
-                    if st_r.leader_id.is_none() {
-                        let mut st_w = RwLockUpgradableReadGuard::upgrade(st_r);
-                        st_w.leader_id = Some(leader_id);
-                    }
-                }
-                std::cmp::Ordering::Greater => {
-                    return Err((st_r.term, self.log.read().commit_index + 1))
-                }
-            }
-        }
+        self.validates_term(term, leader_id)?;
         self.reset_election_tick();
-
         // append log entries
         let mut log_w = self.log.write();
         let (to_persist, truncate_at) = log_w
             .try_append_entries(entries, prev_log_index, prev_log_term)
             .map_err(|_ig| (term, log_w.commit_index + 1))?;
-        // update commit index
+        self.update_commit(&mut log_w, leader_commit);
+
+        Ok((term, truncate_at, to_persist))
+    }
+
+    /// Handles heartbeat
+    pub(super) fn handle_heartbeat(
+        &self,
+        term: u64,
+        leader_id: ServerId,
+        leader_commit: LogIndex,
+    ) -> Result<(), AppendEntriesFailure> {
+        debug!(
+            "{} received heartbeat from {}: term({}), commit({}) ",
+            self.id(),
+            leader_id,
+            term,
+            leader_commit,
+        );
+        self.validates_term(term, leader_id)?;
+        self.reset_election_tick();
+        self.update_commit(&mut self.log.write(), leader_commit);
+
+        Ok(())
+    }
+
+    /// Validates term and set leader id
+    fn validates_term(&self, term: u64, leader_id: u64) -> Result<(), (u64, u64)> {
+        let st_r = self.st.upgradable_read();
+        match st_r.term.cmp(&term) {
+            std::cmp::Ordering::Less => {
+                let mut st_w = RwLockUpgradableReadGuard::upgrade(st_r);
+                self.update_to_term_and_become_follower(&mut st_w, term);
+                st_w.leader_id = Some(leader_id);
+            }
+            std::cmp::Ordering::Equal => {
+                if st_r.leader_id.is_none() {
+                    let mut st_w = RwLockUpgradableReadGuard::upgrade(st_r);
+                    st_w.leader_id = Some(leader_id);
+                }
+            }
+            std::cmp::Ordering::Greater => {
+                return Err((st_r.term, self.log.read().commit_index + 1))
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Updates commit index
+    fn update_commit(&self, log_w: &mut Log<C>, leader_commit: LogIndex) {
         let prev_commit_index = log_w.commit_index;
         log_w.commit_index = min(leader_commit, log_w.last_log_index());
         if prev_commit_index < log_w.commit_index {
             self.apply(&mut *log_w);
         }
-
-        Ok((term, truncate_at, to_persist))
     }
 
     /// Check if `commit_index` needs to be updated

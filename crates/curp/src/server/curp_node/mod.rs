@@ -422,6 +422,11 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         let prev_log_index = req.prev_log_index;
         let prev_log_term = req.prev_log_term;
         let leader_commit = req.leader_commit;
+
+        if entries.is_empty() {
+            return Ok(self.heartbeat(leader_id, term, leader_commit));
+        }
+
         self.append_entries_inner(
             entries,
             leader_id,
@@ -430,6 +435,22 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             prev_log_term,
             leader_commit,
         )
+    }
+
+    /// Handles heartbeat
+    fn heartbeat(
+        &self,
+        leader_id: u64,
+        req_term: u64,
+        leader_commit: u64,
+    ) -> AppendEntriesResponse {
+        match self
+            .curp
+            .handle_heartbeat(req_term, leader_id, leader_commit)
+        {
+            Ok(()) => AppendEntriesResponse::new_accept(req_term),
+            Err((term, hint)) => AppendEntriesResponse::new_reject(term, hint),
+        }
     }
 
     /// Handle `AppendEntries` requests
