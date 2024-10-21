@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     sync::Arc,
     time::{Duration, Instant},
@@ -7,7 +7,7 @@ use std::{
 
 use clippy_utilities::NumericCast;
 use engine::{SnapshotAllocator, SnapshotApi};
-use futures::{pin_mut, stream::FuturesUnordered, FutureExt, Stream, StreamExt};
+use futures::{future::join_all, pin_mut, stream::FuturesUnordered, FutureExt, Stream, StreamExt};
 use madsim::rand::{thread_rng, Rng};
 use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock};
@@ -326,7 +326,41 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         }
         self.curp.handle_shutdown(req.propose_id())?;
         CommandBoard::wait_for_shutdown_synced(&self.cmd_board).await;
+        self.trigger_nodes_shutdown().await;
+        Self::abort_replication();
         Ok(ShutdownResponse::default())
+    }
+
+    #[allow(clippy::arithmetic_side_effects, clippy::pattern_type_mismatch)] // won't overflow
+    /// Trigger other nodes to shutdown
+    async fn trigger_nodes_shutdown(&self) {
+        /// Wait interval for trigger shutdown
+        const TRIGGER_INTERVAL: Duration = Duration::from_millis(100);
+        let mut notified = HashSet::<u64>::new();
+        let commit_index = self.curp.commit_index();
+        loop {
+            let states = self.curp.all_node_states();
+            if notified.len() + 1 == states.len() {
+                break;
+            }
+            let futs: FuturesUnordered<_> = states
+                .iter()
+                .filter(|(id, _)| !notified.contains(id))
+                .filter(|(_, state)| state.match_index() == commit_index)
+                .map(|(id, state)| state.connect().trigger_shutdown().map(move |res| (id, res)))
+                .collect();
+            for (id, result) in join_all(futs).await {
+                match result {
+                    Ok(()) => {
+                        info!("node {id} shutdown triggered");
+                        let _ignore = notified.insert(*id);
+                    }
+                    Err(err) => warn!("send trigger shutdown rpc to {id} failed, err: {err}"),
+                }
+            }
+
+            tokio::time::sleep(TRIGGER_INTERVAL).await;
+        }
     }
 
     /// Handle lease keep alive requests

@@ -198,6 +198,11 @@ impl NodeState {
         self.status.next_index
     }
 
+    /// Get the match index of the current node
+    pub(crate) fn match_index(&self) -> LogIndex {
+        self.status.match_index
+    }
+
     /// Get the connection to the node
     pub(crate) fn connect(&self) -> &InnerConnectApiWrapper {
         &self.connect
