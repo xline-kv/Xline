@@ -55,13 +55,12 @@ impl TaskName {
     /// Returns `true` if the task is cancel safe
     pub(super) fn cancel_safe(self) -> bool {
         match self {
-            TaskName::HandlePropose | TaskName::AfterSync => true,
+            TaskName::HandlePropose | TaskName::AfterSync | TaskName::Election => true,
             TaskName::CompactBg
             | TaskName::KvUpdates
             | TaskName::WatchTask
             | TaskName::LeaseKeepAlive
             | TaskName::TonicServer
-            | TaskName::Election
             | TaskName::ConfChange
             | TaskName::GcClientLease
             | TaskName::RevokeExpiredLeases
