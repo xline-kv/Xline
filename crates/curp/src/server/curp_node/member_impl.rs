@@ -111,7 +111,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             Self::abort_replication();
         }
 
-        self.build_membership_response(self_id, term)
+        Ok(self.build_membership_response(self_id, term))
     }
 
     /// Builds a `ChangeMembershipResponse` from the given membership.
@@ -119,7 +119,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         leader_id: u64,
         term: u64,
-    ) -> Result<MembershipResponse, CurpError> {
+    ) -> MembershipResponse {
         let Membership { members, nodes } = self.curp.effective_membership();
         let members = members
             .into_iter()
@@ -135,12 +135,12 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             })
             .collect();
 
-        Ok(MembershipResponse {
+        MembershipResponse {
             members,
             nodes,
             term,
             leader_id,
-        })
+        }
     }
 
     /// Wait the command with the propose id to be committed
