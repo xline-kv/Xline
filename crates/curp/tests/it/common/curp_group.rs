@@ -281,9 +281,6 @@ impl CurpGroup {
         let role_change_arc = role_change_cb.get_inner_arc();
         let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
 
-        let init_members = membership_info.init_members;
-        let node_id = init_members.len();
-        let membership_info = MembershipInfo::new(node_id as u64, init_members);
         let server = Arc::new(Rpc::new(
             membership_info,
             false,
