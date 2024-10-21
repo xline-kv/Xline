@@ -184,7 +184,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Updates the membership config
     pub(crate) fn update_states_with_membership(&self, membership: &Membership) {
-        let connects = self.connect_other_nodes(membership);
+        let connects = self.connect_nodes(membership);
         let _new_states = self.curp.update_node_states(connects);
         self.curp.update_role(membership);
     }
@@ -209,15 +209,14 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
 
     /// Establishes connections to all nodes specified in the membership configuration,
     /// excluding the current node.
-    pub(crate) fn connect_other_nodes(
+    pub(crate) fn connect_nodes(
         &self,
         config: &Membership,
     ) -> BTreeMap<u64, InnerConnectApiWrapper> {
-        let self_id = self.curp.id();
         let nodes = config
             .nodes
             .iter()
-            .filter_map(|(id, meta)| (*id != self_id).then_some((*id, meta.peer_urls().to_vec())))
+            .map(|(id, meta)| (*id, meta.peer_urls().to_vec()))
             .collect();
 
         inner_connects(nodes, self.curp.client_tls_config()).collect()
