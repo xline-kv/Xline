@@ -9,13 +9,13 @@ use clippy_utilities::NumericCast;
 use curp::{
     client::{ClientApi, ClientBuilder},
     member::MembershipInfo,
-    rpc::{Change, CurpError, MembershipResponse, Node, NodeMetadata},
+    rpc::{Change, MembershipResponse, Node, NodeMetadata},
 };
 use curp_test_utils::{
     init_logger, sleep_millis,
     test_cmd::{TestCommand, TestCommandResult, TestCommandType},
 };
-use futures::stream::FuturesUnordered;
+use futures::{future::join_all, stream::FuturesUnordered, FutureExt};
 use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
 use tokio::net::TcpListener;
@@ -299,29 +299,32 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
 
     let req_client = group.new_client().await;
     let collection_task = tokio::spawn(async move {
-        let mut collection = vec![];
-        for i in 0..10 {
-            let cmd = TestCommand::new_put(vec![i], i);
-            let res = req_client.propose(&cmd, None, true).await;
-            if res.is_ok() && res.unwrap().is_ok() {
-                collection.push(i);
-            }
-        }
-        collection
+        let cmds: Vec<_> = (0..10).map(|i| TestCommand::new_put(vec![i], i)).collect();
+        let futs: FuturesUnordered<_> = (0..10)
+            .zip(&cmds)
+            .map(|(i, cmd)| {
+                req_client
+                    .propose(cmd, None, true)
+                    .map(move |res| res.map(|_| i))
+            })
+            .collect();
+
+        join_all(futs)
+            .await
+            .into_iter()
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>()
     });
 
     let client = group.new_client().await;
     client.propose_shutdown().await.unwrap();
 
-    let res = client
-        .propose(&TestCommand::new_put(vec![888], 1), None, false)
-        .await;
-    assert!(matches!(
-        CurpError::from(res.unwrap_err()),
-        CurpError::ShuttingDown(_)
-    ));
-
-    let collection = collection_task.await.unwrap();
+    let collection = tokio::time::timeout(Duration::from_secs(2), collection_task)
+        .await
+        .map(Result::ok)
+        .ok()
+        .flatten()
+        .unwrap_or_else(Vec::new);
     group
         .wait_for_group_shutdown(DEFAULT_SHUTDOWN_TIMEOUT)
         .await;

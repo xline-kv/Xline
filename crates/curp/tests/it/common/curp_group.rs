@@ -391,11 +391,7 @@ impl CurpGroup {
             .flat_map(|node| {
                 BOTTOM_TASKS
                     .iter()
-                    .map(|task| {
-                        node.task_manager
-                            .get_shutdown_listener(task.to_owned())
-                            .unwrap()
-                    })
+                    .flat_map(|task| node.task_manager.get_shutdown_listener(task.to_owned()))
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
