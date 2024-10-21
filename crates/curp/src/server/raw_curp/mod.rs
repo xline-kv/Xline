@@ -290,12 +290,18 @@ pub(super) struct Heartbeat {
     term: u64,
     /// Leader's id
     leader_id: ServerId,
+    /// Leader's commit index
+    leader_commit: LogIndex,
 }
 
 impl Heartbeat {
     /// Creates a new `Heartbeat`
-    pub(super) fn new(term: u64, leader_id: ServerId) -> Self {
-        Self { term, leader_id }
+    pub(super) fn new(term: u64, leader_id: ServerId, leader_commit: LogIndex) -> Self {
+        Self {
+            term,
+            leader_id,
+            leader_commit,
+        }
     }
 }
 
@@ -304,10 +310,10 @@ impl From<Heartbeat> for crate::rpc::AppendEntriesRequest {
         Self {
             term: hb.term,
             leader_id: hb.leader_id,
+            leader_commit: hb.leader_commit,
             // not used for a heartbeat
             prev_log_index: 0,
             prev_log_term: 0,
-            leader_commit: 0,
             entries: vec![],
         }
     }

@@ -4,6 +4,7 @@ use curp_external_api::{
     cmd::{Command, CommandExecutor},
     role_change::RoleChange,
 };
+use futures::FutureExt;
 use parking_lot::Mutex;
 use tokio::{sync::oneshot, task::JoinHandle, time::MissedTickBehavior};
 use tonic::Response;
@@ -58,13 +59,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         Self::abort_replication();
 
         let state_handle = tokio::spawn(Self::state_machine_worker(curp, action_rx, self_term));
-        let heartbeat_handle = tokio::spawn(Self::heartbeat_worker(
-            action_tx.clone(),
-            connects,
-            cfg.clone(),
-            self_id,
-            self_term,
-        ));
+        let heartbeat_handle = tokio::spawn(
+            Self::heartbeat_worker(action_tx.clone(), connects, cfg.clone(), self_id, self_term)
+                .map(|result| info!("heartbeat worker exit, result: {result:?}")),
+        );
         let replication_handles = node_states.into_iter().map(|(id, state)| {
             let cfg = cfg.clone();
             info!("spawning replication task for {id}");
@@ -114,21 +112,29 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         cfg: CurpConfig,
         self_id: u64,
         self_term: u64,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let timeout = cfg.rpc_timeout;
         let mut ticker = tokio::time::interval(cfg.heartbeat_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let heartbeat = Heartbeat::new(self_term, self_id);
+
         loop {
             let _inst = ticker.tick().await;
+            let (tx, rx) = oneshot::channel();
+            action_tx.send(Action::GetCommitIndex(tx))?;
+            let commit_index = rx.await?;
+            let heartbeat = Heartbeat::new(self_term, self_id, commit_index);
+
             for (id, connect) in &connects {
                 if let Some(action) =
                     Self::send_heartbeat(*id, connect, heartbeat, self_term, timeout).await
                 {
+                    debug_assert!(
+                        matches!(action, Action::StepDown(_)),
+                        "action not Action::StepDown"
+                    );
                     // step down
                     let _ignore = action_tx.send(action);
-                    info!("heartbeat worker exiting");
-                    return;
+                    return Ok(());
                 }
             }
         }
@@ -210,7 +216,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 match action {
                     Action::UpdateMatchIndex((_, index)) => next_index = index + 1,
                     Action::UpdateNextIndex((_, index)) => next_index = index,
-                    Action::GetLogFrom(_) | Action::StepDown(_) => {}
+                    Action::GetLogFrom(_) | Action::StepDown(_) | Action::GetCommitIndex(_) => {}
                 }
                 let __ignore = action_tx.send(action);
             }

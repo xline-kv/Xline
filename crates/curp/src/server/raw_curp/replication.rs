@@ -18,6 +18,10 @@ pub(crate) enum Action<C> {
     /// Contains a tuple with the starting log index and a sender to send the sync action.
     GetLogFrom((LogIndex, oneshot::Sender<SyncAction<C>>)),
 
+    /// Request to get the commit index.
+    /// Contains a sender to send the commit index.
+    GetCommitIndex(oneshot::Sender<LogIndex>),
+
     /// Step down the current node.
     /// Contains the latest term.
     StepDown(u64),
@@ -40,6 +44,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 let sync = self.sync_from(next);
                 if tx.send(sync).is_err() {
                     error!("send append entries failed");
+                }
+            }
+            Action::GetCommitIndex(tx) => {
+                if tx.send(self.commit_index()).is_err() {
+                    error!("send commit index failed");
                 }
             }
             Action::StepDown(node_term) => {
