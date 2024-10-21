@@ -11,7 +11,7 @@ categories = ["Client"]
 keywords = ["Client", "Xline", "RPC"]
 
 [dependencies]
-anyhow = "1.0.83"
+anyhow = "1.0.90"
 async-dropper = { version = "0.3.1", features = ["tokio", "simple"] }
 async-trait = "0.1.81"
 clippy-utilities = "0.2.0"
