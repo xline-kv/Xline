@@ -2,7 +2,9 @@
 
 use std::{sync::Arc, time::Duration, vec};
 
-use curp::rpc::{ConfChange, ProposeConfChangeRequest, RecordRequest};
+use curp::rpc::{
+    Change, ChangeMembershipRequest, MembershipChange, Node, NodeMetadata, RecordRequest,
+};
 use curp_test_utils::{init_logger, sleep_secs, test_cmd::TestCommand, TEST_TABLE};
 use engine::{StorageEngine, StorageOps};
 use itertools::Itertools;
@@ -463,7 +465,6 @@ async fn overwritten_config_should_fallback() {
     let _wait_for_client_id = client
         .propose(TestCommand::new_put(vec![0], 0), false)
         .await;
-    let client_id = client.client_id();
     let leader1 = group.get_leader().await.0;
     for node in group.nodes.values().filter(|node| node.id != leader1) {
         group.disable_node(node.id);
@@ -474,20 +475,15 @@ async fn overwritten_config_should_fallback() {
 
     let node_id = 123;
     let address = vec!["127.0.0.1:4567".to_owned()];
-    let changes = vec![ConfChange::add(node_id, address)];
+    let node = Node::new(
+        node_id,
+        NodeMetadata::new(format!("S{node_id}"), address.clone(), address),
+    );
+    let changes = vec![MembershipChange {
+        change: Some(Change::Add(node)),
+    }];
     let res = leader_conn
-        .propose_conf_change(
-            ProposeConfChangeRequest {
-                propose_id: Some(PbProposeId {
-                    client_id,
-                    // start from 1 as we already propose an put with seq_num = 0
-                    seq_num: 1,
-                }),
-                changes,
-                cluster_version: cluster.cluster_version,
-            },
-            Duration::from_secs(3),
-        )
+        .propose_conf_change(ChangeMembershipRequest { changes }, Duration::from_secs(3))
         .await;
     assert_eq!(res.unwrap_err().code(), Code::DeadlineExceeded);
     let cluster = leader_conn.fetch_cluster().await.unwrap().into_inner();

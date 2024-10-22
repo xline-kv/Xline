@@ -353,7 +353,7 @@ impl ClientBuilder {
             self.init_retry_config(),
             keep_alive,
             fetch,
-            ClusterState::Init(cluster_state_init),
+            cluster_state_init,
         )
     }
 }

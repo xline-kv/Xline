@@ -21,6 +21,7 @@ use tonic::transport::{
     server::Connected, Certificate, ClientTlsConfig, Identity, ServerTlsConfig,
 };
 use tonic::transport::{server::Router, Server};
+#[cfg(not(madsim))]
 use tracing::info;
 use utils::{
     barrier::IdBarrier,
@@ -92,6 +93,7 @@ pub struct XlineServer {
 }
 
 impl XlineServer {
+    #[cfg_attr(madsim, allow(clippy::unused_async))]
     /// New `XlineServer`
     ///
     /// # Errors
@@ -308,7 +310,7 @@ impl XlineServer {
         let n2 = n1.clone();
         let db = DB::open(&self.storage_config.engine)?;
         let key_pair = Self::read_key_pair(&self.auth_config).await?;
-        let (xline_router, curp_router, curp_client) = self.init_router(db, key_pair).await?;
+        let (xline_router, curp_router, _curp_client) = self.init_router(db, key_pair).await?;
         let handle = tokio::spawn(async move {
             tokio::select! {
                 _ = xline_router.serve_with_shutdown(xline_addr, n1.wait()) => {},
@@ -316,9 +318,7 @@ impl XlineServer {
             }
             Ok(())
         });
-        if let Err(e) = self.publish(curp_client).await {
-            warn!("publish name to cluster failed: {:?}", e);
-        };
+
         Ok(handle)
     }
 

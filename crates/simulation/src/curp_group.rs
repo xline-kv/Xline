@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     error::Error,
     path::PathBuf,
     sync::{atomic::AtomicU64, Arc},
@@ -14,14 +14,15 @@ pub use curp::rpc::{
 use curp::{
     client::{ClientApi, ClientBuilder},
     cmd::Command,
-    members::{ClusterInfo, ServerId},
+    member::MembershipInfo,
+    members::ServerId,
     rpc::{
-        ConfChange, FetchClusterRequest, FetchClusterResponse, Member, OpResponse,
-        ProposeConfChangeRequest, ProposeConfChangeResponse, ReadState,
+        Change, ChangeMembershipRequest, FetchMembershipRequest, MembershipResponse, NodeMetadata,
+        OpResponse, ReadState,
     },
     server::{
         conflict::test_pools::{TestSpecPool, TestUncomPool},
-        Rpc, StorageApi, DB,
+        Rpc, DB,
     },
     LogIndex,
 };
@@ -34,6 +35,7 @@ use itertools::Itertools;
 use madsim::runtime::NodeHandle;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
+use tonic::Response;
 use tracing::debug;
 use utils::{
     config::{ClientConfig, CurpConfigBuilder, EngineConfig},
@@ -77,7 +79,20 @@ impl CurpGroup {
         let all: HashMap<_, _> = (0..n_nodes)
             .map(|x| (format!("S{x}"), vec![format!("192.168.1.{}:2380", x + 1)]))
             .collect();
-        let mut all_members = HashMap::new();
+        let all_members = (0..n_nodes)
+            .map(|i| (i as u64, format!("192.168.1.{}:2380", i + 1)))
+            .collect();
+        let init_members: BTreeMap<_, _> = all
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(id, (name, addrs))| {
+                (
+                    id as u64,
+                    NodeMetadata::new(name, addrs.clone(), addrs.clone()),
+                )
+            })
+            .collect();
 
         let nodes = (0..n_nodes)
             .map(|i| {
@@ -89,13 +104,9 @@ impl CurpGroup {
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
                 let store = Arc::new(Mutex::new(None));
 
-                let cluster_info = Arc::new(ClusterInfo::from_members_map(all.clone(), [], &name));
-                all_members = cluster_info
-                    .all_members_peer_urls()
-                    .into_iter()
-                    .map(|(k, mut v)| (k, v.pop().unwrap()))
-                    .collect();
-                let id = cluster_info.self_id();
+                let node_id = i as u64;
+                let membership_info = MembershipInfo::new(node_id, init_members.clone());
+
                 let engine_cfg = EngineConfig::RocksDB(storage_path.clone());
                 let store_c = Arc::clone(&store);
                 let role_change_cb = TestRoleChange::default();
@@ -103,9 +114,10 @@ impl CurpGroup {
 
                 let node_handle = handle
                     .create_node()
-                    .name(id.to_string())
+                    .name(node_id.to_string())
                     .ip(format!("192.168.1.{}", i + 1).parse().unwrap())
                     .init(move || {
+                        let membership_info = membership_info.clone();
                         let task_manager = Arc::new(TaskManager::new());
                         let ce = Arc::new(TestCE::new(
                             name.clone(),
@@ -125,12 +137,9 @@ impl CurpGroup {
                                 .unwrap(),
                         );
                         let curp_storage = Arc::new(DB::open(&curp_config.engine_cfg).unwrap());
-                        let cluster_info = match curp_storage.recover_cluster_info().unwrap() {
-                            Some(cl) => Arc::new(cl),
-                            None => Arc::clone(&cluster_info),
-                        };
+
                         Rpc::run_from_addr(
-                            cluster_info,
+                            membership_info,
                             is_leader,
                             "0.0.0.0:2380".parse().unwrap(),
                             ce,
@@ -149,9 +158,9 @@ impl CurpGroup {
                     .build();
 
                 (
-                    id,
+                    node_id,
                     CurpNode {
-                        id,
+                        id: node_id,
                         addr: peer_url,
                         handle: node_handle,
                         exe_rx,
@@ -184,16 +193,16 @@ impl CurpGroup {
 
     pub async fn new_client(&self) -> SimClient<TestCommand> {
         let config = ClientConfig::default();
-        let all_members = self
+        let addrs: Vec<_> = self
             .nodes
-            .iter()
-            .map(|(id, node)| (*id, vec![node.addr.clone()]))
+            .values()
+            .map(|node| vec![node.addr.clone()])
             .collect();
         let (client, client_id) = self
             .client_node
             .spawn(async move {
                 ClientBuilder::new(config, true)
-                    .all_members(all_members)
+                    .init_nodes(addrs)
                     .build_with_client_id()
             })
             .await
@@ -249,22 +258,24 @@ impl CurpGroup {
                         continue;
                     };
 
-                    let FetchClusterResponse {
-                        leader_id, term, ..
-                    } = if let Ok(resp) = client.fetch_cluster(FetchClusterRequest::default()).await
-                    {
-                        resp.into_inner()
-                    } else {
+                    let resp = client
+                        .fetch_membership(FetchMembershipRequest::default())
+                        .await;
+                    let Ok(MembershipResponse {
+                        term, leader_id, ..
+                    }) = resp.map(Response::into_inner)
+                    else {
                         continue;
                     };
+
                     if term > max_term {
                         max_term = term;
-                        leader = leader_id;
+                        leader = Some(leader_id);
                     } else if term == max_term && leader.is_none() {
-                        leader = leader_id;
+                        leader = Some(leader_id);
                     }
                 }
-                leader.map(|l| (l.into(), max_term))
+                leader.map(|l| (l, max_term))
             })
             .await
             .unwrap()
@@ -296,11 +307,10 @@ impl CurpGroup {
                         continue;
                     };
 
-                    let FetchClusterResponse { term, .. } = if let Ok(resp) =
-                        client.fetch_cluster(FetchClusterRequest::default()).await
-                    {
-                        resp.into_inner()
-                    } else {
+                    let resp = client
+                        .fetch_membership(FetchMembershipRequest::default())
+                        .await;
+                    let Ok(MembershipResponse { term, .. }) = resp.map(Response::into_inner) else {
                         continue;
                     };
 
@@ -443,16 +453,16 @@ impl SimProtocolClient {
     #[inline]
     pub async fn propose_conf_change(
         &self,
-        conf_change: impl tonic::IntoRequest<ProposeConfChangeRequest>,
+        conf_change: impl tonic::IntoRequest<ChangeMembershipRequest>,
         timeout: Duration,
-    ) -> Result<tonic::Response<ProposeConfChangeResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<MembershipResponse>, tonic::Status> {
         let mut req = conf_change.into_request();
         req.set_timeout(timeout);
         let addr = self.addr.clone();
         self.handle
             .spawn(async move {
                 let mut client = ProtocolClient::connect(addr).await.unwrap();
-                client.propose_conf_change(req).await
+                client.change_membership(req).await
             })
             .await
             .unwrap()
@@ -461,13 +471,13 @@ impl SimProtocolClient {
     #[inline]
     pub async fn fetch_cluster(
         &self,
-    ) -> Result<tonic::Response<FetchClusterResponse>, tonic::Status> {
-        let req = FetchClusterRequest::default();
+    ) -> Result<tonic::Response<MembershipResponse>, tonic::Status> {
+        let req = FetchMembershipRequest::default();
         let addr = self.addr.clone();
         self.handle
             .spawn(async move {
                 let mut client = ProtocolClient::connect(addr).await.unwrap();
-                client.fetch_cluster(req).await
+                client.fetch_membership(req).await
             })
             .await
             .unwrap()
@@ -495,13 +505,10 @@ impl<C: Command> SimClient<C> {
     }
 
     #[inline]
-    pub async fn propose_conf_change(
-        &self,
-        changes: Vec<ConfChange>,
-    ) -> Result<Vec<Member>, tonic::Status> {
+    pub async fn propose_conf_change(&self, changes: Vec<Change>) -> Result<(), tonic::Status> {
         let inner = self.inner.clone();
         self.handle
-            .spawn(async move { inner.propose_conf_change(changes).await })
+            .spawn(async move { inner.change_membership(changes).await })
             .await
             .unwrap()
     }

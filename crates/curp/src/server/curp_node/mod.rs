@@ -16,11 +16,14 @@ use tokio::{sync::oneshot, time::MissedTickBehavior};
 use tonic::transport::ClientTlsConfig;
 use tracing::{debug, error, info, warn};
 #[cfg(madsim)]
+use utils::ClientTlsConfig;
+#[cfg(madsim)]
 use utils::{
     barrier::IdBarrier,
     config::CurpConfig,
-    task_manager::{tasks::TaskName, Listener, State, TaskManager},
+    task_manager::{tasks::TaskName, Listener, TaskManager},
 };
+#[cfg(not(madsim))]
 use utils::{
     barrier::IdBarrier,
     config::CurpConfig,

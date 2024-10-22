@@ -6,7 +6,7 @@ use tonic::transport::Channel;
 use tracing::debug;
 use utils::config::{
     AuthConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfig, InitialClusterState,
-    ServerTimeout, StorageConfig, TlsConfig,
+    NodeMetaConfig, ServerTimeout, StorageConfig, TlsConfig,
 };
 use xline::server::XlineServer;
 use xline_client::{
@@ -42,8 +42,21 @@ impl XlineGroup {
         let all: HashMap<_, _> = (0..size)
             .map(|x| (format!("S{x}"), vec![format!("192.168.1.{}:2380", x + 1)]))
             .collect();
+        let membership_info: HashMap<_, _> = (0..size)
+            .map(|i| {
+                (
+                    format!("S{i}"),
+                    NodeMetaConfig::new(
+                        i as u64,
+                        vec![format!("192.168.1.{}:2380", i + 1)],
+                        vec![format!("192.168.1.{}:2379", i + 1)],
+                    ),
+                )
+            })
+            .collect();
         let nodes = (0..size)
             .map(|i| {
+                let membership_info = membership_info.clone();
                 let name = format!("S{i}");
                 let client_url = format!("192.168.1.{}:2379", i + 1);
                 let peer_url = format!("192.168.1.{}:2380", i + 1);
@@ -59,6 +72,8 @@ impl XlineGroup {
                     ClientConfig::default(),
                     ServerTimeout::default(),
                     InitialClusterState::New,
+                    membership_info,
+                    i as u64,
                 );
 
                 let handle = handle

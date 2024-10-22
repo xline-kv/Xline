@@ -361,7 +361,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     #[inline]
     pub async fn run_from_addr(
         membership_info: MembershipInfo,
-        cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         addr: std::net::SocketAddr,
         executor: Arc<CE>,
@@ -377,7 +376,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
         use utils::task_manager::tasks::TaskName;
 
         use crate::rpc::InnerProtocolServer;
-        use crate::rpc::MemberProtocolServer;
         use crate::rpc::ProtocolServer;
 
         let n = task_manager
@@ -385,7 +383,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
             .unwrap_or_else(|| unreachable!("cluster should never shutdown before start"));
         let server = Self::new(
             membership_info,
-            cluster_info,
             is_leader,
             executor,
             snapshot_allocator,
@@ -400,7 +397,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
 
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server.clone()))
-            .add_service(MemberProtocolServer::new(server.clone()))
             .add_service(InnerProtocolServer::new(server))
             .serve_with_shutdown(addr, n.wait())
             .await?;
