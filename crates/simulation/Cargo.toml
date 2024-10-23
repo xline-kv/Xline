@@ -22,6 +22,7 @@ madsim = "0.2.27"
 parking_lot = "0.12.3"
 prost = "0.13"
 tempfile = "3"
+test-macros = { path = "../test-macros" }
 tokio = { version = "0.2.25", package = "madsim-tokio", features = [
     "rt",
     "rt-multi-thread",

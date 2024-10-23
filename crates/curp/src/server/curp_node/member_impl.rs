@@ -102,6 +102,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             self.curp.persistent_membership_state()?;
             // Leader also needs to update transferee
             self.curp.update_transferee();
+            #[cfg(madsim)] // simulate slow commit
+            {
+                madsim::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
             self.wait_commit(Some(propose_id)).await;
         }
 

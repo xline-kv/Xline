@@ -2688,6 +2688,7 @@ dependencies = [
  "parking_lot",
  "prost",
  "tempfile",
+ "test-macros",
  "tracing",
  "utils",
  "workspace-hack",

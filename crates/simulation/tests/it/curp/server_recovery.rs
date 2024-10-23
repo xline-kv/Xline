@@ -334,7 +334,7 @@ async fn minority_crash_and_recovery() {
     const NODES: usize = 9;
     const MINORITY: usize = (NODES - 1) / 2;
 
-    let mut group = CurpGroup::new(NODES).await;
+    let group = CurpGroup::new(NODES).await;
 
     let client = group.new_client().await;
 

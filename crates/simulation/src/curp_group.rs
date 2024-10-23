@@ -76,22 +76,19 @@ impl CurpGroup {
         assert!(n_nodes >= 3, "the number of nodes must >= 3");
         let handle = madsim::runtime::Handle::current();
 
-        let all: HashMap<_, _> = (0..n_nodes)
-            .map(|x| (format!("S{x}"), vec![format!("192.168.1.{}:2380", x + 1)]))
-            .collect();
-        let all_members = (0..n_nodes)
-            .map(|i| (i as u64, format!("192.168.1.{}:2380", i + 1)))
-            .collect();
-        let init_members: BTreeMap<_, _> = all
-            .clone()
-            .into_iter()
-            .enumerate()
-            .map(|(id, (name, addrs))| {
+        let init_members: BTreeMap<_, _> = (0..n_nodes)
+            .map(|id| {
+                let addrs = vec![format!("192.168.1.{}:2380", id + 1)];
                 (
                     id as u64,
-                    NodeMetadata::new(name, addrs.clone(), addrs.clone()),
+                    NodeMetadata::new(format!("S{id}"), addrs.clone(), addrs),
                 )
             })
+            .collect();
+        let all_members = init_members
+            .clone()
+            .into_iter()
+            .map(|(id, meta)| (id, meta.peer_urls()[0].clone()))
             .collect();
 
         let nodes = (0..n_nodes)
@@ -187,6 +184,84 @@ impl CurpGroup {
         }
     }
 
+    pub fn run_node(&mut self, id: u64) {
+        let handle = madsim::runtime::Handle::current();
+        let name = format!("S{id}");
+        let peer_url = format!("192.168.1.{}:2380", id + 1);
+        let storage_path = tempfile::tempdir().unwrap().into_path();
+
+        let (exe_tx, exe_rx) = mpsc::unbounded_channel();
+        let (as_tx, as_rx) = mpsc::unbounded_channel();
+        let store = Arc::new(Mutex::new(None));
+
+        let node_id = id as u64;
+        let membership_info = MembershipInfo::new(node_id, BTreeMap::default());
+
+        let engine_cfg = EngineConfig::RocksDB(storage_path.clone());
+        let store_c = Arc::clone(&store);
+        let role_change_cb = TestRoleChange::default();
+        let role_change_arc = role_change_cb.get_inner_arc();
+
+        let node_handle = handle
+            .create_node()
+            .name(node_id.to_string())
+            .ip(format!("192.168.1.{}", id + 1).parse().unwrap())
+            .init(move || {
+                let membership_info = membership_info.clone();
+                let task_manager = Arc::new(TaskManager::new());
+                let ce = Arc::new(TestCE::new(
+                    name.clone(),
+                    exe_tx.clone(),
+                    as_tx.clone(),
+                    EngineConfig::Memory,
+                ));
+                store_c.lock().replace(Arc::clone(&ce.store));
+                // we will restart the old leader.
+                // after the reboot, it may no longer be the leader.
+                let is_leader = false;
+                let curp_config = Arc::new(
+                    CurpConfigBuilder::default()
+                        .engine_cfg(engine_cfg.clone())
+                        .log_entries_cap(10)
+                        .build()
+                        .unwrap(),
+                );
+                let curp_storage = Arc::new(DB::open(&curp_config.engine_cfg).unwrap());
+
+                Rpc::run_from_addr(
+                    membership_info,
+                    is_leader,
+                    "0.0.0.0:2380".parse().unwrap(),
+                    ce,
+                    Box::new(MemorySnapshotAllocator),
+                    TestRoleChange {
+                        inner: role_change_cb.get_inner_arc(),
+                    },
+                    curp_config,
+                    curp_storage,
+                    task_manager,
+                    None,
+                    vec![Box::<TestSpecPool>::default()],
+                    vec![Box::<TestUncomPool>::default()],
+                )
+            })
+            .build();
+
+        let node = CurpNode {
+            id,
+            addr: peer_url.clone(),
+            handle: node_handle,
+            exe_rx,
+            as_rx,
+            store,
+            storage_path,
+            role_change_arc,
+        };
+
+        assert!(self.nodes.insert(id, node).is_none());
+        assert!(self.all_members.insert(id, peer_url).is_none());
+    }
+
     pub fn get_node(&self, id: &ServerId) -> &CurpNode {
         &self.nodes[id]
     }
@@ -226,7 +301,7 @@ impl CurpGroup {
         self.nodes.values_mut().map(|node| &mut node.as_rx)
     }
 
-    pub async fn crash(&mut self, id: ServerId) {
+    pub async fn crash(&self, id: ServerId) {
         let handle = madsim::runtime::Handle::current();
         handle.kill(id.to_string());
         madsim::time::sleep(Duration::from_secs(10)).await;
@@ -235,7 +310,7 @@ impl CurpGroup {
         }
     }
 
-    pub async fn restart(&mut self, id: ServerId) {
+    pub async fn restart(&self, id: ServerId) {
         let handle = madsim::runtime::Handle::current();
         handle.restart(id.to_string());
     }
@@ -505,7 +580,7 @@ impl<C: Command> SimClient<C> {
     }
 
     #[inline]
-    pub async fn propose_conf_change(&self, changes: Vec<Change>) -> Result<(), tonic::Status> {
+    pub async fn change_membership(&self, changes: Vec<Change>) -> Result<(), tonic::Status> {
         let inner = self.inner.clone();
         self.handle
             .spawn(async move { inner.change_membership(changes).await })
@@ -528,6 +603,15 @@ impl<C: Command> SimClient<C> {
         let inner = self.inner.clone();
         self.handle
             .spawn(async move { inner.fetch_leader_id(true).await })
+            .await
+            .unwrap()
+    }
+
+    #[inline]
+    pub async fn fetch_cluster(&self) -> Result<MembershipResponse, tonic::Status> {
+        let inner = self.inner.clone();
+        self.handle
+            .spawn(async move { inner.fetch_cluster(true).await })
             .await
             .unwrap()
     }
