@@ -268,7 +268,7 @@ pub(crate) enum SyncAction<C> {
 }
 
 /// Invoked by candidates to gather votes
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(super) struct Vote {
     /// Candidate's term
     pub(super) term: u64,

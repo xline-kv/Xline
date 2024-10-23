@@ -704,11 +704,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                     );
                     let result = Self::bcast_vote(curp.as_ref(), vote).await;
                     debug_assert!(
-                        matches!(
-                            result,
-                            BCastVoteResult::VoteSuccess | BCastVoteResult::VoteFail
-                        ),
-                        "bcast normal vote should always return Vote variants"
+                        matches!(result, BCastVoteResult::VoteSuccess | BCastVoteResult::Fail),
+                        "bcast normal vote should always return Vote variants, result: {result:?}"
                     );
                     if matches!(result, BCastVoteResult::VoteSuccess) {
                         Self::respawn_replication(Arc::clone(&curp));
@@ -906,7 +903,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             if vote.is_pre_vote {
                 if resp.shutdown_candidate {
                     curp.task_manager().shutdown(false).await;
-                    return BCastVoteResult::PreVoteFail;
+                    return BCastVoteResult::Fail;
                 }
                 let result = curp.handle_pre_vote_resp(id, resp.term, resp.vote_granted);
                 match result {
@@ -927,12 +924,12 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 match result {
                     Ok(false) => {}
                     Ok(true) => return BCastVoteResult::VoteSuccess,
-                    Err(()) => return BCastVoteResult::VoteFail,
+                    Err(()) => return BCastVoteResult::Fail,
                 }
             };
         }
 
-        BCastVoteResult::PreVoteFail
+        BCastVoteResult::Fail
     }
 
     /// Get `RawCurp`
@@ -951,15 +948,14 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Debug for CurpNode<C, C
 }
 
 /// Represents the result of broadcasting a vote in the consensus process.
+#[derive(Debug)]
 enum BCastVoteResult {
     /// Indicates that the pre-vote phase was successful.
     PreVoteSuccess(Vote),
-    /// Indicates that the pre-vote phase failed.
-    PreVoteFail,
     /// Indicates that the vote phase was successful.
     VoteSuccess,
-    /// Indicates that the vote phase failed.
-    VoteFail,
+    /// Indicates that the vote or pre-vote phase failed.
+    Fail,
 }
 
 #[cfg(test)]
