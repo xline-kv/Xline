@@ -88,10 +88,10 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         self.ensure_leader()?;
         let (self_id, term) = (self.curp.id(), self.curp.term());
         let changes = Self::ensure_non_overlapping(changes)?;
-        let configs = self.curp.generate_membership(changes);
-        if configs.is_empty() {
-            return Err(CurpError::invalid_member_change());
-        }
+        let configs = self
+            .curp
+            .generate_membership(changes)
+            .ok_or(CurpError::invalid_member_change())?;
         for config in configs {
             let propose_id = ProposeId(rand::random(), 0);
             let index = self.curp.push_log_entry(propose_id, config.clone()).index;

@@ -519,6 +519,51 @@ async fn propose_remove_leader_should_success() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
+async fn change_membership_should_be_idempotent() {
+    init_logger();
+
+    let group = CurpGroup::new(3).await;
+    let client = group.new_client().await;
+
+    let node_meta = NodeMetadata::new("new_node", ["addr"], ["addr"]);
+    let node_id = 5;
+    let node = Node::new(node_id, node_meta.clone());
+
+    for _ in 0..2 {
+        client
+            .change_membership(vec![Change::Add(node.clone())])
+            .await
+            .unwrap();
+    }
+    assert_cluster(&client, 4, 3, [NodeAssert::new(node_id, node_meta, false)]).await;
+
+    for _ in 0..2 {
+        client
+            .change_membership(vec![Change::Promote(node_id)])
+            .await
+            .unwrap();
+    }
+    assert_cluster(&client, 4, 4, []).await;
+
+    for _ in 0..2 {
+        client
+            .change_membership(vec![Change::Demote(node_id)])
+            .await
+            .unwrap();
+    }
+    assert_cluster(&client, 4, 3, []).await;
+
+    for _ in 0..2 {
+        client
+            .change_membership(vec![Change::Remove(node_id)])
+            .await
+            .unwrap();
+    }
+    assert_cluster(&client, 3, 3, []).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
 async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_leader() {
     init_logger();
     let tmp_path = tempfile::TempDir::new().unwrap().into_path();

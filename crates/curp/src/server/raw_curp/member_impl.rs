@@ -23,7 +23,7 @@ use super::Role;
 // Leader methods
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Generate memberships based on the provided change
-    pub(crate) fn generate_membership<Changes>(&self, changes: Changes) -> Vec<Membership>
+    pub(crate) fn generate_membership<Changes>(&self, changes: Changes) -> Option<Vec<Membership>>
     where
         Changes: IntoIterator<Item = Change>,
     {

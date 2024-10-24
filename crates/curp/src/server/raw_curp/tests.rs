@@ -653,6 +653,7 @@ fn add_learner_node_and_promote_should_success() {
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     let membership = curp
         .generate_membership(Some(Change::Add(Node::new(3, NodeMetadata::default()))))
+        .unwrap()
         .pop()
         .unwrap();
     let _ignore = curp.update_membership_state(None, Some((1, membership)), None);
@@ -666,6 +667,7 @@ fn add_learner_node_and_promote_should_success() {
     let _ignore = curp.update_membership_state(None, None, Some(1)).unwrap();
     let membership = curp
         .generate_membership(Some(Change::Promote(3)))
+        .unwrap()
         .pop()
         .unwrap();
     let _ignore = curp.update_membership_state(None, Some((2, membership)), None);
@@ -688,9 +690,11 @@ fn add_exists_node_should_have_no_effect() {
             exists_node_id,
             NodeMetadata::default(),
         ))))
+        .unwrap()
         .is_empty());
     assert!(curp
         .generate_membership(Some(Change::Promote(exists_node_id)))
+        .unwrap()
         .is_empty());
 }
 
@@ -702,6 +706,7 @@ fn remove_node_should_remove_node_from_curp() {
     let follower_id = curp.get_id_by_name("S1").unwrap();
     let membership = curp
         .generate_membership(Some(Change::Demote(follower_id)))
+        .unwrap()
         .pop()
         .unwrap();
     let _ignore = curp.update_membership_state(None, Some((1, membership)), None);
@@ -721,10 +726,9 @@ fn remove_non_exists_node_should_have_no_effect() {
     let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
     assert!(curp
         .generate_membership(Some(Change::Remove(10)))
+        .unwrap()
         .is_empty());
-    assert!(curp
-        .generate_membership(Some(Change::Demote(10)))
-        .is_empty());
+    assert!(curp.generate_membership(Some(Change::Demote(10))).is_none());
 }
 
 #[traced_test]
@@ -757,6 +761,7 @@ fn leader_handle_move_leader() {
     let curp = { Arc::new(RawCurp::new_test(3, mock_role_change(), task_manager)) };
     let membership = curp
         .generate_membership(Some(Change::Add(Node::new(1234, NodeMetadata::default()))))
+        .unwrap()
         .pop()
         .unwrap();
     let _ignore = curp.update_membership_state(None, Some((1, membership)), None);

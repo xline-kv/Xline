@@ -198,13 +198,13 @@ impl MembershipState {
     /// Generates a new membership from `Change`
     ///
     /// Returns an empty `Vec` if there's an on-going membership change
-    pub(crate) fn changes<Changes>(&self, changes: Changes) -> Vec<Membership>
+    pub(crate) fn changes<Changes>(&self, changes: Changes) -> Option<Vec<Membership>>
     where
         Changes: IntoIterator<Item = Change>,
     {
         // membership uncommitted, return an empty vec
         if self.entries.len() != 1 {
-            return vec![];
+            return None;
         }
         self.last().membership.changes(changes)
     }
@@ -261,7 +261,7 @@ impl Membership {
     /// Generates a new membership from `Change`
     ///
     /// Returns `None` if the change is invalid
-    pub(crate) fn changes<Changes>(&self, changes: Changes) -> Vec<Self>
+    pub(crate) fn changes<Changes>(&self, changes: Changes) -> Option<Vec<Self>>
     where
         Changes: IntoIterator<Item = Change>,
     {
@@ -272,24 +272,26 @@ impl Membership {
             match change {
                 Change::Add(node) => {
                     let (id, meta) = node.into_parts();
-                    if nodes.insert(id, meta).is_some() {
-                        return vec![];
+                    if set.contains(&id) {
+                        return None;
                     }
+                    let _ignore = nodes.insert(id, meta);
                 }
                 Change::Remove(id) => {
-                    if nodes.remove(&id).is_none() {
-                        return vec![];
+                    if set.contains(&id) {
+                        return None;
                     }
+                    let _ignore = nodes.remove(&id).is_none();
                 }
                 Change::Promote(id) => {
-                    if self.is_current_member(id) {
-                        return vec![];
+                    if !nodes.contains_key(&id) {
+                        return None;
                     }
                     let _ignore = set.insert(id);
                 }
                 Change::Demote(id) => {
-                    if !self.is_current_member(id) {
-                        return vec![];
+                    if !nodes.contains_key(&id) {
+                        return None;
                     }
                     let _ignore = set.remove(&id);
                 }
@@ -301,18 +303,13 @@ impl Membership {
             nodes,
         };
 
-        Self::all_coherent(self.clone(), &target)
+        Some(Self::all_coherent(self.clone(), &target))
     }
 
     /// Gets the current member set
     #[allow(clippy::unwrap_used)] // members should never be empty
     fn current_member_set(&self) -> &BTreeSet<u64> {
         self.members.last().unwrap()
-    }
-
-    /// Returns `true` if the given id exists in the current member set
-    fn is_current_member(&self, id: u64) -> bool {
-        self.current_member_set().contains(&id)
     }
 
     /// Generates all coherent membership to reach the target
@@ -507,15 +504,16 @@ mod tests {
             }
         };
 
-        let changes =
-            membership_state.changes([Change::Add(Node::new(2, NodeMetadata::default()))]);
+        let changes = membership_state
+            .changes([Change::Add(Node::new(2, NodeMetadata::default()))])
+            .unwrap();
         assert_eq!(
             changes,
             vec![build_membership_with_learners([vec![1]], [2])]
         );
         apply_changes(&mut membership_state, changes.clone());
 
-        let changes = membership_state.changes([Change::Promote(2)]);
+        let changes = membership_state.changes([Change::Promote(2)]).unwrap();
         assert_eq!(
             changes,
             vec![
@@ -525,7 +523,7 @@ mod tests {
         );
         apply_changes(&mut membership_state, changes.clone());
 
-        let changes = membership_state.changes([Change::Demote(2)]);
+        let changes = membership_state.changes([Change::Demote(2)]).unwrap();
         assert_eq!(
             changes,
             vec![
@@ -535,7 +533,7 @@ mod tests {
         );
         apply_changes(&mut membership_state, changes.clone());
 
-        let changes = membership_state.changes([Change::Remove(2)]);
+        let changes = membership_state.changes([Change::Remove(2)]).unwrap();
         assert_eq!(changes, vec![build_membership([vec![1]])]);
         apply_changes(&mut membership_state, changes.clone());
     }
@@ -544,14 +542,15 @@ mod tests {
     fn test_membership_changes_reject_uncommitted() {
         let mut index = 1;
         let mut membership_state = MembershipState::new(build_membership([vec![1]]));
-        let changes =
-            membership_state.changes([Change::Add(Node::new(2, NodeMetadata::default()))]);
+        let changes = membership_state
+            .changes([Change::Add(Node::new(2, NodeMetadata::default()))])
+            .unwrap();
         for change in changes {
             // append but not committed
             membership_state.append(index, change);
             index += 1;
         }
 
-        assert!(membership_state.changes([Change::Promote(2)]).is_empty());
+        assert!(membership_state.changes([Change::Promote(2)]).is_none());
     }
 }
