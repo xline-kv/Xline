@@ -344,7 +344,8 @@ mod test {
 
     #[test]
     fn write_batch_into_a_non_existing_table_should_fail() {
-        let dir = TempDir::with_prefix("/tmp/write_batch_into_a_non_existing_table_should_fail").unwrap();
+        let dir =
+            TempDir::with_prefix("/tmp/write_batch_into_a_non_existing_table_should_fail").unwrap();
         let rocks_engine_path = dir.path().join("rocks_engine");
         let engines = vec![
             Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
