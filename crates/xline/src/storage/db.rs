@@ -351,7 +351,7 @@ pub enum WriteOp<'a> {
 
 #[cfg(test)]
 mod test {
-    use std::path::PathBuf;
+    use tempfile::TempDir;
 
     use engine::SnapshotApi;
     use test_macros::abort_on_panic;
@@ -361,8 +361,9 @@ mod test {
     #[tokio::test]
     #[abort_on_panic]
     async fn test_reset() -> Result<(), ExecuteError> {
-        let data_dir = PathBuf::from("/tmp/test_reset");
-        let db = DB::open(&EngineConfig::RocksDB(data_dir.clone()))?;
+        let dir = TempDir::with_prefix("/tmp/test_reset").unwrap();
+        let db_path = dir.path().join("db");
+        let db = DB::open(&EngineConfig::RocksDB(db_path))?;
 
         let revision = Revision::new(1, 1);
         let key = revision.encode_to_vec();
@@ -382,17 +383,17 @@ mod test {
         let res = db.get_all(KV_TABLE)?;
         assert!(res.is_empty());
 
-        std::fs::remove_dir_all(data_dir).unwrap();
+        dir.close().unwrap();
         Ok(())
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn test_db_snapshot() -> Result<(), ExecuteError> {
-        let dir = PathBuf::from("/tmp/test_db_snapshot");
-        let origin_db_path = dir.join("origin_db");
-        let new_db_path = dir.join("new_db");
-        let snapshot_path = dir.join("snapshot");
+        let dir = TempDir::with_prefix("/tmp/test_db_snapshot").unwrap();
+        let origin_db_path = dir.path().join("origin_db");
+        let new_db_path = dir.path().join("new_db");
+        let snapshot_path = dir.path().join("snapshot");
         let origin_db = DB::open(&EngineConfig::RocksDB(origin_db_path))?;
 
         let revision = Revision::new(1, 1);
@@ -412,16 +413,16 @@ mod test {
         let res = new_db.get_values(KV_TABLE, &[&key])?;
         assert_eq!(res, vec![Some(kv.encode_to_vec())]);
 
-        std::fs::remove_dir_all(dir).unwrap();
+        dir.close().unwrap();
         Ok(())
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn test_db_snapshot_wrong_type() -> Result<(), ExecuteError> {
-        let dir = PathBuf::from("/tmp/test_db_snapshot_wrong_type");
-        let db_path = dir.join("db");
-        let snapshot_path = dir.join("snapshot");
+        let dir = TempDir::with_prefix("/tmp/test_db_snapshot_wrong_type").unwrap();
+        let db_path = dir.path().join("db");
+        let snapshot_path = dir.path().join("snapshot");
         let rocks_db = DB::open(&EngineConfig::RocksDB(db_path))?;
         let mem_db = DB::open(&EngineConfig::Memory)?;
 
@@ -429,22 +430,22 @@ mod test {
         let res = mem_db.reset(Some(rocks_snap)).await;
         assert!(res.is_err());
 
-        std::fs::remove_dir_all(dir).unwrap();
+        dir.close().unwrap();
         Ok(())
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn test_get_snapshot() -> Result<(), ExecuteError> {
-        let dir = PathBuf::from("/tmp/test_get_snapshot");
-        let data_path = dir.join("data");
-        let snapshot_path = dir.join("snapshot");
+        let dir = TempDir::with_prefix("/tmp/test_get_snapshot").unwrap();
+        let data_path = dir.path().join("data");
+        let snapshot_path = dir.path().join("snapshot");
         let db = DB::open(&EngineConfig::RocksDB(data_path))?;
         let mut res = db.get_snapshot(snapshot_path)?;
         assert_ne!(res.size(), 0);
         res.clean().await.unwrap();
 
-        std::fs::remove_dir_all(dir).unwrap();
+        dir.close().unwrap();
         Ok(())
     }
 
