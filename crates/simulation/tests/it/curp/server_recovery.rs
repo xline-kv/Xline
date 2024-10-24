@@ -471,7 +471,7 @@ async fn overwritten_config_should_fallback() {
     }
     let leader_conn = group.get_connect(&leader1).await;
     let cluster = leader_conn.fetch_cluster().await.unwrap().into_inner();
-    assert_eq!(cluster.members.len(), 5);
+    assert_eq!(cluster.nodes.len(), 5);
 
     let node_id = 123;
     let address = vec!["127.0.0.1:4567".to_owned()];
@@ -487,7 +487,7 @@ async fn overwritten_config_should_fallback() {
         .await;
     assert_eq!(res.unwrap_err().code(), Code::DeadlineExceeded);
     let cluster = leader_conn.fetch_cluster().await.unwrap().into_inner();
-    assert_eq!(cluster.members.len(), 6);
+    assert_eq!(cluster.nodes.len(), 6);
 
     group.disable_node(leader1);
     for node in group.nodes.values().filter(|node| node.id != leader1) {
@@ -508,5 +508,5 @@ async fn overwritten_config_should_fallback() {
     // wait fallback
     sleep_secs(3).await;
     let cluster = leader_conn.fetch_cluster().await.unwrap().into_inner();
-    assert_eq!(cluster.members.len(), 5);
+    assert_eq!(cluster.nodes.len(), 5);
 }
