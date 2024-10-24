@@ -55,30 +55,32 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         truncate: Option<LogIndex>,
         append: Entries,
         commit: Option<LogIndex>,
-    ) where
+    ) -> Result<Option<Membership>, StorageError>
+    where
         Entries: IntoIterator<Item = (LogIndex, Membership)>,
     {
+        let mut updated = false;
         let mut ms_w = self.ms.write();
+
         if let Some(index) = truncate {
             ms_w.cluster_mut().truncate(index);
+            updated = true;
         }
         for (index, config) in append {
             ms_w.cluster_mut().append(index, config);
+            updated = true;
         }
         if let Some(index) = commit {
             ms_w.cluster_mut().commit(index);
         }
-    }
 
-    /// Persists the current membership state to storage.
-    ///
-    /// This method should only be called when new entries are appended to the membership state.
-    pub(crate) fn persistent_membership_state(&self) -> Result<(), StorageError> {
-        let (node_id, membership_state) =
-            self.ms.map_read(|ms| (ms.node_id(), ms.cluster().clone()));
-        self.ctx
-            .curp_storage
-            .put_membership(node_id, &membership_state)
+        if updated {
+            self.ctx
+                .curp_storage
+                .put_membership(ms_w.node_id(), ms_w.cluster())?;
+        }
+
+        Ok(updated.then_some(ms_w.cluster().effective().clone()))
     }
 
     /// Updates the node states
@@ -145,15 +147,21 @@ mod test {
             (0..5).map(|id| (id, NodeMetadata::default())).collect(),
         );
 
-        curp.update_membership_state(None, [(1, membership1.clone())], None);
+        let _ignore = curp
+            .update_membership_state(None, [(1, membership1.clone())], None)
+            .unwrap();
         assert_eq!(*curp.ms.read().cluster().effective(), membership1);
-        curp.update_membership_state(None, [(2, membership2.clone())], None);
+        let _ignore = curp
+            .update_membership_state(None, [(2, membership2.clone())], None)
+            .unwrap();
         assert_eq!(*curp.ms.read().cluster().effective(), membership2);
-        curp.update_membership_state(Some(1), [], None);
+        let _ignore = curp.update_membership_state(Some(1), [], None).unwrap();
         assert_eq!(*curp.ms.read().cluster().effective(), membership1);
 
-        curp.update_membership_state(None, [(2, membership2.clone())], None);
-        curp.update_membership_state(None, [], Some(2));
+        let _ignore = curp
+            .update_membership_state(None, [(2, membership2.clone())], None)
+            .unwrap();
+        let _ignore = curp.update_membership_state(None, [], Some(2)).unwrap();
         assert_eq!(*curp.ms.read().cluster().effective(), membership2);
         assert_eq!(*curp.ms.read().cluster().committed(), membership2);
     }
@@ -173,12 +181,16 @@ mod test {
         );
 
         // remove from membership
-        curp.update_membership_state(None, [(1, membership1.clone())], None);
+        let _ignore = curp
+            .update_membership_state(None, [(1, membership1.clone())], None)
+            .unwrap();
         curp.update_role(&membership1);
         assert_eq!(curp.st.read().role, Role::Learner);
 
         // add back
-        curp.update_membership_state(None, [(2, membership2.clone())], None);
+        let _ignore = curp
+            .update_membership_state(None, [(2, membership2.clone())], None)
+            .unwrap();
         curp.update_role(&membership2);
         assert_eq!(curp.st.read().role, Role::Follower);
     }

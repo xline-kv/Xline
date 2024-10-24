@@ -95,11 +95,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         for config in configs {
             let propose_id = ProposeId(rand::random(), 0);
             let index = self.curp.push_log_entry(propose_id, config.clone()).index;
-            self.update_states_with_membership(&config);
-            self.curp
-                .update_membership_state(None, Some((index, config)), None);
+            self.update_membership(None, Some((index, config)), None)?;
             Self::respawn_replication(Arc::clone(&self.curp));
-            self.curp.persistent_membership_state()?;
             // Leader also needs to update transferee
             self.curp.update_transferee();
             #[cfg(madsim)] // simulate slow commit
@@ -186,8 +183,28 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
 
 // Common methods shared by both leader and followers
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
+    /// Updates the membership state and all relevant states
+    pub(crate) fn update_membership<Entries>(
+        &self,
+        truncate: Option<LogIndex>,
+        append: Entries,
+        commit: Option<LogIndex>,
+    ) -> Result<(), CurpError>
+    where
+        Entries: IntoIterator<Item = (LogIndex, Membership)>,
+    {
+        let update = self
+            .curp
+            .update_membership_state(truncate, append, commit)?;
+        if let Some(config) = update {
+            self.update_states_with_membership(&config);
+        }
+
+        Ok(())
+    }
+
     /// Updates the membership config
-    pub(crate) fn update_states_with_membership(&self, membership: &Membership) {
+    fn update_states_with_membership(&self, membership: &Membership) {
         let connects = self.connect_nodes(membership);
         let _new_states = self.curp.update_node_states(connects);
         self.curp.update_role(membership);

@@ -835,7 +835,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let mut log_w = RwLockUpgradableReadGuard::upgrade(log_r);
             if index > log_w.commit_index {
                 log_w.commit_to(index);
-                self.update_membership_state(None, None, Some(index));
+                // update commit index won't update the storage
+                debug_assert!(
+                    self.update_membership_state(None, None, Some(index))
+                        .is_ok(),
+                    "failed to update membership state"
+                );
                 debug!("{} updates commit index to {index}", self.id());
                 self.apply(&mut *log_w);
             }

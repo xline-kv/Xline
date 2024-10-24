@@ -480,15 +480,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             Ok((term, truncate_at, to_persist)) => {
                 self.storage
                     .put_log_entries(&to_persist.iter().map(Arc::as_ref).collect::<Vec<_>>())?;
-                if let Some((_, config)) = membership_entries.last() {
-                    self.update_states_with_membership(config);
-                }
-                self.curp.update_membership_state(
-                    truncate_at,
-                    membership_entries,
-                    Some(leader_commit),
-                );
-                self.curp.persistent_membership_state()?;
+                self.update_membership(truncate_at, membership_entries, Some(leader_commit))?;
                 AppendEntriesResponse::new_accept(term)
             }
             Err((term, hint)) => AppendEntriesResponse::new_reject(term, hint),
