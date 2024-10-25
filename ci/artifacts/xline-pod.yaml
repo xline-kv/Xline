@@ -6,12 +6,52 @@ metadata:
   namespace: kube-system
 spec:
   containers:
-    - name: xline
-      image: ghcr.io/xline-kv/xline:master
-      imagePullPolicy: IfNotPresent
-      command:
-        - /bin/sh
-        - -c
-        - xline --name node1 --members node1=kind-control-plane:2379 --data-dir /tmp/xline --storage-engine rocksdb --client-listen-urls=http://kind-control-plane:2379 --peer-listen-urls=http://kind-control-plane:2380,http://kind-control-plane:2381 --client-advertise-urls=http://kind-control-plane:2379 --peer-advertise-urls=http://kind-control-plane:2380,http://kind-control-plane:2381
+  - name: xline
+    image: ghcr.io/xline-kv/xline:master
+    imagePullPolicy: IfNotPresent
+    livenessProbe:
+      failureThreshold: 8
+      httpGet:
+        host: 127.0.0.1
+        path: /metrics
+        port: 9100
+        scheme: HTTP
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 15
+    startupProbe:
+      failureThreshold: 24
+      httpGet:
+        host: 127.0.0.1
+        path: /metrics
+        port: 9100
+        scheme: HTTP
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 15
+    volumeMounts:
+    - mountPath: /var/lib/xline
+      name: xline-data
+    command:
+    - xline
+    args:
+    - --name=node1
+    - --members=node1=kind-control-plane:2379
+    - --data-dir=/var/lib/xline
+    - --storage-engine=rocksdb
+    - --client-listen-urls=http://kind-control-plane:2379
+    - --peer-listen-urls=http://kind-control-plane:2380,http://kind-control-plane:2381
+    - --client-advertise-urls=http://kind-control-plane:2379
+    - --peer-advertise-urls=http://kind-control-plane:2380,http://kind-control-plane:2381
+  volumes:
+  - hostPath:
+      path: /var/lib/xline
+      type: DirectoryOrCreate
+    name: xline-data
   hostNetwork: true
+  priority: 2000001000
+  priorityClassName: system-node-critical
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
 status: {}
