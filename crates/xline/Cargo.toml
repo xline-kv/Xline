@@ -28,7 +28,7 @@ engine = { path = "../engine" }
 event-listener = "5.3.1"
 flume = "0.11.0"
 futures = "0.3.25"
-hyper = "1.0.0"
+hyper = "1.5.0"
 itertools = "0.13"
 jsonwebtoken = "9.3.0"
 log = "0.4.22"
