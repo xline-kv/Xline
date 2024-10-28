@@ -6,17 +6,20 @@ use std::{collections::BTreeSet, marker::PhantomData};
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::Stream;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use super::{
     config::Config,
     connect::{ProposeResponse, RepeatableClientApi},
     retry::Context,
 };
-use crate::rpc::{
-    Change, ChangeMembershipRequest, CurpError, FetchReadStateRequest, MembershipChange,
-    MembershipResponse, MoveLeaderRequest, ReadState, ShutdownRequest, WaitLearnerRequest,
-    WaitLearnerResponse,
+use crate::{
+    member::Membership,
+    rpc::{
+        Change, ChangeMembershipRequest, CurpError, FetchReadStateRequest, MembershipChange,
+        MembershipResponse, MoveLeaderRequest, ReadState, ShutdownRequest, WaitLearnerRequest,
+        WaitLearnerResponse,
+    },
 };
 
 /// The unary client
@@ -115,7 +118,11 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         &self,
         changes: Vec<Change>,
         ctx: Context,
-    ) -> Result<MembershipResponse, Self::Error> {
+    ) -> Result<Option<MembershipResponse>, Self::Error> {
+        if Self::change_applied(ctx.cluster_state().membership(), &changes) {
+            debug!("membership already applied, skipping changes");
+            return Ok(None);
+        }
         let changes = changes
             .into_iter()
             .map(|c| MembershipChange { change: Some(c) })
@@ -132,7 +139,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
             .await?
             .into_inner();
 
-        Ok(resp)
+        Ok(Some(resp))
     }
 
     /// Send wait learner of the give ids, returns a stream of updating response stream
@@ -154,5 +161,22 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
             .into_inner();
 
         Ok(resp)
+    }
+}
+
+impl<C: Command> Unary<C> {
+    /// Check if the changes already applied to the cluster membership
+    ///
+    /// TODO: Currently we do not send any request if the changes are already satisfied. However,
+    /// this may lead to some semantic ambiguity. For example, the id of a `Change::Remove` might
+    /// be invalid, but we still assume it has completed. A better implementation might be send a
+    /// full membership state to the cluster.
+    fn change_applied(membership: &Membership, changes: &[Change]) -> bool {
+        changes.iter().all(|change| match *change {
+            Change::Add(ref node) => membership.nodes.get(&node.node_id) == node.meta.as_ref(),
+            Change::Remove(id) => !membership.nodes.contains_key(&id),
+            Change::Promote(id) => membership.contains_member(id),
+            Change::Demote(id) => !membership.contains_member(id),
+        })
     }
 }

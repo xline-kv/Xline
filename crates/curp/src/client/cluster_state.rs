@@ -256,7 +256,6 @@ impl ClusterStateFull {
     }
 
     /// Returns the membership of the state
-    #[cfg(test)]
     pub(crate) fn membership(&self) -> &Membership {
         &self.membership
     }

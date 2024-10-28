@@ -478,8 +478,11 @@ where
         let resp = self
             .retry::<_, _>(|client, ctx| client.change_membership(changes.clone(), ctx))
             .await?;
-        let cluster_state = Fetch::build_cluster_state_from_response(self.fetch.connect_to(), resp);
-        self.cluster_state.update_with(cluster_state);
+        if let Some(resp) = resp {
+            let cluster_state =
+                Fetch::build_cluster_state_from_response(self.fetch.connect_to(), resp);
+            self.cluster_state.update_with(cluster_state);
+        }
 
         Ok(())
     }

@@ -102,11 +102,15 @@ pub(crate) trait RepeatableClientApi {
     ) -> Result<ReadState, Self::Error>;
 
     /// Performs membership change
+    ///
+    /// # Returns
+    ///
+    /// Returns `None` if the membership already applied to the cluster
     async fn change_membership(
         &self,
         changes: Vec<Change>,
         ctx: Context,
-    ) -> Result<MembershipResponse, Self::Error>;
+    ) -> Result<Option<MembershipResponse>, Self::Error>;
 
     /// Send wait learner of the give ids, returns a stream of updating response stream
     async fn wait_learner(
