@@ -338,12 +338,15 @@ mod test {
     use super::*;
     use crate::api::snapshot_api::SnapshotApi;
 
+    use tempfile::TempDir;
+
     const TESTTABLES: [&'static str; 3] = ["kv", "lease", "auth"];
 
     #[test]
     fn write_batch_into_a_non_existing_table_should_fail() {
-        let dir = PathBuf::from("/tmp/write_batch_into_a_non_existing_table_should_fail");
-        let rocks_engine_path = dir.join("rocks_engine");
+        let dir =
+            TempDir::with_prefix("/tmp/write_batch_into_a_non_existing_table_should_fail").unwrap();
+        let rocks_engine_path = dir.path().join("rocks_engine");
         let engines = vec![
             Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
             Engine::new(EngineType::Rocks(rocks_engine_path), &TESTTABLES).unwrap(),
@@ -363,13 +366,13 @@ mod test {
             let delete_range = WriteOperation::new_delete_range("hello", b"hello", b"world");
             assert!(engine.write_multi(vec![delete_range], false).is_err());
         }
-        std::fs::remove_dir_all(dir).unwrap();
+        dir.close().unwrap();
     }
 
     #[test]
     fn write_batch_should_success() {
-        let dir = PathBuf::from("/tmp/write_batch_should_success");
-        let rocks_engine_path = dir.join("rocks_engine");
+        let dir = TempDir::with_prefix("/tmp/write_batch_should_success").unwrap();
+        let rocks_engine_path = dir.path().join("rocks_engine");
         let engines = vec![
             Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
             Engine::new(EngineType::Rocks(rocks_engine_path), &TESTTABLES).unwrap(),
@@ -409,13 +412,13 @@ mod test {
             assert!(engine.get("kv", &get_key_1).unwrap().is_some());
             assert!(engine.get("kv", &get_key_2).unwrap().is_none());
         }
-        std::fs::remove_dir_all(dir).unwrap();
+        dir.close().unwrap();
     }
 
     #[test]
     fn get_operation_should_success() {
-        let dir = PathBuf::from("/tmp/get_operation_should_success");
-        let rocks_engine_path = dir.join("rocks_engine");
+        let dir = TempDir::with_prefix("/tmp/get_operation_should_success").unwrap();
+        let rocks_engine_path = dir.path().join("rocks_engine");
         let engines = vec![
             Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
             Engine::new(EngineType::Rocks(rocks_engine_path), &TESTTABLES).unwrap(),
@@ -447,17 +450,17 @@ mod test {
                 .collect::<Vec<(Vec<u8>, Vec<u8>)>>();
             assert_eq!(res_3.sort(), expected_all_values.sort());
         }
-        std::fs::remove_dir_all(dir).unwrap();
+        dir.close().unwrap();
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn snapshot_should_work() {
-        let dir = PathBuf::from("/tmp/snapshot_should_work");
-        let origin_data_dir = dir.join("origin");
-        let recover_data_dir = dir.join("recover");
-        let snapshot_dir = dir.join("snapshot");
-        let snapshot_bak_dir = dir.join("snapshot_bak");
+        let dir = TempDir::with_prefix("/tmp/snapshot_should_work").unwrap();
+        let origin_data_dir = dir.path().join("origin");
+        let recover_data_dir = dir.path().join("recover");
+        let snapshot_dir = dir.path().join("snapshot");
+        let snapshot_bak_dir = dir.path().join("snapshot_bak");
         let engines = vec![
             Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
             Engine::new(EngineType::Rocks(origin_data_dir), &TESTTABLES).unwrap(),
@@ -508,14 +511,14 @@ mod test {
             assert!(value2.is_none());
         }
 
-        std::fs::remove_dir_all(&dir).unwrap();
+        dir.close().unwrap();
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn txn_write_multi_should_success() {
-        let dir = PathBuf::from("/tmp/txn_write_multi_should_success");
-        let rocks_engine_path = dir.join("rocks_engine");
+        let dir = TempDir::with_prefix("/tmp/txn_write_multi_should_success").unwrap();
+        let rocks_engine_path = dir.path().join("rocks_engine");
         let engines = vec![
             Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
             Engine::new(EngineType::Rocks(rocks_engine_path), &TESTTABLES).unwrap(),
@@ -558,14 +561,14 @@ mod test {
 
             txn.commit().unwrap();
         }
-        std::fs::remove_dir_all(dir).unwrap();
+        dir.close().unwrap();
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn txn_get_operation_should_success() {
-        let dir = PathBuf::from("/tmp/txn_get_operation_should_success");
-        let rocks_engine_path = dir.join("rocks_engine");
+        let dir = TempDir::with_prefix("/tmp/txn_get_operation_should_success").unwrap();
+        let rocks_engine_path = dir.path().join("rocks_engine");
         let engines = vec![
             Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
             Engine::new(EngineType::Rocks(rocks_engine_path), &TESTTABLES).unwrap(),
@@ -592,14 +595,14 @@ mod test {
             assert_eq!(res_2, expected_multi_values);
             txn.commit().unwrap();
         }
-        std::fs::remove_dir_all(dir).unwrap();
+        dir.close().unwrap();
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn txn_operation_is_atomic() {
-        let dir = PathBuf::from("/tmp/txn_operation_should_be_atomic");
-        let rocks_engine_path = dir.join("rocks_engine");
+        let dir = TempDir::with_prefix("/tmp/txn_operation_should_be_atomic").unwrap();
+        let rocks_engine_path = dir.path().join("rocks_engine");
         let engines = vec![
             Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
             Engine::new(EngineType::Rocks(rocks_engine_path), &TESTTABLES).unwrap(),
@@ -625,14 +628,14 @@ mod test {
                 assert_eq!(engine.get("kv", key).unwrap().unwrap(), val);
             }
         }
-        std::fs::remove_dir_all(dir).unwrap();
+        dir.close().unwrap();
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn txn_revert_should_success() {
-        let dir = PathBuf::from("/tmp/txn_revert_should_success");
-        let rocks_engine_path = dir.join("rocks_engine");
+        let dir = TempDir::with_prefix("/tmp/txn_revert_should_success").unwrap();
+        let rocks_engine_path = dir.path().join("rocks_engine");
         let engines = vec![
             Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
             Engine::new(EngineType::Rocks(rocks_engine_path), &TESTTABLES).unwrap(),
@@ -659,6 +662,6 @@ mod test {
                 assert!(engine.get("kv", key).unwrap().is_none());
             }
         }
-        std::fs::remove_dir_all(dir).unwrap();
+        dir.close().unwrap();
     }
 }
