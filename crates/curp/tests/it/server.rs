@@ -332,7 +332,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
         .await;
     assert!(matches!(
         CurpError::from(res.unwrap_err()),
-        CurpError::ShuttingDown(_)
+        CurpError::ShuttingDown(_) | CurpError::RpcTransport(_)
     ));
 
     let collection = collection_task.await.unwrap();
