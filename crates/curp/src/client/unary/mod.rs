@@ -120,7 +120,11 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
             .into_iter()
             .map(|c| MembershipChange { change: Some(c) })
             .collect();
-        let req = ChangeMembershipRequest { changes };
+        let cluster_version = ctx.cluster_state().cluster_version();
+        let req = ChangeMembershipRequest {
+            cluster_version,
+            changes,
+        };
         let timeout = self.config.wait_synced_timeout();
         let resp = ctx
             .cluster_state()
