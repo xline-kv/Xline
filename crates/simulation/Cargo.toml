@@ -40,7 +40,7 @@ workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 xline = { path = "../xline" }
 xline-client = { path = "../xline-client" }
 xlineapi = { path = "../xlineapi" }
-jepsen-rs = { path = "../jepsen-rs" }
+jepsen-rs = { git = "https://github.com/lxl66566/jepsen-rs.git", branch = "nemesis" }
 
 [build-dependencies]
 tonic-build = { version = "0.5.0", package = "madsim-tonic-build" }

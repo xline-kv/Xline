@@ -1,7 +1,12 @@
+use std::sync::Arc;
+
 use jepsen_rs::{
     client::{Client, JepsenClient},
-    generator::{controller::GeneratorGroupStrategy, elle_rw::ElleRwGenerator, GeneratorGroup},
-    op::Op,
+    generator::{
+        controller::GeneratorGroupStrategy, elle_rw::ElleRwGenerator, GeneratorGroup,
+        NemesisRawGenWrapper,
+    },
+    op::{nemesis::OpOrNemesis, Op},
 };
 use tracing::info;
 
@@ -13,16 +18,20 @@ fn basic_test() {
     rt.set_allow_system_thread(true);
 
     rt.block_on(async move {
-        let group = XlineGroup::new(5).await;
+        let group = Arc::new(XlineGroup::new(5).await);
         let sim_client = group.client().await;
-        let jepsen_client = JepsenClient::new(sim_client, ElleRwGenerator::new().unwrap());
+        let jepsen_client = JepsenClient::new(
+            group,
+            sim_client,
+            NemesisRawGenWrapper(Box::new(ElleRwGenerator::new().unwrap())),
+        );
         let jepsen_client = Box::leak(jepsen_client.into());
         info!("basic_test: client created");
 
         // get generators, transform and merge them
         let g1 = jepsen_client
             .new_generator(100)
-            .filter(|o| matches!(o, Op::Txn(txn) if txn.len() == 1))
+            .filter(|o| matches!(o, OpOrNemesis::Op(Op::Txn(txn)) if txn.len() == 1))
             .await;
         let g2 = jepsen_client.new_generator(50);
         let g3 = jepsen_client.new_generator(50);
