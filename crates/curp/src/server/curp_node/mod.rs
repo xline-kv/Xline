@@ -9,7 +9,6 @@ use clippy_utilities::NumericCast;
 use engine::{SnapshotAllocator, SnapshotApi};
 use futures::{future::join_all, pin_mut, stream::FuturesUnordered, FutureExt, Stream, StreamExt};
 use madsim::rand::{thread_rng, Rng};
-use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock};
 use tokio::{sync::oneshot, time::MissedTickBehavior};
 #[cfg(not(madsim))]
@@ -143,7 +142,7 @@ pub(super) struct CurpNode<C: Command, CE: CommandExecutor<C>, RC: RoleChange> {
 /// Handlers for clients
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Handle `ProposeStream` requests
-    pub(super) async fn propose_stream(
+    pub(super) fn propose_stream(
         &self,
         req: &ProposeRequest,
         resp_tx: Arc<ResponseSender>,
@@ -164,27 +163,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
 
         if bypassed {
             self.curp.mark_client_id_bypassed(req.propose_id().0);
-        }
-
-        match self
-            .curp
-            .deduplicate(req.propose_id(), Some(req.first_incomplete))
-        {
-            // If the propose is duplicated, return the result directly
-            Err(CurpError::Duplicated(())) => {
-                let (er, asr) =
-                    CommandBoard::wait_for_er_asr(&self.cmd_board, req.propose_id()).await;
-                resp_tx.send_propose(ProposeResponse::new_result::<C>(&er, true));
-                resp_tx.send_synced(SyncedResponse::new_result::<C>(&asr));
-            }
-            Err(CurpError::ExpiredClientId(())) => {
-                metrics::get()
-                    .proposals_failed
-                    .add(1, &[KeyValue::new("reason", "duplicated proposal")]);
-                return Err(CurpError::expired_client_id());
-            }
-            Err(_) => unreachable!("deduplicate won't return other type of errors"),
-            Ok(()) => {}
         }
 
         let propose = Propose::try_new(req, resp_tx)?;

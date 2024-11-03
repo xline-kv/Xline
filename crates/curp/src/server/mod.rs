@@ -115,8 +115,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
         let (tx, rx) = flume::bounded(2);
         let resp_tx = Arc::new(ResponseSender::new(tx));
         self.inner
-            .propose_stream(&request.into_inner(), resp_tx, bypassed)
-            .await?;
+            .propose_stream(&request.into_inner(), resp_tx, bypassed)?;
 
         Ok(tonic::Response::new(rx.into_stream()))
     }
