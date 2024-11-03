@@ -3,7 +3,6 @@ use std::sync::Arc;
 use curp_external_api::{
     cmd::{ConflictCheck, PbCodec, PbSerializeError},
     conflict::EntryId,
-    InflightId,
 };
 use prost::Message;
 use serde::{Deserialize, Serialize};
@@ -371,37 +370,6 @@ impl InstallSnapshotResponse {
     /// Create a new snapshot response
     pub(crate) fn new(term: u64) -> Self {
         Self { term }
-    }
-}
-
-impl IdSet {
-    /// Create a new `IdSet`
-    pub(crate) fn new(inflight_ids: Vec<InflightId>) -> Self {
-        Self { inflight_ids }
-    }
-}
-
-impl FetchReadStateRequest {
-    /// Create a new fetch read state request
-    pub(crate) fn new<C: Command>(cmd: &C, cluster_version: u64) -> bincode::Result<Self> {
-        Ok(Self {
-            command: bincode::serialize(cmd)?,
-            cluster_version,
-        })
-    }
-
-    /// Get command
-    pub(crate) fn cmd<C: Command>(&self) -> bincode::Result<C> {
-        bincode::deserialize(&self.command)
-    }
-}
-
-impl FetchReadStateResponse {
-    /// Create a new fetch read state response
-    pub(crate) fn new(state: ReadState) -> Self {
-        Self {
-            read_state: Some(state),
-        }
     }
 }
 

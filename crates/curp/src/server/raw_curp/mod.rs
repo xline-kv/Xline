@@ -73,10 +73,8 @@ use crate::role_change::RoleChange;
 use crate::rpc::connect::InnerConnectApi;
 use crate::rpc::connect::InnerConnectApiWrapper;
 use crate::rpc::CurpError;
-use crate::rpc::IdSet;
 use crate::rpc::PoolEntry;
 use crate::rpc::ProposeId;
-use crate::rpc::ReadState;
 use crate::rpc::Redirect;
 use crate::server::cmd_board::CmdBoardRef;
 use crate::server::metrics;
@@ -1098,26 +1096,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             self.reset_election_tick();
         }
         validate
-    }
-
-    /// Handle `fetch_read_state`
-    pub(super) fn handle_fetch_read_state(&self, cmd: Arc<C>) -> ReadState {
-        let ids: Vec<_> = self
-            .ctx
-            .uncommitted_pool
-            .map_lock(|ucp| ucp.all_conflict(&PoolEntry::new(ProposeId::default(), cmd)))
-            .into_iter()
-            .map(|entry| entry.id)
-            .collect();
-        if ids.is_empty() {
-            ReadState::CommitIndex(self.log.read().commit_index)
-        } else {
-            ReadState::Ids(IdSet::new(
-                ids.into_iter()
-                    .map(crate::log_entry::propose_id_to_inflight_id)
-                    .collect(),
-            ))
-        }
     }
 
     /// Handle `move_leader`

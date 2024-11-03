@@ -1,3 +1,5 @@
+#![allow(clippy::same_name_method)] // TODO: use another name
+
 use std::{
     collections::BTreeSet,
     ops::SubAssign,
@@ -6,6 +8,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use curp_external_api::cmd::Command;
 use futures::{Future, Stream};
 use parking_lot::RwLock;
 use tracing::{debug, warn};
@@ -13,7 +16,7 @@ use tracing::{debug, warn};
 use super::{
     cluster_state::{ClusterState, ClusterStateFull, ClusterStateInit},
     config::Config,
-    connect::{ProposeResponse, RepeatableClientApi},
+    connect::{NonRepeatableClientApi, ProposeResponse, RepeatableClientApi},
     fetch::Fetch,
     keep_alive::{KeepAlive, KeepAliveHandle},
     ClientApi, ProposeIdGuard,
@@ -268,6 +271,39 @@ pub(super) struct Retry<Api> {
     tracker: CmdTracker,
 }
 
+impl<Api> Retry<Api> {
+    /// Gets the context required for unary requests
+    async fn get_context(&self) -> Result<Context, CurpError> {
+        let cluster_state = self.cluster_state.ready_or_fetch().await?;
+        // TODO: gen propose id
+        Ok(Context::new(ProposeId::default(), 0, cluster_state))
+    }
+
+    /// Updates the cluster state when error occurs.
+    fn update_cluster_state_on_error(&self, err: &CurpError) {
+        match *err {
+            // Some error that needs to update cluster state
+            CurpError::RpcTransport(())
+            | CurpError::WrongClusterVersion(())
+            | CurpError::Redirect(_) // FIXME: The redirect error needs to include full cluster state
+            | CurpError::Zombie(()) => {
+                self.cluster_state.errored();
+            }
+            CurpError::KeyConflict(())
+            | CurpError::Duplicated(())
+            | CurpError::ExpiredClientId(())
+            | CurpError::InvalidConfig(())
+            | CurpError::NodeNotExists(())
+            | CurpError::NodeAlreadyExists(())
+            | CurpError::LearnerNotCatchUp(())
+            | CurpError::ShuttingDown(())
+            | CurpError::Internal(_)
+            | CurpError::LeaderTransfer(_)
+            | CurpError::InvalidMemberChange(()) => {},
+        }
+    }
+}
+
 impl<Api> Retry<Api>
 where
     Api: RepeatableClientApi<Error = CurpError> + Send + Sync + 'static,
@@ -329,15 +365,13 @@ where
         let propose_id_guard = self.tracker.gen_propose_id(client_id);
         let first_incomplete = self.tracker.first_incomplete();
         while let Some(delay) = backoff.next_delay() {
-            let fetch_result = self.cluster_state.ready_or_fetch().await;
-            let cluster_state = match fetch_result {
+            let context = match self.get_context().await {
                 Ok(x) => x,
                 Err(err) => {
                     self.on_error(err, delay, &mut last_err).await?;
                     continue;
                 }
             };
-            let context = Context::new(*propose_id_guard, first_incomplete, cluster_state.clone());
             let result = f(&self.inner, context).await;
             match result {
                 Ok(res) => return Ok(res),
@@ -358,7 +392,8 @@ where
         delay: Duration,
         last_err: &mut Option<CurpError>,
     ) -> Result<(), tonic::Status> {
-        self.handle_err(&err)?;
+        Self::early_return(&err)?;
+        self.update_cluster_state_on_error(&err);
 
         #[cfg(feature = "client-metrics")]
         super::metrics::get().client_retry_count.add(1, &[]);
@@ -374,7 +409,7 @@ where
     }
 
     /// Handles errors before another retry
-    fn handle_err(&self, err: &CurpError) -> Result<(), tonic::Status> {
+    fn early_return(err: &CurpError) -> Result<(), tonic::Status> {
         match *err {
             // some errors that should not retry
             CurpError::Duplicated(())
@@ -383,8 +418,7 @@ where
             | CurpError::NodeNotExists(())
             | CurpError::NodeAlreadyExists(())
             | CurpError::LearnerNotCatchUp(())
-            | CurpError::InvalidMemberChange(())
-            => {
+            | CurpError::InvalidMemberChange(()) => {
                 return Err(tonic::Status::from(err.clone()));
             }
 
@@ -392,15 +426,11 @@ where
             CurpError::ExpiredClientId(())
             | CurpError::KeyConflict(())
             | CurpError::Internal(_)
-            | CurpError::LeaderTransfer(_) => {}
-
-            // Some error that needs to update cluster state
-            CurpError::RpcTransport(())
+            | CurpError::LeaderTransfer(_)
+            | CurpError::RpcTransport(())
             | CurpError::WrongClusterVersion(())
-            | CurpError::Redirect(_) // FIXME: The redirect error needs to include full cluster state
-            | CurpError::Zombie(()) => {
-                self.cluster_state.errored();
-            }
+            | CurpError::Redirect(_)
+            | CurpError::Zombie(()) => {}
         }
 
         Ok(())
@@ -413,31 +443,31 @@ where
     }
 }
 
-#[async_trait]
-impl<Api> ClientApi for Retry<Api>
+impl<Api> Retry<Api>
+where
+    Api: NonRepeatableClientApi<Error = CurpError> + Send + Sync + 'static,
+{
+    /// Takes a function f and run once.
+    async fn once<'a, R, F>(&'a self, f: impl Fn(&'a Api, Context) -> F) -> Result<R, tonic::Status>
+    where
+        F: Future<Output = Result<R, CurpError>>,
+    {
+        let ctx = self.get_context().await.map_err(|err| {
+            self.update_cluster_state_on_error(&err);
+            err
+        })?;
+
+        f(&self.inner, ctx).await.map_err(|err| {
+            self.update_cluster_state_on_error(&err);
+            err.into()
+        })
+    }
+}
+
+impl<Api> Retry<Api>
 where
     Api: RepeatableClientApi<Error = CurpError> + Send + Sync + 'static,
 {
-    /// The client error
-    type Error = tonic::Status;
-
-    /// Inherit the command type
-    type Cmd = Api::Cmd;
-
-    /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
-    /// requests (event the requests are commutative).
-    async fn propose(
-        &self,
-        cmd: &Self::Cmd,
-        token: Option<&String>,
-        use_fast_path: bool,
-    ) -> Result<ProposeResponse<Self::Cmd>, tonic::Status> {
-        self.retry::<_, _>(|client, ctx| async move {
-            RepeatableClientApi::propose(client, cmd, token, use_fast_path, ctx).await
-        })
-        .await
-    }
-
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), tonic::Status> {
         self.retry::<_, _>(|client, ctx| async move {
@@ -447,14 +477,8 @@ where
     }
 
     /// Send move leader request
-    async fn move_leader(&self, node_id: u64) -> Result<(), Self::Error> {
+    async fn move_leader(&self, node_id: u64) -> Result<(), tonic::Status> {
         self.retry::<_, _>(|client, ctx| client.move_leader(node_id, ctx))
-            .await
-    }
-
-    /// Send fetch read state from leader
-    async fn fetch_read_state(&self, cmd: &Self::Cmd) -> Result<ReadState, tonic::Status> {
-        self.retry::<_, _>(|client, ctx| client.fetch_read_state(cmd, ctx))
             .await
     }
 
@@ -474,7 +498,7 @@ where
     }
 
     /// Performs membership change
-    async fn change_membership(&self, changes: Vec<Change>) -> Result<(), Self::Error> {
+    async fn change_membership(&self, changes: Vec<Change>) -> Result<(), tonic::Status> {
         let resp = self
             .retry::<_, _>(|client, ctx| client.change_membership(changes.clone(), ctx))
             .await?;
@@ -491,10 +515,92 @@ where
     async fn wait_learner(
         &self,
         node_ids: BTreeSet<u64>,
-    ) -> Result<Box<dyn Stream<Item = Result<WaitLearnerResponse, Self::Error>> + Send>, Self::Error>
-    {
+    ) -> Result<
+        Box<dyn Stream<Item = Result<WaitLearnerResponse, tonic::Status>> + Send>,
+        tonic::Status,
+    > {
         self.retry::<_, _>(|client, ctx| client.wait_learner(node_ids.clone(), ctx))
             .await
+    }
+}
+
+impl<Api, C> Retry<Api>
+where
+    C: Command,
+    Api: NonRepeatableClientApi<Error = CurpError, Cmd = C> + Send + Sync + 'static,
+{
+    /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
+    /// requests (event the requests are commutative).
+    async fn propose(
+        &self,
+        cmd: &C,
+        token: Option<&String>,
+        use_fast_path: bool,
+    ) -> Result<ProposeResponse<C>, tonic::Status> {
+        self.once::<_, _>(|client, ctx| async move {
+            NonRepeatableClientApi::propose(client, cmd, token, use_fast_path, ctx).await
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl<Api, C> ClientApi for Retry<Api>
+where
+    C: Command,
+    Api: NonRepeatableClientApi<Error = CurpError, Cmd = C>
+        + RepeatableClientApi<Error = CurpError>
+        + Send
+        + Sync
+        + 'static,
+{
+    /// The client error
+    type Error = tonic::Status;
+
+    /// The command type
+    type Cmd = C;
+
+    /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
+    /// requests (event the requests are commutative).
+    async fn propose(
+        &self,
+        cmd: &Self::Cmd,
+        token: Option<&String>, // TODO: Allow external custom interceptors, do not pass token in parameters
+        use_fast_path: bool,
+    ) -> Result<ProposeResponse<Self::Cmd>, Self::Error> {
+        self.propose(cmd, token, use_fast_path).await
+    }
+
+    /// Send propose to shutdown cluster
+    async fn propose_shutdown(&self) -> Result<(), Self::Error> {
+        self.propose_shutdown().await
+    }
+
+    /// Send move leader request
+    async fn move_leader(&self, node_id: ServerId) -> Result<(), Self::Error> {
+        self.move_leader(node_id).await
+    }
+
+    /// Send fetch cluster requests to all servers (That's because initially, we didn't
+    /// know who the leader is.)
+    ///
+    /// Note: The fetched cluster may still be outdated if `linearizable` is false
+    async fn fetch_cluster(&self, linearizable: bool) -> Result<MembershipResponse, Self::Error> {
+        self.fetch_cluster(linearizable).await
+    }
+
+    /// Performs membership change
+    async fn change_membership(&self, changes: Vec<Change>) -> Result<(), Self::Error> {
+        self.change_membership(changes).await
+    }
+
+    /// Send wait learner of the give ids, returns a stream of updating response stream
+    async fn wait_learner(
+        &self,
+        node_ids: BTreeSet<u64>,
+    ) -> Result<Box<dyn Stream<Item = Result<WaitLearnerResponse, Self::Error>> + Send>, Self::Error>
+    {
+        self.wait_learner(node_ids).await
     }
 }
 

@@ -6,7 +6,7 @@ use futures::Stream;
 
 use crate::{
     members::ServerId,
-    rpc::{Change, MembershipResponse, ReadState, WaitLearnerResponse},
+    rpc::{Change, MembershipResponse, WaitLearnerResponse},
 };
 
 use super::retry::Context;
@@ -42,9 +42,6 @@ pub trait ClientApi {
     /// Send move leader request
     async fn move_leader(&self, node_id: ServerId) -> Result<(), Self::Error>;
 
-    /// Send fetch read state from leader
-    async fn fetch_read_state(&self, cmd: &Self::Cmd) -> Result<ReadState, Self::Error>;
-
     /// Send fetch cluster requests to all servers (That's because initially, we didn't
     /// know who the leader is.)
     ///
@@ -75,31 +72,11 @@ pub(crate) trait RepeatableClientApi {
     /// The client error
     type Error;
 
-    /// The command type
-    type Cmd: Command;
-
-    /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
-    /// requests (event the requests are commutative).
-    async fn propose(
-        &self,
-        cmd: &Self::Cmd,
-        token: Option<&String>,
-        use_fast_path: bool,
-        ctx: Context,
-    ) -> Result<ProposeResponse<Self::Cmd>, Self::Error>;
-
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self, ctx: Context) -> Result<(), Self::Error>;
 
     /// Send move leader request
     async fn move_leader(&self, node_id: u64, ctx: Context) -> Result<(), Self::Error>;
-
-    /// Send fetch read state from leader
-    async fn fetch_read_state(
-        &self,
-        cmd: &Self::Cmd,
-        ctx: Context,
-    ) -> Result<ReadState, Self::Error>;
 
     /// Performs membership change
     ///
@@ -121,4 +98,24 @@ pub(crate) trait RepeatableClientApi {
         Box<dyn Stream<Item = Result<WaitLearnerResponse, tonic::Status>> + Send>,
         Self::Error,
     >;
+}
+
+/// A trait for non-idempotent operations, clients with this trait will NOT be able to retry.
+#[async_trait]
+pub(crate) trait NonRepeatableClientApi {
+    /// The client error
+    type Error;
+
+    /// The command type
+    type Cmd: Command;
+
+    /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
+    /// requests (event the requests are commutative).
+    async fn propose(
+        &self,
+        cmd: &Self::Cmd,
+        token: Option<&String>,
+        use_fast_path: bool,
+        ctx: Context,
+    ) -> Result<ProposeResponse<Self::Cmd>, Self::Error>;
 }

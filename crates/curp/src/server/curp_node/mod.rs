@@ -48,12 +48,11 @@ use crate::{
     role_change::RoleChange,
     rpc::{
         self, AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchMembershipRequest,
-        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
-        InstallSnapshotResponse, LeaseKeepAliveMsg, MembershipResponse, MoveLeaderRequest,
-        MoveLeaderResponse, PoolEntry, ProposeId, ProposeRequest, ProposeResponse,
-        ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
-        SyncedResponse, TriggerShutdownRequest, TriggerShutdownResponse, TryBecomeLeaderNowRequest,
-        TryBecomeLeaderNowResponse, VoteRequest, VoteResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MembershipResponse,
+        MoveLeaderRequest, MoveLeaderResponse, PoolEntry, ProposeId, ProposeRequest,
+        ProposeResponse, ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest,
+        ShutdownResponse, SyncedResponse, TriggerShutdownRequest, TriggerShutdownResponse,
+        TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse, VoteRequest, VoteResponse,
     },
     server::{
         cmd_worker::{after_sync, worker_reset, worker_snapshot},
@@ -592,17 +591,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         Err(CurpError::internal(
             "failed to receive a complete snapshot".to_owned(),
         ))
-    }
-
-    /// Handle `FetchReadState` requests
-    #[allow(clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
-    pub(super) fn fetch_read_state(
-        &self,
-        req: FetchReadStateRequest,
-    ) -> Result<FetchReadStateResponse, CurpError> {
-        let cmd = req.cmd()?;
-        let state = self.curp.handle_fetch_read_state(Arc::new(cmd));
-        Ok(FetchReadStateResponse::new(state))
     }
 
     /// Handle `MoveLeader` requests

@@ -154,11 +154,9 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
     #[instrument(skip_all, name = "curp_fetch_read_state")]
     async fn fetch_read_state(
         &self,
-        request: tonic::Request<FetchReadStateRequest>,
+        _request: tonic::Request<FetchReadStateRequest>,
     ) -> Result<tonic::Response<FetchReadStateResponse>, tonic::Status> {
-        Ok(tonic::Response::new(
-            self.inner.fetch_read_state(request.into_inner())?,
-        ))
+        Err(tonic::Status::unimplemented("unimplemented"))
     }
 
     #[instrument(skip_all, name = "curp_move_leader")]

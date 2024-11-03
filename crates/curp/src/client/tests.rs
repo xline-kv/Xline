@@ -15,7 +15,7 @@ use super::{cluster_state::ClusterState, config::Config, unary::Unary};
 use crate::{
     client::{
         cluster_state::ClusterStateFull,
-        connect::RepeatableClientApi,
+        connect::NonRepeatableClientApi,
         fetch::Fetch,
         keep_alive::KeepAlive,
         retry::{Context, Retry, RetryConfig},
