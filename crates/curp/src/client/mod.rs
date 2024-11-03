@@ -40,10 +40,9 @@ pub use connect::ClientApi;
 
 #[cfg(madsim)]
 use std::sync::atomic::AtomicU64;
-use std::{collections::HashMap, ops::Deref, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use curp_external_api::cmd::Command;
-use parking_lot::RwLock;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::debug;
@@ -64,43 +63,10 @@ use crate::{
     rpc::{
         self,
         connect::{BypassedConnect, ConnectApi},
-        MembershipResponse, NodeMetadata, ProposeId, Protocol,
+        MembershipResponse, NodeMetadata, Protocol,
     },
     server::StreamingProtocol,
-    tracker::Tracker,
 };
-
-/// Propose id guard, used to ensure the sequence of propose id is recorded.
-struct ProposeIdGuard<'a> {
-    /// The propose id
-    propose_id: ProposeId,
-    /// The tracker
-    tracker: &'a RwLock<Tracker>,
-}
-
-impl Deref for ProposeIdGuard<'_> {
-    type Target = ProposeId;
-
-    fn deref(&self) -> &Self::Target {
-        &self.propose_id
-    }
-}
-
-impl<'a> ProposeIdGuard<'a> {
-    /// Create a new propose id guard
-    fn new(tracker: &'a RwLock<Tracker>, propose_id: ProposeId) -> Self {
-        Self {
-            propose_id,
-            tracker,
-        }
-    }
-}
-
-impl Drop for ProposeIdGuard<'_> {
-    fn drop(&mut self) {
-        let _ig = self.tracker.write().record(self.propose_id.1);
-    }
-}
 
 /// Sets the initial cluster for the client builder
 #[derive(Debug, Clone)]

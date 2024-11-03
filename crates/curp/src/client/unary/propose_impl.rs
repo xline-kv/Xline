@@ -137,14 +137,8 @@ impl<C: Command> Unary<C> {
     ) -> EventStream<'_, C> {
         let term = ctx.cluster_state().term();
         let cluster_version = ctx.cluster_state().cluster_version();
-        let propose_req = ProposeRequest::new::<C>(
-            ctx.propose_id(),
-            cmd,
-            cluster_version,
-            term,
-            !use_fast_path,
-            ctx.first_incomplete(),
-        );
+        let propose_req =
+            ProposeRequest::new::<C>(ctx.propose_id(), cmd, cluster_version, term, !use_fast_path);
         let timeout = self.config.propose_timeout();
         let token = token.cloned();
         let stream = ctx

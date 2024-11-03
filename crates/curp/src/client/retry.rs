@@ -18,7 +18,7 @@ use super::{
     config::Config,
     connect::{NonRepeatableClientApi, ProposeResponse, RepeatableClientApi},
     fetch::Fetch,
-    ClientApi, ProposeIdGuard,
+    ClientApi,
 };
 use crate::{
     members::ServerId,
@@ -143,42 +143,9 @@ impl Context {
         self.propose_id
     }
 
-    /// Returns the first incomplete sequence number
-    pub(crate) fn first_incomplete(&self) -> u64 {
-        self.first_incomplete
-    }
-
     /// Returns the current client id
     pub(crate) fn cluster_state(&self) -> ClusterStateFull {
         self.cluster_state.clone()
-    }
-}
-
-/// Command tracker
-#[derive(Debug, Default)]
-struct CmdTracker {
-    /// Last sent sequence number
-    last_sent_seq: AtomicU64,
-    /// Request tracker
-    tracker: RwLock<Tracker>,
-}
-
-impl CmdTracker {
-    /// New a seq num and record it
-    fn new_seq_num(&self) -> u64 {
-        self.last_sent_seq
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Generate a unique propose id during the retry process.
-    fn gen_propose_id(&self, client_id: u64) -> ProposeIdGuard<'_> {
-        let seq_num = self.new_seq_num();
-        ProposeIdGuard::new(&self.tracker, ProposeId(client_id, seq_num))
-    }
-
-    /// Generate a unique propose id during the retry process.
-    fn first_incomplete(&self) -> u64 {
-        self.tracker.read().first_incomplete()
     }
 }
 
@@ -264,16 +231,17 @@ pub(super) struct Retry<Api> {
     cluster_state: Arc<ClusterStateShared>,
     /// Fetch cluster object
     fetch: Fetch,
-    /// Command tracker
-    tracker: CmdTracker,
+    /// The client id
+    client_id: u64,
 }
 
 impl<Api> Retry<Api> {
     /// Gets the context required for unary requests
     async fn get_context(&self) -> Result<Context, CurpError> {
+        let propose_id = ProposeId(self.client_id, rand::random());
         let cluster_state = self.cluster_state.ready_or_fetch().await?;
         // TODO: gen propose id
-        Ok(Context::new(ProposeId::default(), 0, cluster_state))
+        Ok(Context::new(propose_id, 0, cluster_state))
     }
 
     /// Updates the cluster state when error occurs.
@@ -312,13 +280,14 @@ where
         fetch: Fetch,
         cluster_state: ClusterState,
     ) -> Self {
+        let client_id: u64 = rand::random();
         let cluster_state = Arc::new(ClusterStateShared::new(cluster_state, fetch.clone()));
         Self {
             inner,
             retry_config,
             cluster_state,
             fetch,
-            tracker: CmdTracker::default(),
+            client_id,
         }
     }
 
@@ -355,10 +324,6 @@ where
     {
         let mut backoff = self.retry_config.init_backoff();
         let mut last_err = None;
-        // TODO: generate client id
-        let client_id = 0;
-        let propose_id_guard = self.tracker.gen_propose_id(client_id);
-        let first_incomplete = self.tracker.first_incomplete();
         while let Some(delay) = backoff.next_delay() {
             let context = match self.get_context().await {
                 Ok(x) => x,
