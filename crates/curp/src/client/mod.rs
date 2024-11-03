@@ -24,16 +24,16 @@ mod fetch;
 /// Config of the client
 mod config;
 
-#[allow(unused)]
-/// Lease keep alive implementation
-mod keep_alive;
-
 /// Connect APIs
 mod connect;
 
 /// Tests for client
 #[cfg(test)]
 mod tests;
+
+/// Deprecate dedup implementation
+#[cfg(ignore)]
+mod dedup_impl;
 
 #[allow(clippy::module_name_repetitions)] // More conprehensive than just `Api`
 pub use connect::ClientApi;
@@ -55,7 +55,6 @@ use self::{
     cluster_state::{ClusterState, ClusterStateInit},
     config::Config,
     fetch::{ConnectToCluster, Fetch},
-    keep_alive::KeepAlive,
     retry::{Retry, RetryConfig},
     unary::Unary,
 };
@@ -310,7 +309,6 @@ impl ClientBuilder {
     ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static, tonic::Status>
     {
         let config = self.init_config(None);
-        let keep_alive = KeepAlive::new(*self.config.keep_alive_interval());
         let fetch = Fetch::new(
             *self.config.wait_synced_timeout(),
             self.build_connect_to(None),
@@ -319,7 +317,6 @@ impl ClientBuilder {
         let client = Retry::new(
             Unary::new(config),
             self.init_retry_config(),
-            keep_alive,
             fetch,
             cluster_state,
         );
@@ -380,7 +377,6 @@ impl<P: Protocol + StreamingProtocol> ClientBuilderWithBypass<P> {
     ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C>, tonic::Status> {
         let bypassed = Self::bypassed_connect(self.local_server_id, self.local_server);
         let config = self.inner.init_config(Some(self.local_server_id));
-        let keep_alive = KeepAlive::new(*self.inner.config.keep_alive_interval());
         let fetch = Fetch::new(
             *self.inner.config.wait_synced_timeout(),
             self.inner.build_connect_to(Some(bypassed)),
@@ -389,7 +385,6 @@ impl<P: Protocol + StreamingProtocol> ClientBuilderWithBypass<P> {
         let client = Retry::new(
             Unary::new(config),
             self.inner.init_retry_config(),
-            keep_alive,
             fetch,
             cluster_state,
         );

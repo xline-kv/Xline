@@ -17,7 +17,6 @@ use crate::{
         cluster_state::ClusterStateFull,
         connect::NonRepeatableClientApi,
         fetch::Fetch,
-        keep_alive::KeepAlive,
         retry::{Context, Retry, RetryConfig},
         ClientApi,
     },
@@ -321,7 +320,6 @@ async fn test_retry_propose_return_no_retry_error() {
         let retry = Retry::new(
             unary,
             RetryConfig::new_fixed(Duration::from_millis(100), 5),
-            KeepAlive::new(Duration::from_secs(1)),
             Fetch::new_disable(),
             ClusterState::Full(cluster_state),
         );
@@ -363,7 +361,6 @@ async fn test_retry_propose_return_retry_error() {
         let retry = Retry::new(
             unary,
             RetryConfig::new_fixed(Duration::from_millis(10), 5),
-            KeepAlive::new(Duration::from_secs(1)),
             Fetch::new(Duration::from_secs(1), move |_| connects.clone()),
             ClusterState::Full(cluster_state),
         );
@@ -391,7 +388,6 @@ async fn test_retry_will_update_state_on_error() {
     let retry = Retry::new(
         unary,
         RetryConfig::new_fixed(Duration::from_millis(10), 5),
-        KeepAlive::new(Duration::from_secs(1)),
         Fetch::new(Duration::from_secs(1), move |_| connects.clone()),
         ClusterState::Full(cluster_state),
     );
@@ -426,7 +422,6 @@ async fn test_retry_will_update_state_on_change_membership() {
     let retry = Retry::new(
         unary,
         RetryConfig::new_fixed(Duration::from_millis(10), 5),
-        KeepAlive::new(Duration::from_secs(1)),
         Fetch::new_disable(),
         ClusterState::Full(cluster_state),
     );

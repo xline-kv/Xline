@@ -18,7 +18,6 @@ use super::{
     config::Config,
     connect::{NonRepeatableClientApi, ProposeResponse, RepeatableClientApi},
     fetch::Fetch,
-    keep_alive::{KeepAlive, KeepAliveHandle},
     ClientApi, ProposeIdGuard,
 };
 use crate::{
@@ -263,8 +262,6 @@ pub(super) struct Retry<Api> {
     retry_config: RetryConfig,
     /// Cluster state
     cluster_state: Arc<ClusterStateShared>,
-    /// Keep alive client
-    keep_alive: KeepAliveHandle,
     /// Fetch cluster object
     fetch: Fetch,
     /// Command tracker
@@ -312,17 +309,14 @@ where
     pub(super) fn new(
         inner: Api,
         retry_config: RetryConfig,
-        keep_alive: KeepAlive,
         fetch: Fetch,
         cluster_state: ClusterState,
     ) -> Self {
         let cluster_state = Arc::new(ClusterStateShared::new(cluster_state, fetch.clone()));
-        let keep_alive_handle = keep_alive.spawn_keep_alive(Arc::clone(&cluster_state));
         Self {
             inner,
             retry_config,
             cluster_state,
-            keep_alive: keep_alive_handle,
             fetch,
             tracker: CmdTracker::default(),
         }
@@ -361,7 +355,8 @@ where
     {
         let mut backoff = self.retry_config.init_backoff();
         let mut last_err = None;
-        let client_id = self.keep_alive.client_id().await;
+        // TODO: generate client id
+        let client_id = 0;
         let propose_id_guard = self.tracker.gen_propose_id(client_id);
         let first_incomplete = self.tracker.first_incomplete();
         while let Some(delay) = backoff.next_delay() {
