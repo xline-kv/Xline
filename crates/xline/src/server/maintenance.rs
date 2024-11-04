@@ -273,8 +273,10 @@ fn snapshot_stream(
 
 #[cfg(test)]
 mod test {
-    use std::{error::Error, path::PathBuf};
+    use std::error::Error;
 
+    use tempfile::TempDir;
+    
     use test_macros::abort_on_panic;
     use tokio_stream::StreamExt;
     use utils::config::EngineConfig;
@@ -285,9 +287,9 @@ mod test {
     #[tokio::test]
     #[abort_on_panic]
     async fn test_snapshot_stream() -> Result<(), Box<dyn Error>> {
-        let dir = PathBuf::from("/tmp/test_snapshot_rpc");
-        let db_path = dir.join("db");
-        let snapshot_path = dir.join("snapshot");
+        let dir = TempDir::with_prefix("/tmp/test_snapshot_rpc").unwrap();
+        let db_path = dir.path().join("db");
+        let snapshot_path = dir.path().join("snapshot");
 
         let db = DB::open(&EngineConfig::RocksDB(db_path.clone()))?;
         let header_gen = HeaderGenerator::new(0, 0);
@@ -310,7 +312,7 @@ mod test {
         assert_eq!(snap1_data, snap2_data);
 
         snap2.clean().await.unwrap();
-        std::fs::remove_dir_all(dir).unwrap();
+        dir.close().unwrap();
         Ok(())
     }
 }
