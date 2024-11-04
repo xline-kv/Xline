@@ -23,7 +23,7 @@ use super::{
 use crate::{
     members::ServerId,
     rpc::{
-        Change, CurpError, MembershipResponse, Node, NodeMetadata, ProposeId, ReadState, Redirect,
+        Change, CurpError, MembershipResponse, Node, NodeMetadata, ProposeId, Redirect,
         WaitLearnerResponse,
     },
     tracker::Tracker,
@@ -118,22 +118,15 @@ impl Backoff {
 pub(crate) struct Context {
     /// The propose id
     propose_id: ProposeId,
-    /// First incomplete sequence
-    first_incomplete: u64,
     /// The current cluster state
     cluster_state: ClusterStateFull,
 }
 
 impl Context {
     /// Creates a new `Context`
-    pub(crate) fn new(
-        propose_id: ProposeId,
-        first_incomplete: u64,
-        cluster_state: ClusterStateFull,
-    ) -> Self {
+    pub(crate) fn new(propose_id: ProposeId, cluster_state: ClusterStateFull) -> Self {
         Self {
             propose_id,
-            first_incomplete,
             cluster_state,
         }
     }
@@ -241,7 +234,7 @@ impl<Api> Retry<Api> {
         let propose_id = ProposeId(self.client_id, rand::random());
         let cluster_state = self.cluster_state.ready_or_fetch().await?;
         // TODO: gen propose id
-        Ok(Context::new(propose_id, 0, cluster_state))
+        Ok(Context::new(propose_id, cluster_state))
     }
 
     /// Updates the cluster state when error occurs.

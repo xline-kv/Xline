@@ -26,8 +26,6 @@ use crate::rpc::AppendEntriesRequest;
 use crate::rpc::AppendEntriesResponse;
 use crate::rpc::ChangeMembershipRequest;
 use crate::rpc::FetchMembershipRequest;
-use crate::rpc::FetchReadStateRequest;
-use crate::rpc::FetchReadStateResponse;
 use crate::rpc::InstallSnapshotRequest;
 use crate::rpc::InstallSnapshotResponse;
 use crate::rpc::LeaseKeepAliveMsg;
@@ -142,14 +140,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
         Ok(tonic::Response::new(
             self.inner.shutdown(request.into_inner()).await?,
         ))
-    }
-
-    #[instrument(skip_all, name = "curp_fetch_read_state")]
-    async fn fetch_read_state(
-        &self,
-        _request: tonic::Request<FetchReadStateRequest>,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("unimplemented"))
     }
 
     #[instrument(skip_all, name = "curp_move_leader")]

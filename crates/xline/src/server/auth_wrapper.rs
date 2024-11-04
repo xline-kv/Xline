@@ -3,11 +3,10 @@ use std::sync::Arc;
 use curp::{
     cmd::PbCodec,
     rpc::{
-        ChangeMembershipRequest, FetchMembershipRequest, FetchReadStateRequest,
-        FetchReadStateResponse, LeaseKeepAliveMsg, MembershipResponse, MoveLeaderRequest,
-        MoveLeaderResponse, OpResponse, ProposeRequest, Protocol, ReadIndexRequest,
-        ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
-        WaitLearnerRequest, WaitLearnerResponse,
+        ChangeMembershipRequest, FetchMembershipRequest, LeaseKeepAliveMsg, MembershipResponse,
+        MoveLeaderRequest, MoveLeaderResponse, OpResponse, ProposeRequest, Protocol,
+        ReadIndexRequest, ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest,
+        ShutdownResponse, WaitLearnerRequest, WaitLearnerResponse,
     },
 };
 use flume::r#async::RecvStream;
@@ -78,13 +77,6 @@ impl Protocol for AuthWrapper {
         request: tonic::Request<ShutdownRequest>,
     ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status> {
         self.curp_server.shutdown(request).await
-    }
-
-    async fn fetch_read_state(
-        &self,
-        request: tonic::Request<FetchReadStateRequest>,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, tonic::Status> {
-        self.curp_server.fetch_read_state(request).await
     }
 
     async fn move_leader(

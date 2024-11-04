@@ -15,11 +15,10 @@ use crate::{
             inner_messagepb::inner_protocol_client::InnerProtocolClient,
         },
         AppendEntriesRequest, AppendEntriesResponse, ChangeMembershipRequest, CurpError,
-        FetchMembershipRequest, FetchReadStateRequest, FetchReadStateResponse,
-        InstallSnapshotResponse, MembershipResponse, MoveLeaderRequest, MoveLeaderResponse,
-        OpResponse, ProposeRequest, ReadIndexResponse, RecordRequest, RecordResponse,
-        ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse, WaitLearnerRequest,
-        WaitLearnerResponse,
+        FetchMembershipRequest, InstallSnapshotResponse, MembershipResponse, MoveLeaderRequest,
+        MoveLeaderResponse, OpResponse, ProposeRequest, ReadIndexResponse, RecordRequest,
+        RecordResponse, ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
+        WaitLearnerRequest, WaitLearnerResponse,
     },
     snapshot::Snapshot,
 };
@@ -192,20 +191,6 @@ impl ConnectApi for ConnectLazy<ProtocolClient<Channel>> {
         let mut inner = self.inner.lock().await;
         self.connect_inner(&mut inner);
         inner.as_ref().unwrap().shutdown(request, timeout).await
-    }
-
-    async fn fetch_read_state(
-        &self,
-        request: FetchReadStateRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, CurpError> {
-        let mut inner = self.inner.lock().await;
-        self.connect_inner(&mut inner);
-        inner
-            .as_ref()
-            .unwrap()
-            .fetch_read_state(request, timeout)
-            .await
     }
 
     async fn move_leader(

@@ -8,9 +8,8 @@ use crate::{
     members::ServerId,
     rpc::{
         connect::ConnectApi, ChangeMembershipRequest, CurpError, FetchMembershipRequest,
-        FetchReadStateRequest, FetchReadStateResponse, MembershipResponse, MoveLeaderRequest,
-        MoveLeaderResponse, OpResponse, ProposeRequest, ReadIndexResponse, RecordRequest,
-        RecordResponse, ShutdownRequest, ShutdownResponse,
+        MembershipResponse, MoveLeaderRequest, MoveLeaderResponse, OpResponse, ProposeRequest,
+        ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
     },
 };
 
@@ -126,15 +125,6 @@ impl<C: ConnectApi> ConnectApi for Reconnect<C> {
         timeout: Duration,
     ) -> Result<tonic::Response<ShutdownResponse>, CurpError> {
         execute_with_reconnect!(self, ConnectApi::shutdown, request, timeout)
-    }
-
-    /// Send `FetchReadStateRequest`
-    async fn fetch_read_state(
-        &self,
-        request: FetchReadStateRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, CurpError> {
-        execute_with_reconnect!(self, ConnectApi::fetch_read_state, request, timeout)
     }
 
     /// Send `MoveLeaderRequest`

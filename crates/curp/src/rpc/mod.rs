@@ -22,15 +22,12 @@ pub use self::proto::{
         cmd_result::Result as CmdResultInner,
         curp_error::Err as CurpError, // easy for match
         curp_error::Redirect,
-        fetch_read_state_response::{IdSet, ReadState},
         op_response::Op as ResponseOp,
         protocol_client,
         protocol_server::{Protocol, ProtocolServer},
         ChangeMembershipRequest,
         CmdResult,
         FetchMembershipRequest,
-        FetchReadStateRequest,
-        FetchReadStateResponse,
         LeaseKeepAliveMsg,
         Member,
         MembershipResponse,
@@ -150,7 +147,6 @@ impl ProposeRequest {
             cluster_version,
             term,
             slow_path,
-            first_incomplete: 0,
         }
     }
 

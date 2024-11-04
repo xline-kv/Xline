@@ -40,11 +40,10 @@ use crate::{
             commandpb::protocol_client::ProtocolClient,
             inner_messagepb::inner_protocol_client::InnerProtocolClient,
         },
-        AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchReadStateRequest,
-        FetchReadStateResponse, InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg,
-        MoveLeaderRequest, MoveLeaderResponse, ProposeRequest, Protocol, ShutdownRequest,
-        ShutdownResponse, TriggerShutdownRequest, TryBecomeLeaderNowRequest, VoteRequest,
-        VoteResponse,
+        AppendEntriesRequest, AppendEntriesResponse, CurpError, InstallSnapshotRequest,
+        InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse,
+        ProposeRequest, Protocol, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
+        TryBecomeLeaderNowRequest, VoteRequest, VoteResponse,
     },
     server::StreamingProtocol,
     snapshot::Snapshot,
@@ -201,13 +200,6 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         request: ShutdownRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<ShutdownResponse>, CurpError>;
-
-    /// Send `FetchReadStateRequest`
-    async fn fetch_read_state(
-        &self,
-        request: FetchReadStateRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, CurpError>;
 
     /// Send `MoveLeaderRequest`
     async fn move_leader(
@@ -465,17 +457,6 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_current();
         with_timeout!(timeout, client.shutdown(req)).map_err(Into::into)
-    }
-
-    /// Send `FetchReadStateRequest`
-    async fn fetch_read_state(
-        &self,
-        request: FetchReadStateRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, CurpError> {
-        let mut client = self.rpc_connect.clone();
-        let req = tonic::Request::new(request);
-        with_timeout!(timeout, client.fetch_read_state(req)).map_err(Into::into)
     }
 
     /// Send `MoveLeaderRequest`
@@ -754,18 +735,6 @@ where
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.shutdown(req).await.map_err(Into::into)
-    }
-
-    /// Send `FetchReadStateRequest`
-    async fn fetch_read_state(
-        &self,
-        request: FetchReadStateRequest,
-        _timeout: Duration,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, CurpError> {
-        let mut req = tonic::Request::new(request);
-        req.metadata_mut().inject_bypassed();
-        req.metadata_mut().inject_current();
-        self.server.fetch_read_state(req).await.map_err(Into::into)
     }
 
     /// Send `MoveLeaderRequest`
