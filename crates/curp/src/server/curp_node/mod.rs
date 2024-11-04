@@ -34,7 +34,6 @@ use super::{
     cmd_worker::execute,
     conflict::spec_pool_new::{SpObject, SpeculativePool},
     conflict::uncommitted_pool::{UcpObject, UncommittedPool},
-    gc::gc_client_lease,
     lease_manager::LeaseManager,
     raw_curp::{RawCurp, Vote},
     storage::StorageApi,
@@ -768,16 +767,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         );
 
         metrics::Metrics::register_callback(Arc::clone(&curp))?;
-
-        task_manager.spawn(TaskName::GcClientLease, |n| {
-            gc_client_lease(
-                lease_manager,
-                Arc::clone(&cmd_board),
-                sp,
-                curp_cfg.gc_interval,
-                n,
-            )
-        });
 
         Self::run_bg_tasks(
             Arc::clone(&curp),

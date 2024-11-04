@@ -64,9 +64,6 @@ mod cmd_board;
 /// Conflict pools
 pub mod conflict;
 
-/// Background garbage collection for Curp server
-mod gc;
-
 /// Curp Node
 mod curp_node;
 
