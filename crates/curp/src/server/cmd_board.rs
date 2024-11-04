@@ -1,9 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use event_listener::{Event, EventListener};
 use parking_lot::RwLock;
-
-use crate::tracker::Tracker;
 
 /// Ref to the cmd board
 pub(super) type CmdBoardRef = Arc<RwLock<CommandBoard>>;
@@ -13,8 +11,6 @@ pub(super) type CmdBoardRef = Arc<RwLock<CommandBoard>>;
 pub(super) struct CommandBoard {
     /// Store the shutdown notifier
     shutdown_notifier: Event,
-    /// The result trackers track all cmd, this is used for dedup
-    pub(super) trackers: HashMap<u64, Tracker>,
 }
 
 impl CommandBoard {
@@ -22,13 +18,7 @@ impl CommandBoard {
     pub(super) fn new() -> Self {
         Self {
             shutdown_notifier: Event::new(),
-            trackers: HashMap::new(),
         }
-    }
-
-    /// Clear, called when leader retires
-    pub(super) fn clear(&mut self) {
-        self.trackers.clear();
     }
 
     /// Get a listener for shutdown

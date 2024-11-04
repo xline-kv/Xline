@@ -55,7 +55,6 @@ impl Metrics {
             is_learner,
             server_id,
             sp_cnt,
-            online_clients,
             proposals_committed,
             proposals_applied,
             proposals_pending,
@@ -81,10 +80,6 @@ impl Metrics {
                 .with_description("The speculative pool size of this server")
                 .init(),
             meter
-                .u64_observable_gauge("online_clients")
-                .with_description("The online client ids count of this server if it is the leader")
-                .init(),
-            meter
                 .u64_observable_gauge("proposals_committed")
                 .with_description("The total number of consensus proposals committed.")
                 .init(),
@@ -105,7 +100,6 @@ impl Metrics {
                 is_learner.as_any(),
                 server_id.as_any(),
                 sp_cnt.as_any(),
-                online_clients.as_any(),
             ],
             move |observer| {
                 let (leader_id, _, leader) = curp.leader();
@@ -119,9 +113,6 @@ impl Metrics {
 
                 let sp_size = curp.spec_pool().lock().len();
                 observer.observe_u64(&sp_cnt, sp_size.numeric_cast(), &[]);
-
-                let client_count = curp.lease_manager().read().online_clients();
-                observer.observe_u64(&online_clients, client_count.numeric_cast(), &[]);
 
                 let commit_index = curp.commit_index();
                 let last_log_index = curp.last_log_index();

@@ -1,12 +1,8 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use curp_external_api::conflict::SpeculativePoolOp;
-use parking_lot::Mutex;
 
 use crate::rpc::{PoolEntry, ProposeId};
-
-/// Ref to `SpeculativePool`
-pub(crate) type SpeculativePoolRef<C> = Arc<Mutex<SpeculativePool<C>>>;
 
 /// A speculative pool object
 pub type SpObject<C> = Box<dyn SpeculativePoolOp<Entry = PoolEntry<C>> + Send + 'static>;
@@ -51,6 +47,7 @@ impl<C> SpeculativePool<C> {
         let _ignore = self.entries.remove(&entry.id);
     }
 
+    #[allow(unused)]
     /// Removes an entry from the pool by it's propose id
     pub(crate) fn remove_by_id(&mut self, id: &ProposeId) {
         if let Some(entry) = self.entries.remove(id) {

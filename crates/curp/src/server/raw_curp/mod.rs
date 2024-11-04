@@ -56,7 +56,6 @@ use self::state::State;
 use super::conflict::spec_pool_new::SpeculativePool;
 use super::conflict::uncommitted_pool::UncommittedPool;
 use super::curp_node::TaskType;
-use super::lease_manager::LeaseManagerRef;
 use super::storage::StorageApi;
 use super::DB;
 use crate::cmd::Command;
@@ -137,8 +136,6 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     is_leader: bool,
     /// Cmd board for tracking the cmd sync results
     cmd_board: CmdBoardRef,
-    /// Lease Manager
-    lease_manager: LeaseManagerRef,
     /// Config
     cfg: Arc<CurpConfig>,
     /// Role change callback
@@ -186,7 +183,6 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
 
         let ctx = Context::builder()
             .cb(args.cmd_board)
-            .lm(args.lease_manager)
             .cfg(args.cfg)
             .role_change(args.role_change)
             .curp_storage(args.curp_storage)
@@ -390,8 +386,6 @@ struct Context<C: Command, RC: RoleChange> {
     client_tls_config: Option<ClientTlsConfig>,
     /// Cmd board for tracking the cmd sync results
     cb: CmdBoardRef,
-    /// The lease manager
-    lm: LeaseManagerRef,
     /// Election tick
     #[builder(setter(skip))]
     election_tick: AtomicU8,
@@ -437,10 +431,6 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
             cb: match self.cb.take() {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("cb")),
-            },
-            lm: match self.lm.take() {
-                Some(value) => value,
-                None => return Err(ContextBuilderError::UninitializedField("lm")),
             },
             election_tick: AtomicU8::new(0),
             leader_event: Arc::new(Event::new()),
@@ -726,22 +716,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         debug!("{} gets new log[{index}]", self.id());
 
         Ok(())
-    }
-
-    /// Handle `lease_keep_alive` message
-    pub(super) fn handle_lease_keep_alive(&self, client_id: u64) -> Option<u64> {
-        let mut lm_w = self.ctx.lm.write();
-        if client_id == 0 {
-            return Some(lm_w.grant(None));
-        }
-        if lm_w.check_alive(client_id) {
-            lm_w.renew(client_id, None);
-            None
-        } else {
-            metrics::get().client_id_revokes.add(1, &[]);
-            lm_w.revoke(client_id);
-            Some(lm_w.grant(None))
-        }
     }
 
     /// Handle `append_entries`
@@ -1291,11 +1265,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         Arc::clone(&self.ctx.cb)
     }
 
-    /// Get the lease manager
-    pub(super) fn lease_manager(&self) -> LeaseManagerRef {
-        Arc::clone(&self.ctx.lm)
-    }
-
     /// Get a reference to spec pool
     pub(super) fn spec_pool(&self) -> &Mutex<SpeculativePool<C>> {
         &self.ctx.spec_pool
@@ -1312,11 +1281,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         t.into_iter()
             .next()
             .unwrap_or_else(|| unreachable!("server id {id} not found"))
-    }
-
-    /// Check if the current node is shutting down
-    pub(super) fn is_node_shutdown(&self) -> bool {
-        self.task_manager.is_node_shutdown()
     }
 
     /// Check if the current node is shutting down
@@ -1361,12 +1325,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Get last applied index
     pub(super) fn last_applied(&self) -> u64 {
         self.log.read().last_as
-    }
-
-    /// Mark a client id as bypassed
-    pub(super) fn mark_client_id_bypassed(&self, client_id: u64) {
-        let mut lm_w = self.ctx.lm.write();
-        lm_w.bypass(client_id);
     }
 
     /// Get client tls config
@@ -1687,8 +1645,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// When leader retires, it should reset state
     fn leader_retires(&self) {
         debug!("leader {} retires", self.id());
-        self.ctx.cb.write().clear();
-        self.ctx.lm.write().clear();
         self.ctx.uncommitted_pool.lock().clear();
         self.lst.reset_no_op_state();
     }

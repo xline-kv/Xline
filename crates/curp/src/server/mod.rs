@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use engine::SnapshotAllocator;
 use flume::r#async::RecvStream;
-use futures::{Stream, StreamExt};
+use futures::Stream;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::instrument;
@@ -22,7 +22,6 @@ use crate::cmd::CommandExecutor;
 use crate::member::MembershipInfo;
 use crate::response::ResponseSender;
 use crate::role_change::RoleChange;
-use crate::rpc::connect::Bypass;
 use crate::rpc::AppendEntriesRequest;
 use crate::rpc::AppendEntriesResponse;
 use crate::rpc::ChangeMembershipRequest;
@@ -70,6 +69,7 @@ mod curp_node;
 /// Storage
 mod storage;
 
+#[cfg(ignore)]
 /// Lease Manager
 mod lease_manager;
 
@@ -108,11 +108,9 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
         &self,
         request: tonic::Request<ProposeRequest>,
     ) -> Result<tonic::Response<Self::ProposeStreamStream>, tonic::Status> {
-        let bypassed = request.metadata().is_bypassed();
         let (tx, rx) = flume::bounded(2);
         let resp_tx = Arc::new(ResponseSender::new(tx));
-        self.inner
-            .propose_stream(&request.into_inner(), resp_tx, bypassed)?;
+        self.inner.propose_stream(&request.into_inner(), resp_tx)?;
 
         Ok(tonic::Response::new(rx.into_stream()))
     }
@@ -140,10 +138,9 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
         &self,
         request: tonic::Request<ShutdownRequest>,
     ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status> {
-        let bypassed = request.metadata().is_bypassed();
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.shutdown(request.into_inner(), bypassed).await?,
+            self.inner.shutdown(request.into_inner()).await?,
         ))
     }
 
@@ -169,12 +166,9 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
     #[allow(clippy::unimplemented)]
     async fn lease_keep_alive(
         &self,
-        request: tonic::Request<tonic::Streaming<LeaseKeepAliveMsg>>,
+        _request: tonic::Request<tonic::Streaming<LeaseKeepAliveMsg>>,
     ) -> Result<tonic::Response<LeaseKeepAliveMsg>, tonic::Status> {
-        let req_stream = request.into_inner();
-        Ok(tonic::Response::new(
-            self.inner.lease_keep_alive(req_stream).await?,
-        ))
+        Err(tonic::Status::unimplemented("unimplemented"))
     }
 
     #[instrument(skip_all, name = "curp_fetch_membership")]
@@ -287,13 +281,9 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> StreamingProtocol for R
     #[instrument(skip_all, name = "lease_keep_alive")]
     async fn lease_keep_alive(
         &self,
-        request: impl Stream<Item = LeaseKeepAliveMsg> + Send,
+        _request: impl Stream<Item = LeaseKeepAliveMsg> + Send,
     ) -> Result<tonic::Response<LeaseKeepAliveMsg>, tonic::Status> {
-        let stream = request.map(Ok::<_, std::io::Error>);
-
-        Ok(tonic::Response::new(
-            self.inner.lease_keep_alive(stream).await?,
-        ))
+        Err(tonic::Status::unimplemented("unimplemented"))
     }
 }
 

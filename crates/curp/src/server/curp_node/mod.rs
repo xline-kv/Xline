@@ -34,7 +34,6 @@ use super::{
     cmd_worker::execute,
     conflict::spec_pool_new::{SpObject, SpeculativePool},
     conflict::uncommitted_pool::{UcpObject, UncommittedPool},
-    lease_manager::LeaseManager,
     raw_curp::{RawCurp, Vote},
     storage::StorageApi,
 };
@@ -46,11 +45,11 @@ use crate::{
     role_change::RoleChange,
     rpc::{
         self, AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchMembershipRequest,
-        InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MembershipResponse,
-        MoveLeaderRequest, MoveLeaderResponse, PoolEntry, ProposeId, ProposeRequest,
-        ProposeResponse, ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest,
-        ShutdownResponse, SyncedResponse, TriggerShutdownRequest, TriggerShutdownResponse,
-        TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse, VoteRequest, VoteResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, MembershipResponse, MoveLeaderRequest,
+        MoveLeaderResponse, PoolEntry, ProposeId, ProposeRequest, ProposeResponse,
+        ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
+        SyncedResponse, TriggerShutdownRequest, TriggerShutdownResponse, TryBecomeLeaderNowRequest,
+        TryBecomeLeaderNowResponse, VoteRequest, VoteResponse,
     },
     server::{
         cmd_worker::{after_sync, worker_reset, worker_snapshot},
@@ -145,7 +144,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         req: &ProposeRequest,
         resp_tx: Arc<ResponseSender>,
-        bypassed: bool,
     ) -> Result<(), CurpError> {
         if self.curp.is_cluster_shutdown() {
             return Err(CurpError::shutting_down());
@@ -158,10 +156,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             resp_tx.set_conflict(true);
         } else {
             info!("not using slow path for: {req:?}");
-        }
-
-        if bypassed {
-            self.curp.mark_client_id_bypassed(req.propose_id().0);
         }
 
         let propose = Propose::try_new(req, resp_tx)?;
@@ -298,11 +292,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     pub(super) async fn shutdown(
         &self,
         req: ShutdownRequest,
-        bypassed: bool,
     ) -> Result<ShutdownResponse, CurpError> {
-        if bypassed {
-            self.curp.mark_client_id_bypassed(req.propose_id().0);
-        }
         self.curp.handle_shutdown(req.propose_id())?;
         CommandBoard::wait_for_shutdown_synced(&self.cmd_board).await;
         self.trigger_nodes_shutdown().await;
@@ -340,37 +330,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
 
             tokio::time::sleep(TRIGGER_INTERVAL).await;
         }
-    }
-
-    /// Handle lease keep alive requests
-    pub(super) async fn lease_keep_alive<E: std::error::Error + 'static>(
-        &self,
-        req_stream: impl Stream<Item = Result<LeaseKeepAliveMsg, E>>,
-    ) -> Result<LeaseKeepAliveMsg, CurpError> {
-        pin_mut!(req_stream);
-        while let Some(req) = req_stream.next().await {
-            // NOTE: The leader may shutdown itself in configuration change.
-            // We must first check this situation.
-            self.curp.check_leader_transfer()?;
-            if self.curp.is_cluster_shutdown() {
-                return Err(CurpError::shutting_down());
-            }
-            if self.curp.is_node_shutdown() {
-                return Err(CurpError::node_not_exist());
-            }
-            if !self.curp.is_leader() {
-                let (leader_id, term, _) = self.curp.leader();
-                return Err(CurpError::redirect(leader_id, term));
-            }
-            let req = req.map_err(|err| {
-                error!("{err}");
-                CurpError::RpcTransport(())
-            })?;
-            if let Some(client_id) = self.curp.handle_lease_keep_alive(req.client_id) {
-                return Ok(LeaseKeepAliveMsg { client_id });
-            }
-        }
-        Err(CurpError::RpcTransport(()))
     }
 
     /// Handles fetch membership requests
@@ -732,7 +691,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .collect();
         let member_connects = rpc::inner_connects(peer_addrs, client_tls_config.as_ref()).collect();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
         let last_applied = cmd_executor
             .last_applied()
             .map_err(|e| CurpError::internal(format!("get applied index error, {e}")))?;
@@ -746,7 +704,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             RawCurp::builder()
                 .is_leader(is_leader)
                 .cmd_board(Arc::clone(&cmd_board))
-                .lease_manager(Arc::clone(&lease_manager))
                 .cfg(Arc::clone(&curp_cfg))
                 .role_change(role_change)
                 .task_manager(Arc::clone(&task_manager))

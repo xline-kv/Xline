@@ -14,9 +14,7 @@ use crate::{
     server::{
         cmd_board::CommandBoard,
         conflict::test_pools::{TestSpecPool, TestUncomPool},
-        lease_manager::LeaseManager,
     },
-    tracker::Tracker,
     LogIndex,
 };
 
@@ -41,16 +39,12 @@ impl RawCurp<TestCommand, TestRoleChange> {
     ) -> Self {
         let _peer_ids: Vec<_> = (1..n).collect();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
         let curp_config = CurpConfigBuilder::default()
             .log_entries_cap(10)
             .build()
             .unwrap();
         let curp_storage = Arc::new(DB::open(&curp_config.engine_cfg).unwrap());
         let _ignore = curp_storage.recover().unwrap();
-
-        // bypass test client id
-        lease_manager.write().bypass(TEST_CLIENT_ID);
 
         let sp = Arc::new(Mutex::new(SpeculativePool::new(vec![Box::new(
             TestSpecPool::default(),
@@ -78,7 +72,6 @@ impl RawCurp<TestCommand, TestRoleChange> {
         Self::builder()
             .is_leader(true)
             .cmd_board(cmd_board)
-            .lease_manager(lease_manager)
             .cfg(Arc::new(curp_config))
             .role_change(role_change)
             .task_manager(task_manager)
@@ -92,16 +85,6 @@ impl RawCurp<TestCommand, TestRoleChange> {
             .member_connects(member_connects)
             .build_raw_curp()
             .unwrap()
-    }
-
-    pub(crate) fn tracker(&self, client_id: u64) -> Tracker {
-        self.ctx
-            .cb
-            .read()
-            .trackers
-            .get(&client_id)
-            .cloned()
-            .unwrap_or_else(|| unreachable!("cannot find {client_id} in result trackers"))
     }
 
     /// Add a new cmd to the log, will return log entry index
