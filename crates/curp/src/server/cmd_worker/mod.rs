@@ -45,21 +45,21 @@ pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     ce: &CE,
     curp: &RawCurp<C, RC>,
 ) -> Result<ErAsr<C>, <C as Command>::Error> {
-    let id = curp.id();
     let EntryData::Command(ref cmd) = entry.entry_data else {
         unreachable!("should not speculative execute {:?}", entry.entry_data);
     };
-    if cmd.is_read_only() {
+    let result = if cmd.is_read_only() {
         ce.execute_ro(cmd).map(|(er, asr)| (er, Some(asr)))
     } else {
-        let er = ce.execute(cmd);
-        debug!(
-            "{id} cmd({}) is speculatively executed, exe status: {}",
-            entry.propose_id,
-            er.is_ok(),
-        );
-        er.map(|e| (e, None))
-    }
+        ce.execute(cmd).map(|er| (er, None))
+    };
+    debug!(
+        "{} cmd({}) is speculatively executed, exe status: {}",
+        curp.id(),
+        entry.propose_id,
+        result.is_ok(),
+    );
+    result
 }
 
 /// After sync cmd entries
