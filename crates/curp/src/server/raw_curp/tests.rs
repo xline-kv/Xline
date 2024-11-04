@@ -673,8 +673,7 @@ fn add_exists_node_should_have_no_effect() {
             exists_node_id,
             NodeMetadata::default(),
         ))))
-        .unwrap()
-        .is_empty());
+        .is_none());
     assert!(curp
         .generate_membership(Some(Change::Promote(exists_node_id)))
         .unwrap()
