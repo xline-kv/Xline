@@ -1,8 +1,7 @@
-use once_cell::sync::Lazy;
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     ops::{Bound, RangeBounds},
-    sync::RwLock,
 };
 
 use curp::{client::ClientApi, cmd::Command as CurpCommand};
@@ -12,10 +11,8 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    classifier::{RequestBackend, RequestRw, RequestType},
-    execute_error::ExecuteError,
-    AuthInfo, PbCommand, PbCommandResponse, PbKeyRange, PbSyncResponse, RequestWrapper,
-    ResponseWrapper,
+    classifier::RequestClassifier, execute_error::ExecuteError, AuthInfo, PbCommand,
+    PbCommandResponse, PbKeyRange, PbSyncResponse, RequestWrapper, ResponseWrapper,
 };
 
 /// The curp client trait object on the command of xline
@@ -28,9 +25,10 @@ const UNBOUNDED: &[u8] = &[0_u8];
 /// Range end to get one key
 const ONE_KEY: &[u8] = &[];
 
-/// A global cache to store conflict rules. The rules will not change, so it's safe to use a global cache.
-static CONFLICT_RULES_CACHE: Lazy<RwLock<HashMap<(u8, u8), bool>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
+thread_local! {
+    /// A global cache to store conflict rules. The rules will not change, so it's safe to use a global cache.
+    static CONFLICT_RULES_CACHE: RefCell<HashMap<(u8, u8), bool>> = RefCell::new(HashMap::new());
+}
 
 /// Key Range for Command
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -239,29 +237,28 @@ pub struct Command {
 /// # Example
 ///
 /// ```ignore
-/// match_all!(Class1::Tag1 & Class2::Tag2)(x)
+/// match_all!(is_auth_backend & is_put)(x)
 /// ```
 macro_rules! match_all {
-    ($($cls:ident :: $tag:ident)&*) => {
-        |_x| $(matches!($cls::from(_x), $cls::$tag))&&*
+    ($($func:ident)&*) => {
+        |_x: &RequestWrapper| $(_x.$func())&&*
     };
 }
-pub(crate) use match_all; // used by lib.rs
 
 /// swapable match, returns a `Fn(x, y) -> bool` indicates the match result.
 ///
 /// # Returns
 ///
-/// Returns `Fn(x, y) -> true` if *x match Class1 and y match Class2*, or *x match Class2 and y match Class1*.
+/// Returns `Fn(x, y) -> true` if *x match Classifier1 and y match Classifier2*,
+/// or *x match Classifier2 and y match Classifier1*.
 macro_rules! swap_match {
-
-    ($($cls1:ident::$tag1:ident)&*, _) => {{
-        |_x, _| match_all!($($cls1::$tag1)&*)(_x)
+    ($($func:ident)&*, _) => {{
+        |_x, _| match_all!($($func)&*)(_x)
     }};
-    ($($cls1:ident :: $tag1:ident)&*, $($cls2:ident :: $tag2:ident)&*) => {
+    ($($func1:ident)&*, $($func2:ident)&*) => {
         |_x, _y| {
-            (match_all!($($cls1::$tag1)&*)(_x) && match_all!($($cls2::$tag2)&*)(_y)) || (
-                match_all!($($cls2::$tag2)&*)(_x) && match_all!($($cls1::$tag1)&*)(_y)
+            (match_all!($($func1)&*)(_x) && match_all!($($func2)&*)(_y)) || (
+                match_all!($($func2)&*)(_x) && match_all!($($func1)&*)(_y)
             )
         }
     };
@@ -290,9 +287,9 @@ macro_rules! swap_map {
 ///
 /// `Fn(x, y) -> Option<bool>` indicates the conflict result.
 macro_rules! is_conflict {
-    ($(($body:expr, $($cls1:ident :: $tag1:ident)&*, $($pat:tt)*)),*) => {
+    ($(($body:expr, $($func:ident)&*, $($pat:tt)*)),*) => {
         |_self, _other| match (_self, _other) {
-            $((x, y) if swap_match!($($cls1::$tag1)&*, $($pat)*)(x, y) => Some($body),)*
+            $((x, y) if swap_match!($($func)&*, $($pat)*)(x, y) => Some($body),)*
             _ => None,
         }
     };
@@ -307,37 +304,32 @@ impl ConflictCheck for Command {
         if cache_key.0 > cache_key.1 {
             cache_key = (cache_key.1, cache_key.0);
         }
-        if let Some(res) = CONFLICT_RULES_CACHE
-            .read()
-            .ok()
-            .and_then(|c| c.get(&cache_key).cloned())
-        {
+        if let Some(res) = CONFLICT_RULES_CACHE.with_borrow(|x| x.get(&cache_key).cloned()) {
             return res;
         }
         let first_step = is_conflict!(
             // auth read request will not conflict with any request except the auth write request
             (
                 true,
-                RequestBackend::Auth & RequestRw::Read,
-                RequestBackend::Auth & RequestRw::Write
+                is_auth_backend & is_read_only,
+                is_auth_backend & is_write
             ),
-            (false, RequestBackend::Auth & RequestRw::Read, _),
+            (false, is_auth_backend & is_read_only, _),
             // any two requests that don't meet the above conditions will conflict with each other
             // because the auth write request will make all previous token invalid
-            (true, RequestBackend::Auth & RequestRw::Write, _),
-            (true, RequestBackend::Alarm, _),
+            (true, is_auth_backend & is_write, _),
+            (true, is_alarm_backend, _),
             // Lease leases request is conflict with Lease grant and revoke requests
             (
                 true,
-                RequestBackend::Lease & RequestRw::Read,
-                RequestBackend::Lease & RequestRw::Write
+                is_lease_backend & is_read_only,
+                is_lease_backend & is_write
             ),
-            (true, RequestType::Compaction, RequestType::Compaction)
+            (true, is_compaction, is_compaction)
         )(t_req, o_req);
         if let Some(first_step_res) = first_step {
-            if let Ok(mut cache) = CONFLICT_RULES_CACHE.write() {
-                cache.insert((t_req.into(), o_req.into()), first_step_res);
-            }
+            CONFLICT_RULES_CACHE
+                .with_borrow_mut(|x| x.insert((t_req.into(), o_req.into()), first_step_res));
         }
         first_step
             .or_else(|| {
@@ -554,7 +546,7 @@ impl CurpCommand for Command {
 
     #[inline]
     fn is_read_only(&self) -> bool {
-        match_all!(RequestRw::Read)(self.request())
+        self.request().is_read_only()
     }
 }
 
@@ -639,20 +631,11 @@ mod test {
             ..Default::default()
         }));
         let cache_key = ((&cmd1.request).into(), (&cmd2.request).into());
-        if CONFLICT_RULES_CACHE
-            .read()
-            .unwrap()
-            .get(&cache_key)
-            .is_some()
-        {
+        if CONFLICT_RULES_CACHE.with_borrow(|x| x.get(&cache_key).is_some()) {
             return;
         }
         let _ig = ConflictCheck::is_conflict(&cmd1, &cmd2);
-        assert!(CONFLICT_RULES_CACHE
-            .read()
-            .unwrap()
-            .get(&cache_key)
-            .is_some());
+        assert!(CONFLICT_RULES_CACHE.with_borrow(|x| x.get(&cache_key).is_some()));
     }
 
     #[test]

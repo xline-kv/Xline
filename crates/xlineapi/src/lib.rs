@@ -208,12 +208,12 @@ mod errorpb {
 
 use std::fmt::Display;
 
+use classifier::RequestClassifier;
 use command::KeyRange;
 use utils::write_vec;
 
 pub use self::{
     authpb::{permission::Type, Permission, Role, User, UserAddOptions},
-    classifier::{RequestBackend, RequestRw},
     commandpb::{
         command::{AuthInfo, RequestWrapper},
         command_response::ResponseWrapper,
@@ -274,8 +274,6 @@ pub use self::{
         LockRequest, LockResponse, UnlockRequest, UnlockResponse,
     },
 };
-
-use crate::command::match_all;
 
 impl User {
     /// Check if user has the given role
@@ -445,14 +443,9 @@ impl RequestWrapper {
         }
     }
 
-    /// Get the backend of the request
-    pub fn backend(&self) -> RequestBackend {
-        RequestBackend::from(self)
-    }
-
     /// Check whether this auth request should skip the revision or not
     pub fn skip_auth_revision(&self) -> bool {
-        match_all!(RequestRw::Read)(self)
+        self.is_read_only()
             || matches!(
                 *self,
                 RequestWrapper::AuthEnableRequest(_) | RequestWrapper::AuthenticateRequest(_)
