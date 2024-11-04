@@ -1,5 +1,18 @@
 use super::RequestWrapper;
 
+pub trait RequestClassifier {
+    fn is_kv_backend(&self) -> bool;
+    fn is_lease_backend(&self) -> bool;
+    fn is_auth_backend(&self) -> bool;
+    fn is_alarm_backend(&self) -> bool;
+    fn is_put(&self) -> bool;
+    fn is_compaction(&self) -> bool;
+    fn is_txn(&self) -> bool;
+    fn is_range(&self) -> bool;
+    fn is_read_only(&self) -> bool;
+    fn is_write(&self) -> bool;
+}
+
 /// because RequestWrapper do not repr u8, we need to convert it manually.
 impl From<&RequestWrapper> for u8 {
     fn from(value: &RequestWrapper) -> Self {
@@ -34,138 +47,95 @@ impl From<&RequestWrapper> for u8 {
     }
 }
 
-/// Backend store of request
-#[allow(missing_docs)]
-#[derive(Debug, PartialEq, Eq)]
-pub enum RequestBackend {
-    Kv,
-    Auth,
-    Lease,
-    Alarm,
-}
-
-impl From<&RequestWrapper> for RequestBackend {
-    fn from(value: &RequestWrapper) -> Self {
-        match *value {
+impl RequestClassifier for RequestWrapper {
+    #[inline]
+    fn is_kv_backend(&self) -> bool {
+        matches!(
+            *self,
             RequestWrapper::PutRequest(_)
-            | RequestWrapper::RangeRequest(_)
-            | RequestWrapper::DeleteRangeRequest(_)
-            | RequestWrapper::TxnRequest(_)
-            | RequestWrapper::CompactionRequest(_) => RequestBackend::Kv,
-            RequestWrapper::AuthEnableRequest(_)
-            | RequestWrapper::AuthDisableRequest(_)
-            | RequestWrapper::AuthStatusRequest(_)
-            | RequestWrapper::AuthRoleAddRequest(_)
-            | RequestWrapper::AuthRoleDeleteRequest(_)
-            | RequestWrapper::AuthRoleGetRequest(_)
-            | RequestWrapper::AuthRoleGrantPermissionRequest(_)
-            | RequestWrapper::AuthRoleListRequest(_)
-            | RequestWrapper::AuthRoleRevokePermissionRequest(_)
-            | RequestWrapper::AuthUserAddRequest(_)
-            | RequestWrapper::AuthUserChangePasswordRequest(_)
-            | RequestWrapper::AuthUserDeleteRequest(_)
-            | RequestWrapper::AuthUserGetRequest(_)
-            | RequestWrapper::AuthUserGrantRoleRequest(_)
-            | RequestWrapper::AuthUserListRequest(_)
-            | RequestWrapper::AuthUserRevokeRoleRequest(_)
-            | RequestWrapper::AuthenticateRequest(_) => RequestBackend::Auth,
-            RequestWrapper::LeaseGrantRequest(_)
-            | RequestWrapper::LeaseRevokeRequest(_)
-            | RequestWrapper::LeaseLeasesRequest(_) => RequestBackend::Lease,
-            RequestWrapper::AlarmRequest(_) => RequestBackend::Alarm,
-        }
+                | RequestWrapper::RangeRequest(_)
+                | RequestWrapper::DeleteRangeRequest(_)
+                | RequestWrapper::TxnRequest(_)
+                | RequestWrapper::CompactionRequest(_)
+        )
     }
-}
-
-/// Type of request. This is the extending of [`RequestBackend`].
-#[allow(missing_docs)]
-#[derive(Debug, PartialEq, Eq)]
-pub enum RequestType {
-    Put,
-    Compaction,
-    Txn,
-    Range,
-    Auth,
-    Lease,
-    Alarm,
-}
-
-impl From<&RequestWrapper> for RequestType {
-    fn from(value: &RequestWrapper) -> Self {
-        match *value {
-            RequestWrapper::PutRequest(_) => RequestType::Put,
-            RequestWrapper::RangeRequest(_) | RequestWrapper::DeleteRangeRequest(_) => {
-                RequestType::Range
-            }
-            RequestWrapper::TxnRequest(_) => RequestType::Txn,
-            RequestWrapper::CompactionRequest(_) => RequestType::Compaction,
+    #[inline]
+    fn is_auth_backend(&self) -> bool {
+        matches!(
+            self,
             RequestWrapper::AuthEnableRequest(_)
-            | RequestWrapper::AuthDisableRequest(_)
-            | RequestWrapper::AuthStatusRequest(_)
-            | RequestWrapper::AuthRoleAddRequest(_)
-            | RequestWrapper::AuthRoleDeleteRequest(_)
-            | RequestWrapper::AuthRoleGetRequest(_)
-            | RequestWrapper::AuthRoleGrantPermissionRequest(_)
-            | RequestWrapper::AuthRoleListRequest(_)
-            | RequestWrapper::AuthRoleRevokePermissionRequest(_)
-            | RequestWrapper::AuthUserAddRequest(_)
-            | RequestWrapper::AuthUserChangePasswordRequest(_)
-            | RequestWrapper::AuthUserDeleteRequest(_)
-            | RequestWrapper::AuthUserGetRequest(_)
-            | RequestWrapper::AuthUserGrantRoleRequest(_)
-            | RequestWrapper::AuthUserListRequest(_)
-            | RequestWrapper::AuthUserRevokeRoleRequest(_)
-            | RequestWrapper::AuthenticateRequest(_) => RequestType::Auth,
-            RequestWrapper::LeaseGrantRequest(_)
-            | RequestWrapper::LeaseRevokeRequest(_)
-            | RequestWrapper::LeaseLeasesRequest(_) => RequestType::Lease,
-            RequestWrapper::AlarmRequest(_) => RequestType::Alarm,
-        }
+                | RequestWrapper::AuthDisableRequest(_)
+                | RequestWrapper::AuthStatusRequest(_)
+                | RequestWrapper::AuthRoleAddRequest(_)
+                | RequestWrapper::AuthRoleDeleteRequest(_)
+                | RequestWrapper::AuthRoleGetRequest(_)
+                | RequestWrapper::AuthRoleGrantPermissionRequest(_)
+                | RequestWrapper::AuthRoleListRequest(_)
+                | RequestWrapper::AuthRoleRevokePermissionRequest(_)
+                | RequestWrapper::AuthUserAddRequest(_)
+                | RequestWrapper::AuthUserChangePasswordRequest(_)
+                | RequestWrapper::AuthUserDeleteRequest(_)
+                | RequestWrapper::AuthUserGetRequest(_)
+                | RequestWrapper::AuthUserGrantRoleRequest(_)
+                | RequestWrapper::AuthUserListRequest(_)
+                | RequestWrapper::AuthUserRevokeRoleRequest(_)
+                | RequestWrapper::AuthenticateRequest(_)
+        )
     }
-}
+    #[inline]
+    fn is_lease_backend(&self) -> bool {
+        matches!(
+            self,
+            RequestWrapper::LeaseGrantRequest(_)
+                | RequestWrapper::LeaseRevokeRequest(_)
+                | RequestWrapper::LeaseLeasesRequest(_)
+        )
+    }
+    #[inline]
+    fn is_alarm_backend(&self) -> bool {
+        matches!(self, RequestWrapper::AlarmRequest(_))
+    }
+    #[inline]
+    fn is_put(&self) -> bool {
+        matches!(self, RequestWrapper::PutRequest(_))
+    }
+    #[inline]
+    fn is_range(&self) -> bool {
+        matches!(
+            self,
+            RequestWrapper::RangeRequest(_) | RequestWrapper::DeleteRangeRequest(_)
+        )
+    }
+    #[inline]
+    fn is_txn(&self) -> bool {
+        matches!(self, RequestWrapper::TxnRequest(_))
+    }
+    #[inline]
+    fn is_compaction(&self) -> bool {
+        matches!(self, RequestWrapper::CompactionRequest(_))
+    }
 
-/// indicates if the request is readonly or write
-#[derive(Debug, PartialEq, Eq)]
-pub enum RequestRw {
+    #[inline]
     /// Read only request
-    Read,
+    fn is_read_only(&self) -> bool {
+        matches!(
+            self,
+            RequestWrapper::RangeRequest(_)
+                | RequestWrapper::AuthStatusRequest(_)
+                | RequestWrapper::AuthRoleGetRequest(_)
+                | RequestWrapper::AuthRoleListRequest(_)
+                | RequestWrapper::AuthUserGetRequest(_)
+                | RequestWrapper::AuthUserListRequest(_)
+                | RequestWrapper::LeaseLeasesRequest(_)
+        )
+    }
+
+    #[inline]
     /// Write request.
     ///
     /// NOTE: A `TxnRequest` or a `DeleteRangeRequest` might be read-only, but we
     /// assume they will mutate the state machine to simplify the implementation.
-    Write,
-}
-
-impl From<&RequestWrapper> for RequestRw {
-    fn from(value: &RequestWrapper) -> Self {
-        match *value {
-            RequestWrapper::RangeRequest(_)
-            | RequestWrapper::AuthStatusRequest(_)
-            | RequestWrapper::AuthRoleGetRequest(_)
-            | RequestWrapper::AuthRoleListRequest(_)
-            | RequestWrapper::AuthUserGetRequest(_)
-            | RequestWrapper::AuthUserListRequest(_)
-            | RequestWrapper::LeaseLeasesRequest(_) => Self::Read,
-
-            RequestWrapper::PutRequest(_)
-            | RequestWrapper::DeleteRangeRequest(_)
-            | RequestWrapper::TxnRequest(_)
-            | RequestWrapper::CompactionRequest(_)
-            | RequestWrapper::AuthEnableRequest(_)
-            | RequestWrapper::AuthDisableRequest(_)
-            | RequestWrapper::AuthRoleAddRequest(_)
-            | RequestWrapper::AuthRoleDeleteRequest(_)
-            | RequestWrapper::AuthRoleGrantPermissionRequest(_)
-            | RequestWrapper::AuthRoleRevokePermissionRequest(_)
-            | RequestWrapper::AuthUserAddRequest(_)
-            | RequestWrapper::AuthUserChangePasswordRequest(_)
-            | RequestWrapper::AuthUserDeleteRequest(_)
-            | RequestWrapper::AuthUserGrantRoleRequest(_)
-            | RequestWrapper::AuthUserRevokeRoleRequest(_)
-            | RequestWrapper::AuthenticateRequest(_)
-            | RequestWrapper::LeaseGrantRequest(_)
-            | RequestWrapper::LeaseRevokeRequest(_)
-            | RequestWrapper::AlarmRequest(_) => Self::Write,
-        }
+    fn is_write(&self) -> bool {
+        !self.is_read_only()
     }
 }
