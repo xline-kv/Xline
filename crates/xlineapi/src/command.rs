@@ -1,7 +1,4 @@
-use std::{
-    collections::HashSet,
-    ops::{Bound, RangeBounds},
-};
+use std::collections::HashSet;
 
 use curp::{client::ClientApi, cmd::Command as CurpCommand};
 use curp_external_api::cmd::{ConflictCheck, PbCodec, PbSerializeError};
@@ -9,207 +6,16 @@ use itertools::Itertools;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 
+use crate::keyrange::KeyRange;
 use crate::{
-    execute_error::ExecuteError, AuthInfo, PbCommand, PbCommandResponse, PbKeyRange,
-    PbSyncResponse, RequestWrapper, ResponseWrapper,
+    execute_error::ExecuteError, AuthInfo, PbCommand, PbCommandResponse, PbSyncResponse,
+    RequestWrapper, ResponseWrapper,
 };
 
 /// The curp client trait object on the command of xline
 ///
 /// TODO: use `type CurpClient = impl ClientApi<...>` when `type_alias_impl_trait` stabilized
 pub type CurpClient = dyn ClientApi<Error = tonic::Status, Cmd = Command> + Sync + Send + 'static;
-
-/// Range start and end to get all keys
-const UNBOUNDED: &[u8] = &[0_u8];
-/// Range end to get one key
-const ONE_KEY: &[u8] = &[];
-
-/// Key Range for Command
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
-pub struct KeyRange {
-    /// Start of range
-    key: Bound<Vec<u8>>,
-    /// End of range
-    range_end: Bound<Vec<u8>>,
-}
-
-impl KeyRange {
-    /// New `KeyRange`
-    #[inline]
-    pub fn new(start: impl Into<Vec<u8>>, end: impl Into<Vec<u8>>) -> Self {
-        let key_vec = start.into();
-        let range_end_vec = end.into();
-        let range_end = match range_end_vec.as_slice() {
-            UNBOUNDED => Bound::Unbounded,
-            ONE_KEY => Bound::Included(key_vec.clone()),
-            _ => Bound::Excluded(range_end_vec),
-        };
-        let key = match key_vec.as_slice() {
-            UNBOUNDED => Bound::Unbounded,
-            _ => Bound::Included(key_vec),
-        };
-        KeyRange { key, range_end }
-    }
-
-    /// New `KeyRange` only contains one key
-    ///
-    /// # Panics
-    ///
-    /// Will panic if key is equal to `UNBOUNDED`
-    #[inline]
-    pub fn new_one_key(key: impl Into<Vec<u8>>) -> Self {
-        let key_vec = key.into();
-        assert!(
-            key_vec.as_slice() != UNBOUNDED,
-            "Unbounded key is not allowed: {key_vec:?}",
-        );
-        Self {
-            key: Bound::Included(key_vec.clone()),
-            range_end: Bound::Included(key_vec),
-        }
-    }
-
-    /// Return if `KeyRange` is conflicted with another
-    #[must_use]
-    #[inline]
-    pub fn is_conflicted(&self, other: &Self) -> bool {
-        // s1 < s2 ?
-        if match (self.start_bound(), other.start_bound()) {
-            (Bound::Included(s1), Bound::Included(s2)) => {
-                if s1 == s2 {
-                    return true;
-                }
-                s1 < s2
-            }
-            (Bound::Included(_), Bound::Unbounded) => false,
-            (Bound::Unbounded, Bound::Included(_)) => true,
-            (Bound::Unbounded, Bound::Unbounded) => return true,
-            _ => unreachable!("KeyRange::start_bound() cannot be Excluded"),
-        } {
-            // s1 < s2
-            // s2 < e1 ?
-            match (other.start_bound(), self.end_bound()) {
-                (Bound::Included(s2), Bound::Included(e1)) => s2 <= e1,
-                (Bound::Included(s2), Bound::Excluded(e1)) => s2 < e1,
-                (Bound::Included(_), Bound::Unbounded) => true,
-                // if other.start_bound() is Unbounded, program cannot enter this branch
-                // KeyRange::start_bound() cannot be Excluded
-                _ => unreachable!("other.start_bound() should be Include"),
-            }
-        } else {
-            // s2 < s1
-            // s1 < e2 ?
-            match (self.start_bound(), other.end_bound()) {
-                (Bound::Included(s1), Bound::Included(e2)) => s1 <= e2,
-                (Bound::Included(s1), Bound::Excluded(e2)) => s1 < e2,
-                (Bound::Included(_), Bound::Unbounded) => true,
-                // if self.start_bound() is Unbounded, program cannot enter this branch
-                // KeyRange::start_bound() cannot be Excluded
-                _ => unreachable!("self.start_bound() should be Include"),
-            }
-        }
-    }
-
-    /// Check if `KeyRange` contains a key
-    #[must_use]
-    #[inline]
-    pub fn contains_key(&self, key: &[u8]) -> bool {
-        (match self.start_bound() {
-            Bound::Included(start) => start.as_slice() <= key,
-            Bound::Excluded(start) => start.as_slice() < key,
-            Bound::Unbounded => true,
-        }) && (match self.end_bound() {
-            Bound::Included(end) => key <= end.as_slice(),
-            Bound::Excluded(end) => key < end.as_slice(),
-            Bound::Unbounded => true,
-        })
-    }
-
-    /// Get end of range with prefix
-    ///
-    /// User will provide a start key when prefix is true, we need calculate the end key of `KeyRange`
-    #[allow(clippy::indexing_slicing)] // end[i] is always valid
-    #[must_use]
-    #[inline]
-    pub fn get_prefix(key: impl AsRef<[u8]>) -> Vec<u8> {
-        let key = key.as_ref();
-        let mut end = key.to_vec();
-        for i in (0..key.len()).rev() {
-            if key[i] < 0xFF {
-                end[i] = end[i].wrapping_add(1);
-                end.truncate(i.wrapping_add(1));
-                return end;
-            }
-        }
-        // next prefix does not exist (e.g., 0xffff);
-        vec![0]
-    }
-
-    /// unpack `KeyRange` to tuple
-    #[must_use]
-    #[inline]
-    pub fn unpack(self) -> (Bound<Vec<u8>>, Bound<Vec<u8>>) {
-        (self.key, self.range_end)
-    }
-
-    /// start key of `KeyRange`
-    #[must_use]
-    #[inline]
-    pub fn range_start(&self) -> &[u8] {
-        match self.key {
-            Bound::Included(ref k) => k.as_slice(),
-            Bound::Excluded(_) => unreachable!("KeyRange::start_bound() cannot be Excluded"),
-            Bound::Unbounded => &[0],
-        }
-    }
-
-    /// end key of `KeyRange`
-    #[must_use]
-    #[inline]
-    pub fn range_end(&self) -> &[u8] {
-        match self.range_end {
-            Bound::Included(_) => &[],
-            Bound::Excluded(ref k) => k.as_slice(),
-            Bound::Unbounded => &[0],
-        }
-    }
-}
-
-impl RangeBounds<Vec<u8>> for KeyRange {
-    #[inline]
-    fn start_bound(&self) -> Bound<&Vec<u8>> {
-        match self.key {
-            Bound::Unbounded => Bound::Unbounded,
-            Bound::Included(ref k) => Bound::Included(k),
-            Bound::Excluded(_) => unreachable!("KeyRange::start_bound() cannot be Excluded"),
-        }
-    }
-    #[inline]
-    fn end_bound(&self) -> Bound<&Vec<u8>> {
-        match self.range_end {
-            Bound::Unbounded => Bound::Unbounded,
-            Bound::Included(ref k) => Bound::Included(k),
-            Bound::Excluded(ref k) => Bound::Excluded(k),
-        }
-    }
-}
-
-impl From<PbKeyRange> for KeyRange {
-    #[inline]
-    fn from(range: PbKeyRange) -> Self {
-        Self::new(range.key, range.range_end)
-    }
-}
-
-impl From<KeyRange> for PbKeyRange {
-    #[inline]
-    fn from(range: KeyRange) -> Self {
-        Self {
-            key: range.range_start().to_vec(),
-            range_end: range.range_end().to_vec(),
-        }
-    }
-}
 
 /// Command to run consensus protocol
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -281,15 +87,8 @@ impl ConflictCheck for Command {
             .keys()
             .iter()
             .cartesian_product(other.keys().iter())
-            .any(|(k1, k2)| k1.is_conflicted(k2));
+            .any(|(k1, k2)| k1.is_conflict(k2));
         lease_conflict || key_conflict
-    }
-}
-
-impl ConflictCheck for KeyRange {
-    #[inline]
-    fn is_conflict(&self, other: &Self) -> bool {
-        self.is_conflicted(other)
     }
 }
 
@@ -522,38 +321,6 @@ mod test {
     };
 
     #[test]
-    fn test_key_range_conflict() {
-        let kr1 = KeyRange::new("a", "e");
-        let kr2 = KeyRange::new_one_key("c");
-        let kr3 = KeyRange::new_one_key("z");
-        assert!(kr1.is_conflict(&kr2));
-        assert!(!kr1.is_conflict(&kr3));
-    }
-
-    #[test]
-    fn test_key_range_prefix() {
-        assert_eq!(KeyRange::get_prefix(b"key"), b"kez");
-        assert_eq!(KeyRange::get_prefix(b"z"), b"\x7b");
-        assert_eq!(KeyRange::get_prefix(&[255]), b"\0");
-    }
-
-    #[test]
-    fn test_key_range_contains() {
-        let kr1 = KeyRange::new("a", "e");
-        assert!(kr1.contains_key(b"b"));
-        assert!(!kr1.contains_key(b"e"));
-        let kr2 = KeyRange::new_one_key("c");
-        assert!(kr2.contains_key(b"c"));
-        assert!(!kr2.contains_key(b"d"));
-        let kr3 = KeyRange::new("c", [0]);
-        assert!(kr3.contains_key(b"d"));
-        assert!(!kr3.contains_key(b"a"));
-        let kr4 = KeyRange::new([0], "e");
-        assert!(kr4.contains_key(b"d"));
-        assert!(!kr4.contains_key(b"e"));
-    }
-
-    #[test]
     fn test_command_conflict() {
         let cmd1 = Command::new(RequestWrapper::DeleteRangeRequest(DeleteRangeRequest {
             key: "a".into(),
@@ -763,9 +530,9 @@ mod test {
 
         let keys = txn_req.keys();
         assert!(keys.contains(&KeyRange::new_one_key("a")));
-        assert!(keys.contains(&KeyRange::new("b", "e")));
+        assert!(keys.contains(&KeyRange::new_etcd("b", "e")));
         assert!(keys.contains(&KeyRange::new_one_key("1")));
         assert!(keys.contains(&KeyRange::new_one_key("2")));
-        assert!(keys.contains(&KeyRange::new("3", "4")));
+        assert!(keys.contains(&KeyRange::new_etcd("3", "4")));
     }
 }

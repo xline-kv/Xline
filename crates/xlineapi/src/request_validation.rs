@@ -6,7 +6,7 @@ use utils::interval_map::{Interval, IntervalMap};
 use utils::lca_tree::LCATree;
 
 use crate::{
-    interval::BytesAffine, AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest,
+    keyrange::BytesAffine, AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest,
     DeleteRangeRequest, PutRequest, RangeRequest, Request, RequestOp, SortOrder, SortTarget,
     TxnRequest,
 };

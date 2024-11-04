@@ -2338,6 +2338,9 @@ name = "rb-interval-map"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2d14796e23a9778dec643e93352dc2404004793627102304f99cb164b47635c"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "redox_syscall"
@@ -2814,6 +2817,12 @@ checksum = "a7065abeca94b6a8a577f9bd45aa0867a2238b74e8eb67cf10d492bc39351394"
 dependencies = [
  "futures-core",
 ]
+
+[[package]]
+name = "tap"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tempfile"
@@ -3814,7 +3823,9 @@ dependencies = [
  "serde",
  "strum",
  "strum_macros",
+ "tap",
  "thiserror",
+ "tracing",
  "utils",
  "workspace-hack",
 ]

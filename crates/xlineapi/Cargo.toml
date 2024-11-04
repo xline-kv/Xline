@@ -17,8 +17,10 @@ curp-external-api = { path = "../curp-external-api" }
 itertools = "0.13"
 prost = "0.13"
 serde = { version = "1.0.204", features = ["derive"] }
+tap = "1.0.1"
 thiserror = "1.0.61"
 tonic = { version = "0.5.0", package = "madsim-tonic" }
+tracing = "0.1.37"
 utils = { path = "../utils", features = ["parking_lot"] }
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 

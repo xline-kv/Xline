@@ -34,35 +34,6 @@ use crate::{
 /// Key of applied index
 pub(crate) const APPLIED_INDEX_KEY: &str = "applied_index";
 
-/// Range start and end to get all keys
-const UNBOUNDED: &[u8] = &[0_u8];
-/// Range end to get one key
-const ONE_KEY: &[u8] = &[];
-
-/// Type of `KeyRange`
-pub(crate) enum RangeType {
-    /// `KeyRange` contains only one key
-    OneKey,
-    /// `KeyRange` contains all keys
-    AllKeys,
-    /// `KeyRange` contains the keys in the range
-    Range,
-}
-
-impl RangeType {
-    /// Get `RangeType` by given `key` and `range_end`
-    #[inline]
-    pub(crate) fn get_range_type(key: &[u8], range_end: &[u8]) -> Self {
-        if range_end == ONE_KEY {
-            RangeType::OneKey
-        } else if key == UNBOUNDED && range_end == UNBOUNDED {
-            RangeType::AllKeys
-        } else {
-            RangeType::Range
-        }
-    }
-}
-
 /// Command Executor
 #[derive(Debug)]
 pub(crate) struct CommandExecutor {
