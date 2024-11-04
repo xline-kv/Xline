@@ -725,8 +725,7 @@ impl SnapshotApi for RocksSnapshot {
 
 #[cfg(test)]
 mod test {
-    use std::env::temp_dir;
-
+    use tempfile::TempDir;
     use test_macros::abort_on_panic;
 
     use super::*;
@@ -735,9 +734,9 @@ mod test {
     #[tokio::test]
     #[abort_on_panic]
     async fn test_rocks_errors() {
-        let dir = PathBuf::from("/tmp/test_rocks_errors");
-        let engine_path = dir.join("engine");
-        let snapshot_path = dir.join("snapshot");
+        let dir = TempDir::with_prefix("/tmp/test_rocks_errors").unwrap();
+        let engine_path = dir.path().join("engine");
+        let snapshot_path = dir.path().join("snapshot");
         let engine = RocksEngine::new(engine_path, &TEST_TABLES).unwrap();
         let res = engine.get("not_exist", "key");
         assert!(res.is_err());
@@ -756,13 +755,14 @@ mod test {
         };
         let res = engine.apply_snapshot(fake_snapshot, &["not_exist"]).await;
         assert!(res.is_err());
-        fs::remove_dir_all(dir).unwrap();
+        dir.close().unwrap();
     }
 
     #[test]
     fn test_engine_size() {
-        let path = temp_dir().join("test_engine_size");
-        let engine = RocksEngine::new(path.clone(), &TEST_TABLES).unwrap();
+        let dir = TempDir::with_prefix("/tmp/test_engine_size").unwrap();
+        let engine_path = dir.path().join("engine");
+        let engine = RocksEngine::new(engine_path, &TEST_TABLES).unwrap();
         let size1 = engine.file_size().unwrap();
         engine
             .write_multi(
@@ -776,6 +776,6 @@ mod test {
             .unwrap();
         let size2 = engine.file_size().unwrap();
         assert!(size2 > size1);
-        fs::remove_dir_all(path).unwrap();
+        dir.close().unwrap();
     }
 }
