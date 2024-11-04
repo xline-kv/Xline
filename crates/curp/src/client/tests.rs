@@ -346,9 +346,9 @@ async fn test_retry_propose_return_retry_error() {
                 });
             if id == 0 {
                 let err = early_err.clone();
-                conn.expect_propose_stream()
+                conn.expect_shutdown()
                     .times(5) // propose should be retried in 5 times on leader
-                    .returning(move |_req, _token, _timeout| Err(err.clone()));
+                    .returning(move |_req, _timeout| Err(err.clone()));
             }
 
             let err = early_err.clone();
@@ -364,19 +364,37 @@ async fn test_retry_propose_return_retry_error() {
             Fetch::new(Duration::from_secs(1), move |_| connects.clone()),
             ClusterState::Full(cluster_state),
         );
-        let _err = retry
-            .propose(&TestCommand::new_put(vec![1], 1), None, false)
-            .await
-            .unwrap_err();
+        // Propose shutdown is a retryable request
+        let _err = retry.propose_shutdown().await.unwrap_err();
     }
 }
 
 #[traced_test]
 #[tokio::test]
 async fn test_retry_will_update_state_on_error() {
-    let connects = init_mocked_connects(5, |_id, conn| {
+    let mut return_cnt = [0; 5];
+    let connects = init_mocked_connects(5, |id, conn| {
         conn.expect_propose_stream()
-            .returning(move |_req, _token, _timeout| Err(CurpError::wrong_cluster_version()));
+            .returning(move |_req, _token, _timeout| {
+                return_cnt[id] += 1;
+                match return_cnt[id] {
+                    // on first propose, return an error; the client should update its state
+                    1 => Err(CurpError::wrong_cluster_version()),
+                    // on second propose, return success result
+                    2 => {
+                        let resp = async_stream::stream! {
+                            yield Ok(build_propose_response(false));
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            yield Ok(build_synced_response());
+                        };
+                        Ok(tonic::Response::new(Box::new(resp)))
+                    }
+                    _ => unreachable!(),
+                }
+            });
+
+        conn.expect_record()
+            .return_once(move |_req, _timeout| Err(CurpError::internal("none")));
 
         conn.expect_fetch_membership()
             .returning(move |_req, _timeout| {
@@ -395,6 +413,11 @@ async fn test_retry_will_update_state_on_error() {
         .propose(&TestCommand::new_put(vec![1], 1), None, false)
         .await
         .unwrap_err();
+    // on a retry the client should update the cluster state
+    let _result = retry
+        .propose(&TestCommand::new_put(vec![1], 1), None, false)
+        .await
+        .unwrap();
 
     // The state should update to the new membership
     let state = retry.cluster_state().unwrap_full_state();
