@@ -42,61 +42,41 @@ impl Add1 for Vec<u8> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
-pub enum BytesAffine {
+pub enum BytesAffine<T = Vec<u8>> {
     /// Bytes bound, could be either Included or Excluded
-    Bytes(Vec<u8>),
+    Bytes(T),
     /// Unbounded
     Unbounded,
 }
 
-impl BytesAffine {
+impl BytesAffine<Vec<u8>> {
     pub fn new_key(bytes: impl Into<Vec<u8>>) -> Self {
         Self::Bytes(bytes.into())
     }
 
-    pub fn new_unbounded() -> Self {
-        Self::Unbounded
-    }
-
-    pub fn to_ref<'a>(&'a self) -> BytesAffineRef<'a> {
+    pub fn to_slice_ref<'a>(&'a self) -> BytesAffine<&'a [u8]> {
         match self {
-            BytesAffine::Bytes(k) => BytesAffineRef::Bytes(k),
-            BytesAffine::Unbounded => BytesAffineRef::Unbounded,
+            BytesAffine::Bytes(k) => BytesAffine::Bytes(k),
+            BytesAffine::Unbounded => BytesAffine::Unbounded,
         }
     }
 }
 
-impl PartialOrd for BytesAffine {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        return self.to_ref().partial_cmp(&other.to_ref());
-    }
-}
-
-impl Ord for BytesAffine {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        return self.to_ref().cmp(&other.to_ref());
-    }
-}
-
-/// A Ref of a [`BytesAffine`]
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
-pub enum BytesAffineRef<'a> {
-    /// Bytes bound, could be either Included or Excluded
-    Bytes(&'a [u8]),
-    /// Unbounded
-    Unbounded,
-}
-
-impl<'a> BytesAffineRef<'a> {
-    pub fn new_key(bytes: &'a [u8]) -> Self {
-        Self::Bytes(bytes)
-    }
-
+impl<T> BytesAffine<T> {
     pub fn new_unbounded() -> Self {
         Self::Unbounded
     }
 
-    pub fn to_owned(&self) -> BytesAffine {
+    pub fn to_ref<'a>(&'a self) -> BytesAffine<&'a T> {
+        match self {
+            BytesAffine::Bytes(k) => BytesAffine::Bytes(k),
+            BytesAffine::Unbounded => BytesAffine::Unbounded,
+        }
+    }
+}
+
+impl<T: Clone> BytesAffine<&'_ [T]> {
+    pub fn to_owned(&self) -> BytesAffine<Vec<T>> {
         match self {
             Self::Bytes(k) => BytesAffine::Bytes(k.to_vec()),
             Self::Unbounded => BytesAffine::Unbounded,
@@ -104,24 +84,24 @@ impl<'a> BytesAffineRef<'a> {
     }
 }
 
-impl PartialOrd for BytesAffineRef<'_> {
+impl<T: PartialOrd> PartialOrd for BytesAffine<T> {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         match (self, other) {
-            (BytesAffineRef::Bytes(x), BytesAffineRef::Bytes(y)) => x.partial_cmp(y),
-            (BytesAffineRef::Bytes(_), BytesAffineRef::Unbounded) => Some(cmp::Ordering::Less),
-            (BytesAffineRef::Unbounded, BytesAffineRef::Bytes(_)) => Some(cmp::Ordering::Greater),
-            (BytesAffineRef::Unbounded, BytesAffineRef::Unbounded) => Some(cmp::Ordering::Equal),
+            (BytesAffine::Bytes(x), BytesAffine::Bytes(y)) => x.partial_cmp(y),
+            (BytesAffine::Bytes(_), BytesAffine::Unbounded) => Some(cmp::Ordering::Less),
+            (BytesAffine::Unbounded, BytesAffine::Bytes(_)) => Some(cmp::Ordering::Greater),
+            (BytesAffine::Unbounded, BytesAffine::Unbounded) => Some(cmp::Ordering::Equal),
         }
     }
 }
 
-impl Ord for BytesAffineRef<'_> {
+impl<T: Ord> Ord for BytesAffine<T> {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         match (self, other) {
-            (BytesAffineRef::Bytes(x), BytesAffineRef::Bytes(y)) => x.cmp(y),
-            (BytesAffineRef::Bytes(_), BytesAffineRef::Unbounded) => cmp::Ordering::Less,
-            (BytesAffineRef::Unbounded, BytesAffineRef::Bytes(_)) => cmp::Ordering::Greater,
-            (BytesAffineRef::Unbounded, BytesAffineRef::Unbounded) => cmp::Ordering::Equal,
+            (BytesAffine::Bytes(x), BytesAffine::Bytes(y)) => x.cmp(y),
+            (BytesAffine::Bytes(_), BytesAffine::Unbounded) => cmp::Ordering::Less,
+            (BytesAffine::Unbounded, BytesAffine::Bytes(_)) => cmp::Ordering::Greater,
+            (BytesAffine::Unbounded, BytesAffine::Unbounded) => cmp::Ordering::Equal,
         }
     }
 }
@@ -305,7 +285,9 @@ impl KeyRange {
     pub fn to_ref<'a>(&'a self) -> KeyRangeRef<'a> {
         match self {
             Self::OneKey(k) => KeyRangeRef::OneKey(k),
-            Self::Range(r) => KeyRangeRef::Range(Interval::new(r.low.to_ref(), r.high.to_ref())),
+            Self::Range(r) => {
+                KeyRangeRef::Range(Interval::new(r.low.to_slice_ref(), r.high.to_slice_ref()))
+            }
         }
     }
 }
@@ -420,7 +402,7 @@ pub enum KeyRangeRef<'a> {
     ///
     /// Note: The `low` of [`KeyRange::Range`] Interval must be Bytes, because a Interval `low`
     /// must less than `high`, but [`BytesAffine::Unbounded`] is always greater than any Bytes.
-    Range(Interval<BytesAffineRef<'a>>),
+    Range(Interval<BytesAffine<&'a [u8]>>),
 }
 
 impl<'a> KeyRangeRef<'a> {
@@ -436,10 +418,10 @@ impl<'a> KeyRangeRef<'a> {
     pub fn new_etcd(start: &'a [u8], end: &'a [u8]) -> Self {
         let range_end = match end {
             ONE_KEY => return Self::OneKey(start),
-            UNBOUNDED => BytesAffineRef::Unbounded,
-            _ => BytesAffineRef::Bytes(end),
+            UNBOUNDED => BytesAffine::Unbounded,
+            _ => BytesAffine::Bytes(end),
         };
-        let key = BytesAffineRef::Bytes(start); // `low` must be Bytes
+        let key = BytesAffine::Bytes(start); // `low` must be Bytes
         debug_assert!(
             key < range_end,
             "key `{key:?}` must be less than range_end `{range_end:?}`"
@@ -454,8 +436,7 @@ impl<'a> KeyRangeRef<'a> {
         match self {
             Self::OneKey(_) => false,
             Self::Range(r) => {
-                r.low == BytesAffineRef::Bytes(UNBOUNDED.into())
-                    && r.high == BytesAffineRef::Unbounded
+                r.low == BytesAffine::Bytes(UNBOUNDED.into()) && r.high == BytesAffine::Unbounded
             }
         }
     }
@@ -467,7 +448,7 @@ impl<'a> KeyRangeRef<'a> {
         match self {
             Self::OneKey(k) => *k == key,
             Self::Range(r) => {
-                let key_aff = BytesAffineRef::Bytes(key);
+                let key_aff = BytesAffine::Bytes(key);
                 r.low <= key_aff && key_aff < r.high
             }
         }
@@ -495,7 +476,10 @@ mod tests {
         assert!(BytesAffine::new_key("a") < BytesAffine::new_key("b"));
         assert!(BytesAffine::new_key("abcd") < BytesAffine::new_key("b"));
         assert!(BytesAffine::new_key("abcd") < BytesAffine::new_unbounded());
-        assert_eq!(BytesAffine::new_unbounded(), BytesAffine::new_unbounded());
+        assert_eq!(
+            BytesAffine::<Vec<u8>>::new_unbounded(),
+            BytesAffine::new_unbounded()
+        );
     }
 
     #[test]
