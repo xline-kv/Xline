@@ -125,7 +125,7 @@ pub(super) struct CurpNode<C: Command, CE: CommandExecutor<C>, RC: RoleChange> {
     /// `RawCurp` state machine
     curp: Arc<RawCurp<C, RC>>,
     /// Cmd watch board for tracking the cmd sync results
-    cmd_board: CmdBoardRef<C>,
+    cmd_board: CmdBoardRef,
     /// Storage
     storage: Arc<dyn StorageApi<Command = C>>,
     /// Snapshot allocator

@@ -136,7 +136,7 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     /// Current node is leader or not
     is_leader: bool,
     /// Cmd board for tracking the cmd sync results
-    cmd_board: CmdBoardRef<C>,
+    cmd_board: CmdBoardRef,
     /// Lease Manager
     lease_manager: LeaseManagerRef,
     /// Config
@@ -389,7 +389,7 @@ struct Context<C: Command, RC: RoleChange> {
     /// Client tls config
     client_tls_config: Option<ClientTlsConfig>,
     /// Cmd board for tracking the cmd sync results
-    cb: CmdBoardRef<C>,
+    cb: CmdBoardRef,
     /// The lease manager
     lm: LeaseManagerRef,
     /// Election tick
@@ -1287,7 +1287,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Get a reference to command board
-    pub(super) fn cmd_board(&self) -> CmdBoardRef<C> {
+    pub(super) fn cmd_board(&self) -> CmdBoardRef {
         Arc::clone(&self.ctx.cb)
     }
 
