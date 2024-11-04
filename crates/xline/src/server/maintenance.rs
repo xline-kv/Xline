@@ -276,7 +276,6 @@ mod test {
     use std::error::Error;
 
     use tempfile::TempDir;
-    
     use test_macros::abort_on_panic;
     use tokio_stream::StreamExt;
     use utils::config::EngineConfig;
