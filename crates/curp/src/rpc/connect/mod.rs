@@ -53,7 +53,8 @@ use super::{
     proto::commandpb::{ReadIndexRequest, ReadIndexResponse},
     reconnect::Reconnect,
     ChangeMembershipRequest, FetchMembershipRequest, MembershipResponse, OpResponse, RecordRequest,
-    RecordResponse, WaitLearnerRequest, WaitLearnerResponse,
+    RecordResponse, SyncSpecPoolRequest, SyncSpecPoolResponse, WaitLearnerRequest,
+    WaitLearnerResponse,
 };
 
 /// Install snapshot chunk size: 64KB
@@ -273,6 +274,13 @@ pub(crate) trait InnerConnectApi: Send + Sync + 'static {
 
     /// Send `TryBecomeLeaderNowRequest`
     async fn try_become_leader_now(&self, timeout: Duration) -> Result<(), tonic::Status>;
+
+    /// Send `SyncSpecPoolRequest`
+    async fn sync_spec_pool(
+        &self,
+        request: SyncSpecPoolRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<SyncSpecPoolResponse>, tonic::Status>;
 }
 
 /// Inner Connect Api Wrapper
@@ -615,6 +623,24 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         self.after_rpc(start_at, &result);
 
         result.map(|_| ())
+    }
+
+    async fn sync_spec_pool(
+        &self,
+        request: SyncSpecPoolRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<SyncSpecPoolResponse>, tonic::Status> {
+        #[cfg(feature = "client-metrics")]
+        let start_at = self.before_rpc::<SyncSpecPoolRequest>();
+
+        let mut client = self.rpc_connect.clone();
+        let req = tonic::Request::new(request);
+        let result = with_timeout!(timeout, client.sync_spec_pool(req));
+
+        #[cfg(feature = "client-metrics")]
+        self.after_rpc(start_at, &result);
+
+        result
     }
 }
 

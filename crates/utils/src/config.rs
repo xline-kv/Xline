@@ -387,6 +387,11 @@ pub struct CurpConfig {
     #[builder(default = "default_log_entries_cap()")]
     #[serde(default = "default_log_entries_cap")]
     pub log_entries_cap: usize,
+
+    /// Speculative Pool Sync Interval
+    #[builder(default = "default_spec_pool_sync_interval()")]
+    #[serde(with = "duration_format", default = "default_spec_pool_sync_interval")]
+    pub spec_pool_sync_interval: Duration,
 }
 
 /// default heartbeat interval
@@ -547,6 +552,13 @@ pub const fn default_watch_progress_notify_interval() -> Duration {
     Duration::from_secs(600)
 }
 
+/// default speculative pool sync interval
+#[must_use]
+#[inline]
+pub const fn default_spec_pool_sync_interval() -> Duration {
+    Duration::from_secs(1800)
+}
+
 impl Default for CurpConfig {
     #[inline]
     fn default() -> Self {
@@ -563,6 +575,7 @@ impl Default for CurpConfig {
             cmd_workers: default_cmd_workers(),
             gc_interval: default_gc_interval(),
             log_entries_cap: default_log_entries_cap(),
+            spec_pool_sync_interval: default_spec_pool_sync_interval(),
         }
     }
 }

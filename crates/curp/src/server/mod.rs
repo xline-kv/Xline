@@ -40,6 +40,8 @@ use crate::rpc::RecordRequest;
 use crate::rpc::RecordResponse;
 use crate::rpc::ShutdownRequest;
 use crate::rpc::ShutdownResponse;
+use crate::rpc::SyncSpecPoolRequest;
+use crate::rpc::SyncSpecPoolResponse;
 use crate::rpc::TriggerShutdownRequest;
 use crate::rpc::TriggerShutdownResponse;
 use crate::rpc::TryBecomeLeaderNowRequest;
@@ -251,6 +253,16 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::InnerProtoc
     ) -> Result<tonic::Response<TryBecomeLeaderNowResponse>, tonic::Status> {
         Ok(tonic::Response::new(
             self.inner.try_become_leader_now(request.get_ref()).await?,
+        ))
+    }
+
+    #[instrument(skip_all, name = "curp_sync_spec_pool")]
+    async fn sync_spec_pool(
+        &self,
+        request: tonic::Request<SyncSpecPoolRequest>,
+    ) -> Result<tonic::Response<SyncSpecPoolResponse>, tonic::Status> {
+        Ok(tonic::Response::new(
+            self.inner.sync_spec_pool(request.get_ref())?,
         ))
     }
 }

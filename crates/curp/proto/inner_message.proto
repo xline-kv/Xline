@@ -56,7 +56,7 @@ message TryBecomeLeaderNowResponse {}
 
 message SyncSpecPoolRequest {
     uint64 term = 1;
-    bytes sp_data = 2;
+    bytes ids = 2;
 }
 
 message SyncSpecPoolResponse {}

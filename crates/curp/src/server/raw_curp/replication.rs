@@ -1,6 +1,10 @@
+use std::collections::HashSet;
+
 use curp_external_api::{cmd::Command, role_change::RoleChange, LogIndex};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info};
+
+use crate::rpc::ProposeId;
 
 use super::{AppendEntries, RawCurp, SyncAction};
 
@@ -25,6 +29,10 @@ pub(crate) enum Action<C> {
     /// Step down the current node.
     /// Contains the latest term.
     StepDown(u64),
+
+    /// Request to get all speculative pool entries
+    /// Contains a sender to send the entries.
+    GetSpecPoolEntryIds(oneshot::Sender<HashSet<ProposeId>>),
 }
 
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
@@ -59,6 +67,14 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 );
                 info!("received greater term: {node_term}, stepping down.");
                 self.step_down(node_term);
+            }
+            Action::GetSpecPoolEntryIds(tx) => {
+                if tx
+                    .send(self.spec_pool().lock().all_ids().copied().collect())
+                    .is_err()
+                {
+                    error!("send spec pool entries failed");
+                }
             }
         }
     }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use curp_external_api::conflict::SpeculativePoolOp;
 
@@ -47,7 +47,6 @@ impl<C> SpeculativePool<C> {
         let _ignore = self.entries.remove(&entry.id);
     }
 
-    #[allow(unused)]
     /// Removes an entry from the pool by it's propose id
     pub(crate) fn remove_by_id(&mut self, id: &ProposeId) {
         if let Some(entry) = self.entries.remove(id) {
@@ -67,11 +66,31 @@ impl<C> SpeculativePool<C> {
         self.entries.values()
     }
 
+    /// Returns all entry refs in the pool
+    pub(crate) fn all_ids(&self) -> impl Iterator<Item = &ProposeId> {
+        self.entries.keys()
+    }
+
     /// Returns the number of entries in the pool
     #[allow(clippy::arithmetic_side_effects)] // Pool sizes can't overflow a `usize`
     pub(crate) fn len(&self) -> usize {
         self.command_sps
             .iter()
             .fold(0, |sum, pool| sum + pool.len())
+    }
+
+    /// Performs garbage collection on the spec pool with given entries from the leader
+    ///
+    /// Removes entries from the pool that are not present in the provided `leader_entries`
+    pub(crate) fn gc(&mut self, leader_entry_ids: &HashSet<ProposeId>) {
+        let to_remove: Vec<_> = self
+            .entries
+            .keys()
+            .filter(|id| !leader_entry_ids.contains(id))
+            .copied()
+            .collect();
+        for id in to_remove {
+            self.remove_by_id(&id);
+        }
     }
 }

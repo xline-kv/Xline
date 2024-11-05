@@ -17,8 +17,8 @@ use crate::{
         AppendEntriesRequest, AppendEntriesResponse, ChangeMembershipRequest, CurpError,
         FetchMembershipRequest, InstallSnapshotResponse, MembershipResponse, MoveLeaderRequest,
         MoveLeaderResponse, OpResponse, ProposeRequest, ReadIndexResponse, RecordRequest,
-        RecordResponse, ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
-        WaitLearnerRequest, WaitLearnerResponse,
+        RecordResponse, ShutdownRequest, ShutdownResponse, SyncSpecPoolRequest,
+        SyncSpecPoolResponse, VoteRequest, VoteResponse, WaitLearnerRequest, WaitLearnerResponse,
     },
     snapshot::Snapshot,
 };
@@ -130,6 +130,20 @@ impl InnerConnectApi for ConnectLazy<InnerProtocolClient<Channel>> {
         let mut inner = self.inner.lock().await;
         self.connect_inner(&mut inner);
         inner.as_ref().unwrap().try_become_leader_now(timeout).await
+    }
+
+    async fn sync_spec_pool(
+        &self,
+        request: SyncSpecPoolRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<SyncSpecPoolResponse>, tonic::Status> {
+        let mut inner = self.inner.lock().await;
+        self.connect_inner(&mut inner);
+        inner
+            .as_ref()
+            .unwrap()
+            .sync_spec_pool(request, timeout)
+            .await
     }
 }
 
