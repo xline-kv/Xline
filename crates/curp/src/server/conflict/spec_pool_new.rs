@@ -59,11 +59,12 @@ impl<C> SpeculativePool<C> {
 
     /// Returns all entries in the pool
     pub(crate) fn all(&self) -> Vec<PoolEntry<C>> {
-        let mut entries = Vec::new();
-        for csp in &self.command_sps {
-            entries.extend(csp.all().into_iter().map(Into::into));
-        }
-        entries
+        self.all_ref().map(PoolEntry::clone).collect()
+    }
+
+    /// Returns all entry refs in the pool
+    pub(crate) fn all_ref(&self) -> impl Iterator<Item = &PoolEntry<C>> {
+        self.entries.values()
     }
 
     /// Returns the number of entries in the pool
