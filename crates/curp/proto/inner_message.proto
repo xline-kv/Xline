@@ -54,6 +54,13 @@ message TryBecomeLeaderNowRequest {}
 
 message TryBecomeLeaderNowResponse {}
 
+message SyncSpecPoolRequest {
+    uint64 term = 1;
+    bytes sp_data = 2;
+}
+
+message SyncSpecPoolResponse {}
+
 service InnerProtocol {
     rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
     rpc Vote(VoteRequest) returns (VoteResponse);
@@ -62,4 +69,5 @@ service InnerProtocol {
     rpc TriggerShutdown(TriggerShutdownRequest)
         returns (TriggerShutdownResponse);
     rpc TryBecomeLeaderNow(TryBecomeLeaderNowRequest) returns (TryBecomeLeaderNowResponse);
+    rpc SyncSpecPool(SyncSpecPoolRequest) returns (SyncSpecPoolResponse);
 }
