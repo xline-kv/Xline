@@ -20,10 +20,14 @@ use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
 use tokio::net::TcpListener;
 use tokio_stream::StreamExt;
+use tonic::transport::Channel;
 use tracing_test::traced_test;
 use utils::config::ClientConfig;
 
-use crate::common::curp_group::{CurpGroup, DEFAULT_SHUTDOWN_TIMEOUT};
+use crate::common::curp_group::{
+    commandpb::{ProposeId, RecordRequest},
+    CurpGroup, ProposeRequest, ProtocolClient, DEFAULT_SHUTDOWN_TIMEOUT,
+};
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
@@ -864,4 +868,135 @@ fn assert_membership_response(
     let node_ids: BTreeSet<_> = resp.nodes.into_iter().map(|n| n.node_id).collect();
     let expect_node_ids: BTreeSet<_> = expect_node_ids.into_iter().collect();
     assert_eq!(node_ids, expect_node_ids);
+}
+
+async fn record_to_node(
+    connect: &mut ProtocolClient<Channel>,
+    propose_id: ProposeId,
+    command: Vec<u8>,
+) -> bool {
+    connect
+        .record(tonic::Request::new(RecordRequest {
+            propose_id: Some(propose_id),
+            command,
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+        .conflict
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn curp_server_spec_pool_gc_ok() {
+    init_logger();
+    // sets the initail sync interval to a relatively long duration
+    let group = CurpGroup::new_with_custom_sp_sync_interval(5, Duration::from_secs(1)).await;
+    let client = group.new_client().await;
+
+    let leader = client.fetch_leader_id(true).await.unwrap();
+    let follower_id = group.nodes.keys().find(|&id| &leader != id).unwrap();
+    let mut follower_connect = group.get_connect(follower_id).await;
+    let cmd0 = bincode::serialize(&TestCommand::new_put(vec![0], 0)).unwrap();
+
+    // record a command to a follower node
+    let conflict = record_to_node(
+        &mut follower_connect,
+        ProposeId {
+            client_id: 1,
+            seq_num: 0,
+        },
+        cmd0.clone(),
+    )
+    .await;
+    assert!(!conflict);
+
+    // on second record, it should return conflict
+    let conflict = record_to_node(
+        &mut follower_connect,
+        ProposeId {
+            client_id: 2,
+            seq_num: 0,
+        },
+        cmd0.clone(),
+    )
+    .await;
+    assert!(conflict);
+
+    // wait for the sync to complete
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // the follower should have removed the outdated entry from sp, and returns no conflict.
+    let conflict = record_to_node(
+        &mut follower_connect,
+        ProposeId {
+            client_id: 3,
+            seq_num: 0,
+        },
+        cmd0.clone(),
+    )
+    .await;
+    assert!(!conflict);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn curp_server_spec_pool_gc_should_not_remove_leader_entry() {
+    init_logger();
+    // sets the initail sync interval to a relatively long duration
+    let group = CurpGroup::new_with_custom_sp_sync_interval(5, Duration::from_secs(1)).await;
+    let client = group.new_client().await;
+
+    let leader = client.fetch_leader_id(true).await.unwrap();
+    let follower_id = group.nodes.keys().find(|&id| &leader != id).unwrap();
+    println!("leader: {leader}");
+    let mut leader_connect = group.get_connect(&leader).await;
+    let mut follower_connect = group.get_connect(follower_id).await;
+    let cmd = bincode::serialize(&TestCommand::new_put(vec![0], 0)).unwrap();
+
+    // record a command to a follower node and leader node
+    let conflict = record_to_node(
+        &mut follower_connect,
+        ProposeId {
+            client_id: 1,
+            seq_num: 0,
+        },
+        cmd.clone(),
+    )
+    .await;
+    assert!(!conflict);
+    record_to_node(
+        &mut leader_connect,
+        ProposeId {
+            client_id: 1,
+            seq_num: 0,
+        },
+        cmd.clone(),
+    )
+    .await;
+
+    // on second record, it should return conflict
+    let conflict = record_to_node(
+        &mut follower_connect,
+        ProposeId {
+            client_id: 2,
+            seq_num: 0,
+        },
+        cmd.clone(),
+    )
+    .await;
+    assert!(conflict);
+
+    // wait for the sync to complete
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // the follower should not remove the entry, and returns conflict
+    let conflict = record_to_node(
+        &mut follower_connect,
+        ProposeId {
+            client_id: 3,
+            seq_num: 0,
+        },
+        cmd.clone(),
+    )
+    .await;
+    assert!(conflict);
 }

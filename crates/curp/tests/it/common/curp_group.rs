@@ -108,6 +108,19 @@ impl CurpGroup {
         inner
     }
 
+    pub async fn new_with_custom_sp_sync_interval(n_nodes: usize, interval: Duration) -> Self {
+        let config = Arc::new(
+            CurpConfigBuilder::default()
+                .spec_pool_sync_interval(interval)
+                .build()
+                .unwrap(),
+        );
+        let configs = (0..n_nodes)
+            .map(|i| (format!("S{i}"), (Arc::clone(&config), Default::default())))
+            .collect();
+        Self::new_with_configs(configs, "S0".to_owned()).await
+    }
+
     async fn new_with_configs(
         configs: BTreeMap<String, (Arc<CurpConfig>, EngineConfig)>,
         leader_name: String,
