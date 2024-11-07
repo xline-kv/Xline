@@ -251,7 +251,7 @@ impl ClusterStateFull {
     /// Calculates the cluster version
     ///
     /// The cluster version is a hash of the current `Membership`
-    pub(crate) fn cluster_version(&self) -> u64 {
+    pub(crate) fn cluster_version(&self) -> Vec<u8> {
         self.membership.version()
     }
 

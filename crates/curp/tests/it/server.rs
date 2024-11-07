@@ -26,7 +26,7 @@ use utils::config::ClientConfig;
 
 use crate::common::curp_group::{
     commandpb::{ProposeId, RecordRequest},
-    CurpGroup, ProposeRequest, ProtocolClient, DEFAULT_SHUTDOWN_TIMEOUT,
+    CurpGroup, ProtocolClient, DEFAULT_SHUTDOWN_TIMEOUT,
 };
 
 #[tokio::test(flavor = "multi_thread")]

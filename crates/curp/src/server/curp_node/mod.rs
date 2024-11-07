@@ -151,7 +151,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         }
         self.curp.check_leader_transfer()?;
         self.curp.check_term(req.term)?;
-        self.curp.check_cluster_version(req.cluster_version)?;
+        self.curp.check_cluster_version(&req.cluster_version)?;
 
         if req.slow_path {
             resp_tx.set_conflict(true);

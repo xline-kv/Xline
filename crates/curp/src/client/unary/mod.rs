@@ -47,7 +47,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self, ctx: Context) -> Result<(), Self::Error> {
-        let req = ShutdownRequest::new(ctx.propose_id(), 0);
+        let req = ShutdownRequest::new(ctx.propose_id(), ctx.cluster_state().cluster_version());
         let timeout = self.config.wait_synced_timeout();
         let _resp = ctx
             .cluster_state()
@@ -59,7 +59,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
 
     /// Send move leader request
     async fn move_leader(&self, node_id: u64, ctx: Context) -> Result<(), Self::Error> {
-        let req = MoveLeaderRequest::new(node_id, 0);
+        let req = MoveLeaderRequest::new(node_id, ctx.cluster_state().cluster_version());
         let timeout = self.config.wait_synced_timeout();
         let _resp = ctx
             .cluster_state()

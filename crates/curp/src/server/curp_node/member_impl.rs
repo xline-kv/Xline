@@ -40,7 +40,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         request: ChangeMembershipRequest,
     ) -> Result<MembershipResponse, CurpError> {
-        self.curp.check_cluster_version(request.cluster_version)?;
+        self.curp.check_cluster_version(&request.cluster_version)?;
 
         let changes = request
             .changes

@@ -8,6 +8,7 @@ use std::iter;
 use curp_external_api::LogIndex;
 use serde::Deserialize;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::quorum::Joint;
 use crate::quorum::QuorumSet;
@@ -217,7 +218,7 @@ impl MembershipState {
     /// Calculates the cluster version
     ///
     /// The cluster version is a hash of the effective `Membership`
-    pub(crate) fn cluster_version(&self) -> u64 {
+    pub(crate) fn cluster_version(&self) -> Vec<u8> {
         self.effective().version()
     }
 
@@ -349,11 +350,12 @@ impl Membership {
     }
 
     /// Calculates the version of this membership
-    pub(crate) fn version(&self) -> u64 {
-        // TODO: handle conflict?
-        let mut hasher = DefaultHasher::new();
-        self.hash(&mut hasher);
-        hasher.finish()
+    pub(crate) fn version(&self) -> Vec<u8> {
+        let mut hasher = Sha256::new();
+        let data = serde_json::to_vec(self)
+            .unwrap_or_else(|_| unreachable!("failed to serialize membership"));
+        hasher.update(data);
+        hasher.finalize().to_vec()
     }
 }
 
