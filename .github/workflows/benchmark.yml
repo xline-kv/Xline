@@ -10,17 +10,6 @@ env:
 
 jobs:
   benchmark:
-    name: benchmark
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
-
-  call_build_xline:
     name: Build and Upload Artifacts
     uses: ./.github/workflows/build_xline.yml
     with:
