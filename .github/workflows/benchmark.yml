@@ -18,7 +18,7 @@ jobs:
           submodules: recursive
 
       - name: Setup sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.6
 
   call_build_xline:
     name: Build and Upload Artifacts
