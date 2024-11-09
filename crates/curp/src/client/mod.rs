@@ -8,14 +8,25 @@ mod metrics;
 /// Unary rpc client
 mod unary;
 
-/// Stream rpc client
-mod stream;
-
+#[allow(unused)]
 /// Retry layer
 mod retry;
 
-/// State for clients
-mod state;
+#[allow(unused)]
+/// State of the cluster
+mod cluster_state;
+
+#[allow(unused)]
+/// Client cluster fetch implementation
+mod fetch;
+
+#[allow(unused)]
+/// Config of the client
+mod config;
+
+#[allow(unused)]
+/// Lease keep alive implementation
+mod keep_alive;
 
 /// Tests for client
 #[cfg(test)]
@@ -29,7 +40,6 @@ use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, StreamExt};
 use parking_lot::RwLock;
-use tokio::task::JoinHandle;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::{debug, warn};
@@ -38,16 +48,23 @@ use utils::ClientTlsConfig;
 use utils::{build_endpoint, config::ClientConfig};
 
 use self::{
-    retry::{Retry, RetryConfig},
-    state::StateBuilder,
-    unary::{Unary, UnaryConfig},
+    cluster_state::{ClusterState, ClusterStateInit},
+    config::Config,
+    fetch::{ConnectToCluster, Fetch},
+    keep_alive::KeepAlive,
+    retry::{Context, Retry, RetryConfig},
+    unary::Unary,
 };
 use crate::{
     members::ServerId,
     rpc::{
-        protocol_client::ProtocolClient, ConfChange, FetchClusterRequest, FetchClusterResponse,
-        Member, ProposeId, Protocol, ReadState,
+        self,
+        connect::{BypassedConnect, ConnectApi},
+        protocol_client::ProtocolClient,
+        ConfChange, FetchClusterRequest, FetchClusterResponse, Member, ProposeId, Protocol,
+        ReadState,
     },
+    server::StreamingProtocol,
     tracker::Tracker,
 };
 
@@ -161,45 +178,51 @@ impl Drop for ProposeIdGuard<'_> {
 
 /// This trait override some unrepeatable methods in ClientApi, and a client with this trait will be able to retry.
 #[async_trait]
-trait RepeatableClientApi: ClientApi {
-    /// Generate a unique propose id during the retry process.
-    fn gen_propose_id(&self) -> Result<ProposeIdGuard<'_>, Self::Error>;
+trait RepeatableClientApi {
+    /// The client error
+    type Error;
+
+    /// The command type
+    type Cmd: Command;
 
     /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
     /// requests (event the requests are commutative).
     async fn propose(
         &self,
-        propose_id: ProposeId,
         cmd: &Self::Cmd,
         token: Option<&String>,
         use_fast_path: bool,
+        ctx: Context,
     ) -> Result<ProposeResponse<Self::Cmd>, Self::Error>;
 
     /// Send propose configuration changes to the cluster
     async fn propose_conf_change(
         &self,
-        propose_id: ProposeId,
         changes: Vec<ConfChange>,
+        ctx: Context,
     ) -> Result<Vec<Member>, Self::Error>;
 
     /// Send propose to shutdown cluster
-    async fn propose_shutdown(&self, id: ProposeId) -> Result<(), Self::Error>;
+    async fn propose_shutdown(&self, ctx: Context) -> Result<(), Self::Error>;
 
     /// Send propose to publish a node id and name
     async fn propose_publish(
         &self,
-        propose_id: ProposeId,
         node_id: ServerId,
         node_name: String,
         node_client_urls: Vec<String>,
+        ctx: Context,
     ) -> Result<(), Self::Error>;
-}
 
-/// Update leader state
-#[async_trait]
-trait LeaderStateUpdate {
-    /// update
-    async fn update_leader(&self, leader_id: Option<ServerId>, term: u64) -> bool;
+    /// Send move leader request
+    async fn move_leader(&self, node_id: u64, ctx: Context) -> Result<(), Self::Error>;
+
+    /// Send fetch read state from leader
+    async fn fetch_read_state(
+        &self,
+        cmd: &Self::Cmd,
+        ctx: Context,
+    ) -> Result<ReadState, Self::Error>;
 }
 
 /// Client builder to build a client
@@ -370,24 +393,6 @@ impl ClientBuilder {
             .ok_or(tonic::Status::unavailable("cluster not published"))
     }
 
-    /// Init state builder
-    fn init_state_builder(&self) -> StateBuilder {
-        let mut builder = StateBuilder::new(
-            self.all_members.clone().unwrap_or_else(|| {
-                unreachable!("must set the initial members or discover from some endpoints")
-            }),
-            self.tls_config.clone(),
-        );
-        if let Some(version) = self.cluster_version {
-            builder.set_cluster_version(version);
-        }
-        if let Some((id, term)) = self.leader_state {
-            builder.set_leader_state(id, term);
-        }
-        builder.set_is_raw_curp(self.is_raw_curp);
-        builder
-    }
-
     /// Init retry config
     fn init_retry_config(&self) -> RetryConfig {
         if *self.config.fixed_backoff() {
@@ -405,44 +410,48 @@ impl ClientBuilder {
     }
 
     /// Init unary config
-    fn init_unary_config(&self) -> UnaryConfig {
-        UnaryConfig::new(
+    fn init_config(&self, local_server_id: Option<ServerId>) -> Config {
+        Config::new(
+            local_server_id,
+            self.tls_config.clone(),
             *self.config.propose_timeout(),
             *self.config.wait_synced_timeout(),
+            self.is_raw_curp,
         )
     }
 
-    /// Spawn background tasks for the client
-    fn spawn_bg_tasks(&self, state: Arc<state::State>) -> JoinHandle<()> {
-        let interval = *self.config.keep_alive_interval();
-        tokio::spawn(async move {
-            let stream = stream::Streaming::new(state, stream::StreamingConfig::new(interval));
-            stream.keep_heartbeat().await;
-            debug!("keep heartbeat task shutdown");
-        })
+    /// Build connect to closure
+    fn build_connect_to(
+        &self,
+        bypassed: Option<(u64, Arc<dyn ConnectApi>)>,
+    ) -> impl ConnectToCluster {
+        let is_raw_curp = self.is_raw_curp;
+        let tls_config = self.tls_config.clone();
+        move |resp: &FetchClusterResponse| -> HashMap<u64, Arc<dyn ConnectApi>> {
+            let members = if is_raw_curp {
+                resp.clone().into_peer_urls()
+            } else {
+                resp.clone().into_client_urls()
+            };
+            members
+                .into_iter()
+                .map(|(id, addrs)| (id, rpc::connect(id, addrs, tls_config.clone())))
+                .chain(bypassed.clone())
+                .collect()
+        }
     }
 
-    /// Wait for client id
-    async fn wait_for_client_id(&self, state: Arc<state::State>) -> Result<(), tonic::Status> {
-        /// Max retry count for waiting for a client ID
-        ///
-        /// TODO: This retry count is set relatively high to avoid test cluster startup timeouts.
-        /// We should consider setting this to a more reasonable value.
-        const RETRY_COUNT: usize = 30;
-        /// The interval for each retry
-        const RETRY_INTERVAL: Duration = Duration::from_secs(1);
+    /// Connect to members
+    fn connect_members(&self, tls_config: Option<&ClientTlsConfig>) -> ClusterStateInit {
+        let all_members = self
+            .all_members
+            .clone()
+            .unwrap_or_else(|| unreachable!("requires members"));
+        let connects = rpc::connects(all_members, tls_config)
+            .map(|(_id, conn)| conn)
+            .collect();
 
-        for _ in 0..RETRY_COUNT {
-            if state.client_id() != 0 {
-                return Ok(());
-            }
-            debug!("waiting for client_id");
-            tokio::time::sleep(RETRY_INTERVAL).await;
-        }
-
-        Err(tonic::Status::deadline_exceeded(
-            "timeout waiting for client id",
-        ))
+        ClusterStateInit::new(connects)
     }
 
     /// Build the client
@@ -451,22 +460,25 @@ impl ClientBuilder {
     ///
     /// Return `tonic::transport::Error` for connection failure.
     #[inline]
-    pub async fn build<C: Command>(
+    pub fn build<C: Command>(
         &self,
     ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static, tonic::Status>
     {
-        let state = Arc::new(
-            self.init_state_builder()
-                .build()
-                .await
-                .map_err(|e| tonic::Status::internal(e.to_string()))?,
+        let config = self.init_config(None);
+        let keep_alive = KeepAlive::new(*self.config.keep_alive_interval());
+        let fetch = Fetch::new(
+            *self.config.wait_synced_timeout(),
+            self.build_connect_to(None),
         );
+        let cluster_state_init = self.connect_members(self.tls_config.as_ref());
         let client = Retry::new(
-            Unary::new(Arc::clone(&state), self.init_unary_config()),
+            Unary::new(config),
             self.init_retry_config(),
-            Some(self.spawn_bg_tasks(Arc::clone(&state))),
+            keep_alive,
+            fetch,
+            ClusterState::Init(cluster_state_init),
         );
-        self.wait_for_client_id(state).await?;
+
         Ok(client)
     }
 
@@ -477,57 +489,66 @@ impl ClientBuilder {
     ///
     /// Return `tonic::transport::Error` for connection failure.
     #[inline]
-    pub async fn build_with_client_id<C: Command>(
+    #[must_use]
+    pub fn build_with_client_id<C: Command>(
         &self,
-    ) -> Result<
-        (
-            impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static,
-            Arc<AtomicU64>,
-        ),
-        tonic::Status,
-    > {
-        let state = Arc::new(
-            self.init_state_builder()
-                .build()
-                .await
-                .map_err(|e| tonic::Status::internal(e.to_string()))?,
+    ) -> (
+        impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static,
+        Arc<AtomicU64>,
+    ) {
+        let config = self.init_config(None);
+        let keep_alive = KeepAlive::new(*self.config.keep_alive_interval());
+        let fetch = Fetch::new(
+            *self.config.wait_synced_timeout(),
+            self.build_connect_to(None),
         );
-
-        let client = Retry::new(
-            Unary::new(Arc::clone(&state), self.init_unary_config()),
+        let cluster_state_init = self.connect_members(self.tls_config.as_ref());
+        Retry::new_with_client_id(
+            Unary::new(config),
             self.init_retry_config(),
-            Some(self.spawn_bg_tasks(Arc::clone(&state))),
-        );
-        let client_id = state.clone_client_id();
-        self.wait_for_client_id(state).await?;
-
-        Ok((client, client_id))
+            keep_alive,
+            fetch,
+            ClusterState::Init(cluster_state_init),
+        )
     }
 }
 
-impl<P: Protocol> ClientBuilderWithBypass<P> {
+impl<P: Protocol + StreamingProtocol> ClientBuilderWithBypass<P> {
+    /// Build the state with local server
+    pub(super) fn bypassed_connect(
+        local_server_id: ServerId,
+        local_server: P,
+    ) -> (u64, Arc<dyn ConnectApi>) {
+        debug!("client bypassed server({local_server_id})");
+        let connect = BypassedConnect::new(local_server_id, local_server);
+        (local_server_id, Arc::new(connect))
+    }
+
     /// Build the client with local server
     ///
     /// # Errors
     ///
     /// Return `tonic::transport::Error` for connection failure.
     #[inline]
-    pub async fn build<C: Command>(
+    pub fn build<C: Command>(
         self,
     ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C>, tonic::Status> {
-        let state = self
-            .inner
-            .init_state_builder()
-            .build_bypassed::<P>(self.local_server_id, self.local_server)
-            .await
-            .map_err(|e| tonic::Status::internal(e.to_string()))?;
-        let state = Arc::new(state);
-        let client = Retry::new(
-            Unary::new(Arc::clone(&state), self.inner.init_unary_config()),
-            self.inner.init_retry_config(),
-            Some(self.inner.spawn_bg_tasks(Arc::clone(&state))),
+        let bypassed = Self::bypassed_connect(self.local_server_id, self.local_server);
+        let config = self.inner.init_config(Some(self.local_server_id));
+        let keep_alive = KeepAlive::new(*self.inner.config.keep_alive_interval());
+        let fetch = Fetch::new(
+            *self.inner.config.wait_synced_timeout(),
+            self.inner.build_connect_to(Some(bypassed)),
         );
-        self.inner.wait_for_client_id(state).await?;
+        let cluster_state_init = self.inner.connect_members(self.inner.tls_config.as_ref());
+        let client = Retry::new(
+            Unary::new(config),
+            self.inner.init_retry_config(),
+            keep_alive,
+            fetch,
+            ClusterState::Init(cluster_state_init),
+        );
+
         Ok(client)
     }
 }

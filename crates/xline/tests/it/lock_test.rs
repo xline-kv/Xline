@@ -1,4 +1,4 @@
-use std::{error::Error, time::Duration};
+use std::{error::Error, sync::Arc, time::Duration};
 
 use test_macros::abort_on_panic;
 use tokio::time::{sleep, Instant};
@@ -11,17 +11,20 @@ async fn test_lock() -> Result<(), Box<dyn Error>> {
     cluster.start().await;
     let client = cluster.client().await;
     let lock_client = client.lock_client();
+    let event = Arc::new(event_listener::Event::new());
 
     let lock_handle = tokio::spawn({
         let c = lock_client.clone();
+        let event = Arc::clone(&event);
         async move {
             let mut xutex = Xutex::new(c, "test", None, None).await.unwrap();
             let _lock = xutex.lock_unsafe().await.unwrap();
-            sleep(Duration::from_secs(3)).await;
+            let _notified = event.notify(1);
+            sleep(Duration::from_secs(2)).await;
         }
     });
 
-    sleep(Duration::from_secs(1)).await;
+    event.listen().await;
     let now = Instant::now();
 
     let mut xutex = Xutex::new(lock_client, "test", None, None).await?;

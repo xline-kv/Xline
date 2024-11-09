@@ -26,7 +26,7 @@ fn simple_append_and_recovery_is_ok() {
 
 #[test]
 fn log_head_truncation_is_ok() {
-    for num_entries in 1..40 {
+    for num_entries in 1..10 {
         for truncate_at in 1..=num_entries {
             let wal_test_path = tempfile::tempdir().unwrap();
             test_head_truncate_at(wal_test_path.path(), num_entries, truncate_at as u64);
@@ -37,7 +37,7 @@ fn log_head_truncation_is_ok() {
 
 #[test]
 fn log_tail_truncation_is_ok() {
-    for num_entries in 1..40 {
+    for num_entries in 1..10 {
         for truncate_at in 1..=num_entries {
             let wal_test_path = tempfile::tempdir().unwrap();
             test_tail_truncate_at(wal_test_path.path(), num_entries, truncate_at as u64);

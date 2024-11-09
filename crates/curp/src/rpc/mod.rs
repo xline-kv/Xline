@@ -67,6 +67,9 @@ mod metrics;
 pub(crate) mod connect;
 pub(crate) use connect::{connect, connects, inner_connects};
 
+/// Auto reconnect connection
+mod reconnect;
+
 // Skip for generated code
 #[allow(
     clippy::all,
@@ -601,6 +604,7 @@ impl PublishRequest {
     }
 }
 
+#[allow(unused)] // TODO: Use the error handling methods
 /// NOTICE:
 ///
 /// Please check test case `test_unary_fast_round_return_early_err`
@@ -679,7 +683,6 @@ impl CurpError {
     }
 
     /// Whether to abort slow round early
-    #[allow(unused)]
     pub(crate) fn should_abort_slow_round(&self) -> bool {
         matches!(
             *self,
