@@ -15,6 +15,7 @@ use parking_lot::RwLock;
 use tracing::warn;
 use utils::{barrier::IdBarrier, table_names::META_TABLE};
 use xlineapi::{
+    classifier::RequestClassifier,
     command::{Command, CurpClient, SyncResponse},
     execute_error::ExecuteError,
     AlarmAction, AlarmRequest, AlarmType,
@@ -22,7 +23,7 @@ use xlineapi::{
 
 use crate::{
     revision_number::RevisionNumberGeneratorState,
-    rpc::{RequestBackend, RequestWrapper},
+    rpc::RequestWrapper,
     storage::{
         db::{WriteOp, DB},
         index::IndexOperate,
@@ -315,22 +316,22 @@ impl CommandExecutor {
         I: IndexOperate,
     {
         let er = to_execute
-            .then(|| match wrapper.backend() {
-                RequestBackend::Auth => self.auth_storage.execute(wrapper),
-                RequestBackend::Lease => self.lease_storage.execute(wrapper),
-                RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
-                RequestBackend::Kv => unreachable!("Should not execute kv commands"),
+            .then(|| match wrapper {
+                x if x.is_auth_backend() => self.auth_storage.execute(wrapper),
+                x if x.is_lease_backend() => self.lease_storage.execute(wrapper),
+                x if x.is_alarm_backend() => Ok(self.alarm_storage.execute(wrapper)),
+                _ => unreachable!("Should not execute kv commands"),
             })
             .transpose()?;
 
-        let (asr, wr_ops) = match wrapper.backend() {
-            RequestBackend::Auth => self.auth_storage.after_sync(wrapper, auth_revision)?,
-            RequestBackend::Lease => {
+        let (asr, wr_ops) = match wrapper {
+            x if x.is_auth_backend() => self.auth_storage.after_sync(wrapper, auth_revision)?,
+            x if x.is_lease_backend() => {
                 self.lease_storage
                     .after_sync(wrapper, general_revision, txn_db, index)?
             }
-            RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, general_revision),
-            RequestBackend::Kv => unreachable!("Should not sync kv commands"),
+            x if x.is_alarm_backend() => self.alarm_storage.after_sync(wrapper, general_revision),
+            _ => unreachable!("Should not sync kv commands"),
         };
 
         txn_db.write_ops(wr_ops)?;
@@ -421,11 +422,12 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         let auth_info = cmd.auth_info();
         let wrapper = cmd.request();
         self.auth_storage.check_permission(wrapper, auth_info)?;
-        match wrapper.backend() {
-            RequestBackend::Kv => self.kv_storage.execute(wrapper, None),
-            RequestBackend::Auth => self.auth_storage.execute(wrapper),
-            RequestBackend::Lease => self.lease_storage.execute(wrapper),
-            RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
+        match &wrapper {
+            x if x.is_kv_backend() => self.kv_storage.execute(wrapper, None),
+            x if x.is_auth_backend() => self.auth_storage.execute(wrapper),
+            x if x.is_lease_backend() => self.lease_storage.execute(wrapper),
+            x if x.is_alarm_backend() => Ok(self.alarm_storage.execute(wrapper)),
+            _ => unreachable!("Must be one of kv, auth, lease, alarm"),
         }
     }
 
@@ -438,11 +440,12 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
     > {
         let er = self.execute(cmd)?;
         let wrapper = cmd.request();
-        let rev = match wrapper.backend() {
-            RequestBackend::Kv | RequestBackend::Lease | RequestBackend::Alarm => {
+        let rev = match wrapper {
+            x if x.is_auth_backend() => self.auth_storage.revision_gen().get(),
+            x if (x.is_kv_backend() || x.is_lease_backend() || x.is_alarm_backend()) => {
                 self.kv_storage.revision_gen().get()
             }
-            RequestBackend::Auth => self.auth_storage.revision_gen().get(),
+            _ => unreachable!("Must be one of kv, auth, lease, alarm"),
         };
         Ok((er, SyncResponse::new(rev)))
     }
@@ -484,15 +487,15 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         states.update_result(|c| {
             let (cmd, to_execute) = c.into_parts();
             let wrapper = cmd.request();
-            let (asr, er) = match wrapper.backend() {
-                RequestBackend::Kv => self.after_sync_kv(
+            let (asr, er) = match wrapper {
+                x if x.is_kv_backend() => self.after_sync_kv(
                     wrapper,
                     &txn_db,
                     &index_state,
                     &general_revision_state,
                     to_execute,
                 ),
-                RequestBackend::Auth | RequestBackend::Lease | RequestBackend::Alarm => self
+                x if x.is_auth_backend() || x.is_lease_backend() || x.is_alarm_backend() => self
                     .after_sync_others(
                         wrapper,
                         &txn_db,
@@ -501,6 +504,7 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
                         &auth_revision_state,
                         to_execute,
                     ),
+                _ => unreachable!("Must be one of kv, auth, lease, alarm"),
             }?;
 
             if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
