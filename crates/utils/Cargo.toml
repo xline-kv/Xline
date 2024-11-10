@@ -25,7 +25,9 @@ derive_builder = "0.20.0"
 event-listener = "5.3.1"
 futures = "0.3.30"
 getset = "0.1"
-interval_map = { version = "0.1", package = "rb-interval-map" }
+interval_map = { version = "0.1", package = "rb-interval-map", features = [
+  "serde",
+] }
 opentelemetry = { version = "0.24.0", features = ["trace"] }
 opentelemetry_sdk = { version = "0.24.1", features = ["trace"] }
 parking_lot = { version = "0.12.3", optional = true }

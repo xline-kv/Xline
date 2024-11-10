@@ -1,4 +1,4 @@
-use xlineapi::command::KeyRange;
+use xlineapi::keyrange::KeyRange;
 
 /// Range end options, indicates how to set `range_end` from a key.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
