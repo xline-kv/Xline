@@ -237,28 +237,35 @@ impl<Api> Retry<Api> {
         Ok(Context::new(propose_id, cluster_state))
     }
 
-    /// Updates the cluster state when error occurs.
-    fn update_cluster_state_on_error(&self, err: &CurpError) {
-        match *err {
-            // Some error that needs to update cluster state
-            CurpError::RpcTransport(())
-            | CurpError::WrongClusterVersion(())
-            | CurpError::Redirect(_) // FIXME: The redirect error needs to include full cluster state
-            | CurpError::Zombie(()) => {
-                self.cluster_state.errored();
+    /// Execute a future and update cluster state if an error is returned.
+    async fn with_error_handling<T, Fut>(&self, fut: Fut) -> Result<T, CurpError>
+    where
+        Fut: Future<Output = Result<T, CurpError>>,
+    {
+        let result = fut.await;
+        if let Err(ref err) = result {
+            match *err {
+                // Some error that needs to update cluster state
+                CurpError::RpcTransport(())
+                | CurpError::WrongClusterVersion(())
+                | CurpError::Redirect(_) // FIXME: The redirect error needs to include full cluster state
+                | CurpError::Zombie(()) => {
+                    self.cluster_state.errored();
+                }
+                CurpError::KeyConflict(())
+                | CurpError::Duplicated(())
+                | CurpError::ExpiredClientId(())
+                | CurpError::InvalidConfig(())
+                | CurpError::NodeNotExists(())
+                | CurpError::NodeAlreadyExists(())
+                | CurpError::LearnerNotCatchUp(())
+                | CurpError::ShuttingDown(())
+                | CurpError::Internal(_)
+                | CurpError::LeaderTransfer(_)
+                | CurpError::InvalidMemberChange(()) => {}
             }
-            CurpError::KeyConflict(())
-            | CurpError::Duplicated(())
-            | CurpError::ExpiredClientId(())
-            | CurpError::InvalidConfig(())
-            | CurpError::NodeNotExists(())
-            | CurpError::NodeAlreadyExists(())
-            | CurpError::LearnerNotCatchUp(())
-            | CurpError::ShuttingDown(())
-            | CurpError::Internal(_)
-            | CurpError::LeaderTransfer(_)
-            | CurpError::InvalidMemberChange(()) => {},
         }
+        result
     }
 }
 
@@ -318,15 +325,15 @@ where
         let mut backoff = self.retry_config.init_backoff();
         let mut last_err = None;
         while let Some(delay) = backoff.next_delay() {
-            let context = match self.get_context().await {
+            let context = match self.with_error_handling(self.get_context()).await {
                 Ok(x) => x,
                 Err(err) => {
+                    // TODO: refactor on_error like with_error_handling
                     self.on_error(err, delay, &mut last_err).await?;
                     continue;
                 }
             };
-            let result = f(&self.inner, context).await;
-            match result {
+            match f(&self.inner, context).await {
                 Ok(res) => return Ok(res),
                 Err(err) => self.on_error(err, delay, &mut last_err).await?,
             };
@@ -346,7 +353,6 @@ where
         last_err: &mut Option<CurpError>,
     ) -> Result<(), tonic::Status> {
         Self::early_return(&err)?;
-        self.update_cluster_state_on_error(&err);
 
         #[cfg(feature = "client-metrics")]
         super::metrics::get().client_retry_count.add(1, &[]);
@@ -405,15 +411,10 @@ where
     where
         F: Future<Output = Result<R, CurpError>>,
     {
-        let ctx = self.get_context().await.map_err(|err| {
-            self.update_cluster_state_on_error(&err);
-            err
-        })?;
-
-        f(&self.inner, ctx).await.map_err(|err| {
-            self.update_cluster_state_on_error(&err);
-            err.into()
-        })
+        let ctx = self.with_error_handling(self.get_context()).await?;
+        self.with_error_handling(f(&self.inner, ctx))
+            .await
+            .map_err(Into::into)
     }
 }
 
