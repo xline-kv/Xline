@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use curp_external_api::conflict::SpeculativePoolOp;
+use serde::{Deserialize, Serialize};
 
 use crate::rpc::{PoolEntry, ProposeId};
 
@@ -13,14 +14,17 @@ pub(crate) struct SpeculativePool<C> {
     command_sps: Vec<SpObject<C>>,
     /// propose id to entry mapping
     entries: HashMap<ProposeId, PoolEntry<C>>,
+    /// Current version
+    version: u64,
 }
 
 impl<C> SpeculativePool<C> {
     /// Creates a new pool
-    pub(crate) fn new(command_sps: Vec<SpObject<C>>) -> Self {
+    pub(crate) fn new(command_sps: Vec<SpObject<C>>, version: u64) -> Self {
         Self {
             command_sps,
             entries: HashMap::new(),
+            version,
         }
     }
 
@@ -92,5 +96,42 @@ impl<C> SpeculativePool<C> {
         for id in to_remove {
             self.remove_by_id(&id);
         }
+    }
+
+    /// Returns the current version
+    pub(crate) fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Updates the current version
+    pub(crate) fn update_version(&mut self, version: u64) {
+        debug_assert!(version > self.version, "invalid version: {version}");
+        self.version = version;
+    }
+}
+
+/// A Speculative Pool log entry
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SpecPoolRepl {
+    /// The version of this entry
+    version: u64,
+    /// Propose ids of the leader's speculative pool entries
+    ids: HashSet<ProposeId>,
+}
+
+impl SpecPoolRepl {
+    /// Creates a new `SpecPoolEntry`
+    pub(crate) fn new(version: u64, ids: HashSet<ProposeId>) -> Self {
+        Self { version, ids }
+    }
+
+    /// Returns the version of this entry
+    pub(crate) fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Returns the propose ids
+    pub(crate) fn ids(&self) -> &HashSet<ProposeId> {
+        &self.ids
     }
 }

@@ -12,10 +12,7 @@ use tracing::{debug, error, info, warn};
 use utils::config::CurpConfig;
 
 use crate::{
-    rpc::{
-        connect::InnerConnectApiWrapper, AppendEntriesResponse, InstallSnapshotResponse,
-        SyncSpecPoolRequest,
-    },
+    rpc::{connect::InnerConnectApiWrapper, AppendEntriesResponse, InstallSnapshotResponse},
     server::{
         metrics,
         raw_curp::{
@@ -78,22 +75,13 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 cfg,
             ))
         });
-        let spec_pool_sync_handles = node_states.into_iter().map(|(id, state)| {
-            let cfg = cfg.clone();
-            info!("spawning sync spec pool task for {id}");
-            tokio::spawn(Self::spec_pool_sync_worker(
-                id,
-                state,
-                action_tx.clone(),
-                self_id,
-                self_term,
-                cfg,
-            ))
-        });
+        let spec_pool_sync_handle =
+            tokio::spawn(Self::spec_pool_sync_worker(action_tx.clone(), cfg.clone()));
+
         *HANDLES.lock() = replication_handles
             .chain([state_handle])
             .chain([heartbeat_handle])
-            .chain(spec_pool_sync_handles)
+            .chain([spec_pool_sync_handle])
             .collect();
     }
 
@@ -235,7 +223,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                     Action::GetLogFrom(_)
                     | Action::StepDown(_)
                     | Action::GetCommitIndex(_)
-                    | Action::GetSpecPoolEntryIds(_) => {}
+                    | Action::ReplicateSpecPoolSync => {}
                 }
                 let __ignore = action_tx.send(action);
             }
@@ -324,60 +312,17 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     }
 
     /// A worker responsible for sync speculative pool to followers in the cluster
-    async fn spec_pool_sync_worker(
-        node_id: u64,
-        node_state: NodeState,
-        action_tx: flume::Sender<Action<C>>,
-        self_id: u64,
-        self_term: u64,
-        cfg: CurpConfig,
-    ) {
-        let rpc_timeout = cfg.rpc_timeout;
+    async fn spec_pool_sync_worker(action_tx: flume::Sender<Action<C>>, cfg: CurpConfig) {
         let sync_interval = cfg.spec_pool_sync_interval;
-        let connect = node_state.connect();
 
         loop {
             tokio::time::sleep(sync_interval).await;
-            let (tx, rx) = oneshot::channel();
-            if action_tx.send(Action::GetSpecPoolEntryIds(tx)).is_err() {
+            if action_tx.send(Action::ReplicateSpecPoolSync).is_err() {
                 debug!(
                     "action_rx closed because the leader stepped down, exiting spec pool sync worker"
                 );
                 break;
             }
-            let entries = match rx.await {
-                Ok(x) => x,
-                Err(err) => {
-                    error!("channel unexpectedly closed: {err}");
-                    return;
-                }
-            };
-            let ids = bincode::serialize(&entries)
-                .unwrap_or_else(|err| unreachable!("serialize failed: {err}"));
-            Self::send_sync_spec_pool(connect, rpc_timeout, node_id, self_id, self_term, ids).await;
         }
-    }
-
-    /// Send `sync_spec_pool` request
-    async fn send_sync_spec_pool(
-        connect: &InnerConnectApiWrapper,
-        timeout: Duration,
-        node_id: u64,
-        self_id: u64,
-        self_term: u64,
-        ids_serialized: Vec<u8>,
-    ) {
-        debug!("{self_id} send append_entries to {node_id}");
-
-        let _ignore = connect
-            .sync_spec_pool(
-                SyncSpecPoolRequest {
-                    term: self_term,
-                    ids: ids_serialized,
-                },
-                timeout,
-            )
-            .await
-            .map_err(|err| warn!("sync spec pool to {node_id} failed, {err:?}"));
     }
 }

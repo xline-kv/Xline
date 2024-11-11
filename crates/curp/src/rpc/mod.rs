@@ -170,7 +170,11 @@ impl ProposeRequest {
 
 impl ProposeResponse {
     /// Create an ok propose response
-    pub(crate) fn new_result<C: Command>(result: &Result<C::ER, C::Error>, conflict: bool) -> Self {
+    pub(crate) fn new_result<C: Command>(
+        result: &Result<C::ER, C::Error>,
+        conflict: bool,
+        sp_version: u64,
+    ) -> Self {
         let result = match *result {
             Ok(ref er) => Some(CmdResult {
                 result: Some(CmdResultInner::Ok(er.encode())),
@@ -179,7 +183,11 @@ impl ProposeResponse {
                 result: Some(CmdResultInner::Error(e.encode())),
             }),
         };
-        Self { result, conflict }
+        Self {
+            result,
+            conflict,
+            sp_version,
+        }
     }
 
     /// Create an empty propose response
@@ -188,6 +196,7 @@ impl ProposeResponse {
         Self {
             result: None,
             conflict: false,
+            sp_version: 0,
         }
     }
 

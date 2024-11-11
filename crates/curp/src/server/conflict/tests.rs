@@ -105,7 +105,7 @@ impl UncommittedPoolOp for TestUcp {
 
 #[test]
 fn conflict_should_be_detected_in_sp() {
-    let mut sp = SpeculativePool::new(vec![Box::new(TestSp::default())]);
+    let mut sp = SpeculativePool::new(vec![Box::new(TestSp::default())], 0);
     let entry1 = PoolEntry::new(ProposeId::default(), Arc::new(0));
     let entry2 = PoolEntry::new(ProposeId::default(), Arc::new(1));
     assert!(sp.insert(entry1.clone()).is_none());
@@ -117,7 +117,7 @@ fn conflict_should_be_detected_in_sp() {
 
 #[test]
 fn sp_should_returns_all_entries() {
-    let mut sp = SpeculativePool::new(vec![Box::new(TestSp::default())]);
+    let mut sp = SpeculativePool::new(vec![Box::new(TestSp::default())], 0);
     let entries: Vec<_> = (0..10)
         .map(|i| PoolEntry::new(ProposeId::default(), Arc::new(i)))
         .collect();

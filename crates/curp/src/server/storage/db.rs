@@ -16,6 +16,8 @@ const VOTE_FOR: &[u8] = b"VoteFor";
 const CF: &str = "curp";
 /// Column family name for members
 const MEMBERS_CF: &str = "members";
+/// Speculative pool version
+const SP_VER: &[u8] = b"SPVer";
 
 /// The sub dir for `RocksDB` files
 const ROCKSDB_SUB_DIR: &str = "rocksdb";
@@ -70,7 +72,17 @@ impl<C: Command> StorageApi for DB<C> {
             .get(CF, VOTE_FOR)?
             .map(|bytes| bincode::deserialize::<(u64, ServerId)>(&bytes))
             .transpose()?;
-        Ok((voted_for, entries))
+        let sp_version = self
+            .db
+            .get(CF, SP_VER)?
+            .map(|bytes| {
+                bytes
+                    .try_into()
+                    .unwrap_or_else(|_| unreachable!("should be exactly 8 bytes"))
+            })
+            // default to 0
+            .map_or(0, u64::from_le_bytes);
+        Ok((voted_for, entries, sp_version))
     }
 
     #[inline]
@@ -153,7 +165,7 @@ mod tests {
         let storage_cfg = EngineConfig::RocksDB(db_dir.clone());
         {
             let s = DB::<TestCommand>::open(&storage_cfg)?;
-            let (voted_for, entries) = s.recover()?;
+            let (voted_for, entries, _) = s.recover()?;
             assert!(voted_for.is_none());
             assert!(entries.is_empty());
             s.flush_voted_for(1, 222)?;
@@ -169,7 +181,7 @@ mod tests {
 
         {
             let s = DB::<TestCommand>::open(&storage_cfg)?;
-            let (voted_for, entries) = s.recover()?;
+            let (voted_for, entries, _) = s.recover()?;
             assert_eq!(voted_for, Some((3, 111)));
             assert_eq!(entries[0].index, 1);
             assert_eq!(entries[1].index, 2);

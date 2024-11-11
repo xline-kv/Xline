@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap},
+    collections::{hash_map::DefaultHasher, HashMap, HashSet},
     hash::{Hash, Hasher},
     sync::Arc,
 };
@@ -222,6 +222,51 @@ impl ClusterStateFull {
         false
     }
 
+    /// Execute an operation on each follower, until a quorum is reached.
+    pub(crate) async fn for_each_follower_with_expect<
+        Fut: Future<Output = R>,
+        R,
+        B,
+        T,
+        FilterMap,
+        Folder,
+        Expect,
+    >(
+        self,
+        mut f: impl FnMut(Arc<dyn ConnectApi>) -> Fut,
+        mut filter: FilterMap,
+        mut folder: Folder,
+        mut b: B,
+        mut expect: Expect,
+    ) -> Option<B>
+    where
+        FilterMap: FnMut(R) -> Option<T>,
+        Folder: FnMut((&mut Vec<u64>, B), (u64, T)) -> B,
+        Expect: FnMut(&dyn QuorumSet<Vec<u64>>, Vec<u64>) -> bool,
+    {
+        let qs = self.membership.as_joint();
+        let leader_id = self.leader_id();
+
+        #[allow(clippy::pattern_type_mismatch)]
+        let stream: FuturesUnordered<_> = self
+            .member_connects()
+            .filter(|(id, _)| *id != leader_id)
+            .map(|(id, conn)| f(Arc::clone(conn)).map(move |r| (id, r)))
+            .collect();
+        let mut filtered =
+            stream.filter_map(|(id, r)| futures::future::ready(filter(r).map(|t| (id, t))));
+
+        let mut ids = vec![];
+        while let Some(x) = filtered.next().await {
+            b = folder((&mut ids, b), x);
+            if expect(&qs, ids.clone().into_iter().chain([leader_id]).collect()) {
+                return Some(b);
+            }
+        }
+
+        None
+    }
+
     /// Gets member connects
     fn member_connects(&self) -> impl Iterator<Item = (u64, &Arc<dyn ConnectApi>)> {
         self.membership
@@ -283,12 +328,18 @@ mod test {
             match id {
                 0 => {
                     conn.expect_record().returning(|_req, _timeout| {
-                        Ok(Response::new(RecordResponse { conflict: true }))
+                        Ok(Response::new(RecordResponse {
+                            conflict: true,
+                            sp_version: 0,
+                        }))
                     });
                 }
                 1 | 2 | 3 | 4 => {
                     conn.expect_record().returning(|_req, _timeout| {
-                        Ok(Response::new(RecordResponse { conflict: false }))
+                        Ok(Response::new(RecordResponse {
+                            conflict: false,
+                            sp_version: 0,
+                        }))
                     });
                 }
                 _ => unreachable!("there are only 5 nodes"),
@@ -314,12 +365,18 @@ mod test {
             match id {
                 2 => {
                     conn.expect_record().returning(|_req, _timeout| {
-                        Ok(Response::new(RecordResponse { conflict: true }))
+                        Ok(Response::new(RecordResponse {
+                            conflict: true,
+                            sp_version: 0,
+                        }))
                     });
                 }
                 0 | 1 | 3 | 4 => {
                     conn.expect_record().returning(|_req, _timeout| {
-                        Ok(Response::new(RecordResponse { conflict: false }))
+                        Ok(Response::new(RecordResponse {
+                            conflict: false,
+                            sp_version: 0,
+                        }))
                     });
                 }
                 _ => unreachable!("there are only 5 nodes"),
@@ -348,12 +405,18 @@ mod test {
             match id {
                 0 => {
                     conn.expect_record().returning(|_req, _timeout| {
-                        Ok(Response::new(RecordResponse { conflict: true }))
+                        Ok(Response::new(RecordResponse {
+                            conflict: true,
+                            sp_version: 0,
+                        }))
                     });
                 }
                 1 | 2 | 3 | 4 => {
                     conn.expect_record().returning(|_req, _timeout| {
-                        Ok(Response::new(RecordResponse { conflict: false }))
+                        Ok(Response::new(RecordResponse {
+                            conflict: false,
+                            sp_version: 0,
+                        }))
                     });
                 }
                 _ => unreachable!("there are only 5 nodes"),
@@ -386,12 +449,18 @@ mod test {
             match id {
                 0 | 1 => {
                     conn.expect_record().returning(|_req, _timeout| {
-                        Ok(Response::new(RecordResponse { conflict: false }))
+                        Ok(Response::new(RecordResponse {
+                            conflict: false,
+                            sp_version: 0,
+                        }))
                     });
                 }
                 2 | 3 | 4 => {
                     conn.expect_record().returning(|_req, _timeout| {
-                        Ok(Response::new(RecordResponse { conflict: true }))
+                        Ok(Response::new(RecordResponse {
+                            conflict: true,
+                            sp_version: 0,
+                        }))
                     });
                 }
                 _ => unreachable!("there are only 5 nodes"),
@@ -423,7 +492,10 @@ mod test {
             match id {
                 0 | 1 | 2 | 3 | 4 => {
                     conn.expect_record().returning(|_req, _timeout| {
-                        Ok(Response::new(RecordResponse { conflict: false }))
+                        Ok(Response::new(RecordResponse {
+                            conflict: false,
+                            sp_version: 0,
+                        }))
                     });
                 }
                 _ => unreachable!("there are only 5 nodes"),
@@ -448,7 +520,10 @@ mod test {
             match id {
                 0 | 1 | 2 | 3 | 4 => {
                     conn.expect_record().returning(|_req, _timeout| {
-                        Ok(Response::new(RecordResponse { conflict: false }))
+                        Ok(Response::new(RecordResponse {
+                            conflict: false,
+                            sp_version: 0,
+                        }))
                     });
                 }
                 _ => unreachable!("there are only 5 nodes"),

@@ -550,23 +550,27 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Handles record
-    pub(super) fn follower_record(&self, propose_id: ProposeId, cmd: &Arc<C>) -> bool {
-        let conflict = self
-            .ctx
-            .spec_pool
-            .lock()
-            .insert(PoolEntry::new(propose_id, Arc::clone(cmd)))
-            .is_some();
+    pub(super) fn follower_record(&self, propose_id: ProposeId, cmd: &Arc<C>) -> (bool, u64) {
+        let (conflict, version) = self.ctx.spec_pool.map_lock(|mut sp| {
+            (
+                sp.insert(PoolEntry::new(propose_id, Arc::clone(cmd)))
+                    .is_some(),
+                sp.version(),
+            )
+        });
         if conflict {
             metrics::get()
                 .proposals_failed
                 .add(1, &[KeyValue::new("reason", "follower key conflict")]);
         }
-        conflict
+        (conflict, version)
     }
 
     /// Handles record
-    pub(super) fn leader_record(&self, entries: impl Iterator<Item = PoolEntry<C>>) -> Vec<bool> {
+    pub(super) fn leader_record(
+        &self,
+        entries: impl Iterator<Item = PoolEntry<C>>,
+    ) -> (Vec<bool>, u64) {
         let mut sp_l = self.ctx.spec_pool.lock();
         let mut ucp_l = self.ctx.uncommitted_pool.lock();
         let mut conflicts = Vec::new();
@@ -579,7 +583,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             conflicts.iter().filter(|c| **c).count().numeric_cast(),
             &[KeyValue::new("reason", "leader key conflict")],
         );
-        conflicts
+        (conflicts, sp_l.version())
     }
 
     /// Push one log, called by the leader
@@ -1614,7 +1618,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 EntryData::Command(ref cmd) => {
                     let _ignore = ucp_l.insert(&PoolEntry::new(propose_id, Arc::clone(cmd)));
                 }
-                EntryData::Shutdown | EntryData::Empty | EntryData::Member(_) => {}
+                EntryData::Shutdown
+                | EntryData::Empty
+                | EntryData::Member(_)
+                | EntryData::SpecPoolReplication(_) => {}
             }
         }
     }

@@ -2,6 +2,7 @@ use std::{pin::Pin, sync::Arc};
 
 use curp_external_api::cmd::Command;
 use futures::{future, stream, FutureExt, Stream, StreamExt};
+use tonic::Response;
 
 use crate::{
     client::{connect::ProposeResponse, retry::Context},
@@ -22,6 +23,8 @@ enum ProposeEvent<C: Command> {
         conflict_l: bool,
         /// Speculative execution result
         er: Result<C::ER, C::Error>,
+        /// Speculative pool version
+        sp_version_l: u64,
     },
     /// After sync result
     AfterSync {
@@ -30,8 +33,8 @@ enum ProposeEvent<C: Command> {
     },
     /// Record result
     Record {
-        /// conflict returned by the follower
-        conflict: bool,
+        /// Speculative pool version
+        sp_version: Option<u64>,
     },
 }
 
@@ -55,9 +58,24 @@ impl<C: Command> Unary<C> {
             | (ProposeEvent::AfterSync { asr }, ProposeEvent::SpecExec { er, .. }) => {
                 Ok(Self::combine_er_asr(er, asr))
             }
-            (ProposeEvent::SpecExec { conflict_l, er }, ProposeEvent::Record { conflict })
-            | (ProposeEvent::Record { conflict }, ProposeEvent::SpecExec { conflict_l, er }) => {
-                let require_asr = !use_fast_path || conflict | conflict_l;
+            (
+                ProposeEvent::SpecExec {
+                    conflict_l,
+                    er,
+                    sp_version_l,
+                },
+                ProposeEvent::Record { sp_version },
+            )
+            | (
+                ProposeEvent::Record { sp_version },
+                ProposeEvent::SpecExec {
+                    conflict_l,
+                    er,
+                    sp_version_l,
+                },
+            ) => {
+                let require_asr =
+                    !use_fast_path || conflict_l || sp_version.map_or(true, |v| v != sp_version_l);
                 Self::with_spec_exec(stream, er, require_asr).await
             }
             (ProposeEvent::AfterSync { asr }, ProposeEvent::Record { .. })
@@ -89,7 +107,7 @@ impl<C: Command> Unary<C> {
         if use_fast_path {
             let event = Self::next_event(&mut stream_pinned).await?;
             match event {
-                ProposeEvent::SpecExec { conflict_l, er } => {
+                ProposeEvent::SpecExec { conflict_l, er, .. } => {
                     Self::with_spec_exec(stream_pinned, er, conflict_l).await
                 }
                 ProposeEvent::AfterSync { asr } => Self::with_after_sync(stream_pinned, asr).await,
@@ -179,17 +197,31 @@ impl<C: Command> Unary<C> {
         let record_req = RecordRequest::new::<C>(ctx.propose_id(), cmd);
         let record = move |conn: Arc<dyn ConnectApi>| {
             let record_req_c = record_req.clone();
-            async move { conn.record(record_req_c, timeout).await }
+            async move {
+                conn.record(record_req_c, timeout)
+                    .await
+                    .map(Response::into_inner)
+            }
         };
 
         let stream = ctx
             .cluster_state()
-            .for_each_follower_with_quorum(
+            .for_each_follower_with_expect(
                 record,
-                |res| res.is_ok_and(|resp| !resp.get_ref().conflict),
-                |qs, ids| QuorumSet::is_super_quorum(qs, ids),
+                |res| res.ok().filter(|r| !r.conflict).map(|r| r.sp_version),
+                |(ids, latest), (id, sp_version)| {
+                    if sp_version > latest {
+                        ids.clear();
+                        ids.push(id);
+                        sp_version
+                    } else {
+                        latest
+                    }
+                },
+                0,
+                |qs, ids| qs.is_super_quorum(ids),
             )
-            .map(move |ok| ProposeEvent::Record { conflict: !ok })
+            .map(move |ok| ProposeEvent::Record { sp_version: ok })
             .map(Ok)
             .into_stream();
 
@@ -202,7 +234,7 @@ impl<C: Command> Unary<C> {
     #[allow(clippy::type_complexity)] // copied from the return value of `ConnectApi::propose_stream`
     fn flatten_propose_stream_result(
         result: Result<
-            tonic::Response<Box<dyn Stream<Item = Result<OpResponse, tonic::Status>> + Send>>,
+            Response<Box<dyn Stream<Item = Result<OpResponse, tonic::Status>> + Send>>,
             CurpError,
         >,
     ) -> EventStream<'static, C> {
@@ -274,6 +306,7 @@ impl<C: Command> From<OpResponse> for ProposeEvent<C> {
         match resp.op.expect("op should always exist") {
             ResponseOp::Propose(resp) => Self::SpecExec {
                 conflict_l: resp.conflict,
+                sp_version_l: resp.sp_version,
                 er: resp
                     .map_result::<C, _, _>(Result::transpose)
                     .ok()

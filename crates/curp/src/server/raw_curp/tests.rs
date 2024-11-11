@@ -46,9 +46,10 @@ impl RawCurp<TestCommand, TestRoleChange> {
         let curp_storage = Arc::new(DB::open(&curp_config.engine_cfg).unwrap());
         let _ignore = curp_storage.recover().unwrap();
 
-        let sp = Arc::new(Mutex::new(SpeculativePool::new(vec![Box::new(
-            TestSpecPool::default(),
-        )])));
+        let sp = Arc::new(Mutex::new(SpeculativePool::new(
+            vec![Box::new(TestSpecPool::default())],
+            0,
+        )));
         let ucp = Arc::new(Mutex::new(UncommittedPool::new(vec![Box::new(
             TestUncomPool::default(),
         )])));

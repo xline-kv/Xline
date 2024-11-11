@@ -55,7 +55,8 @@ impl ResponseSender {
 
     /// Sends the error result
     pub(super) fn send_err<C: Command>(&self, err: C::Error) {
-        let er = ProposeResponse::new_result::<C>(&Err(err.clone()), false);
+        // An error does not need `sp_version`
+        let er = ProposeResponse::new_result::<C>(&Err(err.clone()), false, 0);
         let asr = SyncedResponse::new_result::<C>(&Err(err));
         self.send_propose(er);
         self.send_synced(asr);

@@ -69,6 +69,7 @@ fn build_propose_response(conflict: bool) -> OpResponse {
     let resp = ResponseOp::Propose(ProposeResponse::new_result::<TestCommand>(
         &Ok(TestCommandResult::default()),
         conflict,
+        0,
     ));
     OpResponse { op: Some(resp) }
 }
@@ -139,8 +140,14 @@ async fn test_unary_propose_fast_path_works() {
         conn.expect_record().return_once(move |_req, _timeout| {
             let resp = match id {
                 0 => unreachable!("leader should not receive record request"),
-                1 | 2 | 3 => RecordResponse { conflict: false },
-                4 => RecordResponse { conflict: true },
+                1 | 2 | 3 => RecordResponse {
+                    conflict: false,
+                    sp_version: 0,
+                },
+                4 => RecordResponse {
+                    conflict: true,
+                    sp_version: 0,
+                },
                 _ => unreachable!("there are only 5 nodes"),
             };
             Ok(tonic::Response::new(resp))
@@ -174,8 +181,14 @@ async fn test_unary_propose_slow_path_works() {
         conn.expect_record().return_once(move |_req, _timeout| {
             let resp = match id {
                 0 => unreachable!("leader should not receive record request"),
-                1 | 2 | 3 => RecordResponse { conflict: false },
-                4 => RecordResponse { conflict: true },
+                1 | 2 | 3 => RecordResponse {
+                    conflict: false,
+                    sp_version: 0,
+                },
+                4 => RecordResponse {
+                    conflict: true,
+                    sp_version: 0,
+                },
                 _ => unreachable!("there are only 5 nodes"),
             };
             Ok(tonic::Response::new(resp))
@@ -220,8 +233,14 @@ async fn test_unary_propose_fast_path_fallback_slow_path() {
         conn.expect_record().return_once(move |_req, _timeout| {
             let resp = match id {
                 0 => unreachable!("leader should not receive record request"),
-                1 | 2 => RecordResponse { conflict: false },
-                3 | 4 => RecordResponse { conflict: true },
+                1 | 2 => RecordResponse {
+                    conflict: false,
+                    sp_version: 0,
+                },
+                3 | 4 => RecordResponse {
+                    conflict: true,
+                    sp_version: 0,
+                },
                 _ => unreachable!("there are only 5 nodes"),
             };
             Ok(tonic::Response::new(resp))

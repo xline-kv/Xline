@@ -1,10 +1,8 @@
-use std::collections::HashSet;
-
 use curp_external_api::{cmd::Command, role_change::RoleChange, LogIndex};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info};
 
-use crate::rpc::ProposeId;
+use crate::{rpc::ProposeId, server::conflict::spec_pool_new::SpecPoolRepl};
 
 use super::{AppendEntries, RawCurp, SyncAction};
 
@@ -30,9 +28,8 @@ pub(crate) enum Action<C> {
     /// Contains the latest term.
     StepDown(u64),
 
-    /// Request to get all speculative pool entries
-    /// Contains a sender to send the entries.
-    GetSpecPoolEntryIds(oneshot::Sender<HashSet<ProposeId>>),
+    /// Request to replicate speculative pool entries
+    ReplicateSpecPoolSync,
 }
 
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
@@ -68,13 +65,13 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 info!("received greater term: {node_term}, stepping down.");
                 self.step_down(node_term);
             }
-            Action::GetSpecPoolEntryIds(tx) => {
-                if tx
-                    .send(self.spec_pool().lock().all_ids().copied().collect())
-                    .is_err()
-                {
-                    error!("send spec pool entries failed");
-                }
+            Action::ReplicateSpecPoolSync => {
+                let sp_l = self.ctx.spec_pool.lock();
+                let ids = sp_l.all_ids().copied().collect();
+                let next_version = sp_l.version().wrapping_add(1);
+                let entry = SpecPoolRepl::new(next_version, ids);
+                let propose_id = ProposeId(rand::random(), 0);
+                let _ignore = self.push_log_entry(propose_id, entry);
             }
         }
     }

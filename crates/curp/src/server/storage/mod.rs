@@ -35,8 +35,10 @@ impl From<prost::DecodeError> for StorageError {
 
 /// Vote info
 pub(crate) type VoteInfo = (u64, ServerId);
+/// Speculative pool version
+pub(crate) type SpVersion = u64;
 /// Recovered data
-pub(crate) type RecoverData<C> = (Option<VoteInfo>, Vec<LogEntry<C>>);
+pub(crate) type RecoverData<C> = (Option<VoteInfo>, Vec<LogEntry<C>>, SpVersion);
 
 /// Curp storage api
 #[allow(clippy::module_name_repetitions)]

@@ -4,6 +4,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::member::Membership;
+use crate::server::conflict::spec_pool_new::SpecPoolRepl;
 
 #[allow(variant_size_differences)] // The `Membership` won't be too large
 /// Entry data of a `LogEntry`
@@ -18,6 +19,8 @@ pub(crate) enum EntryData<C> {
     Shutdown,
     /// `Member` entry
     Member(Membership),
+    /// Speculative pool replication entry
+    SpecPoolReplication(SpecPoolRepl),
 }
 
 impl<C> From<Arc<C>> for EntryData<C> {
@@ -29,5 +32,11 @@ impl<C> From<Arc<C>> for EntryData<C> {
 impl<C> From<Membership> for EntryData<C> {
     fn from(value: Membership) -> Self {
         EntryData::Member(value)
+    }
+}
+
+impl<C> From<SpecPoolRepl> for EntryData<C> {
+    fn from(value: SpecPoolRepl) -> Self {
+        EntryData::SpecPoolReplication(value)
     }
 }

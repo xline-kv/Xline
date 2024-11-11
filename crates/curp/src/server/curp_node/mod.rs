@@ -117,7 +117,7 @@ where
 }
 
 /// Entry to execute
-type ExecutorEntry<C> = (Arc<LogEntry<C>>, Arc<ResponseSender>);
+type ExecutorEntry<C> = ((Arc<LogEntry<C>>, Arc<ResponseSender>), u64);
 
 /// `CurpNode` represents a single node of curp cluster
 pub(super) struct CurpNode<C: Command, CE: CommandExecutor<C>, RC: RoleChange> {
@@ -172,9 +172,12 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         }
         let id = req.propose_id();
         let cmd: Arc<C> = Arc::new(req.cmd()?);
-        let conflict = self.curp.follower_record(id, &cmd);
+        let (conflict, sp_version) = self.curp.follower_record(id, &cmd);
 
-        Ok(RecordResponse { conflict })
+        Ok(RecordResponse {
+            conflict,
+            sp_version,
+        })
     }
 
     /// Handle `Record` requests
@@ -234,7 +237,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             let cmd_executor_c = cmd_executor.clone();
             let _ignore = tokio::spawn(async move {
                 tokio::join!(wait_conflict, wait_no_op);
-                cmd_executor_c((entry, resp_tx));
+                // read only commands does not need `sp_version`
+                cmd_executor_c(((entry, resp_tx), 0));
             });
         }
     }
@@ -253,7 +257,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         let pool_entries = proposes
             .iter()
             .map(|p| PoolEntry::new(p.id, Arc::clone(&p.cmd)));
-        let conflicts = curp.leader_record(pool_entries);
+        let (conflicts, sp_version) = curp.leader_record(pool_entries);
         for (p, conflict) in proposes.iter().zip(conflicts) {
             info!("handle mutative cmd: {:?}, conflict: {conflict}", p.cmd);
             p.resp_tx.set_conflict(conflict);
@@ -268,21 +272,30 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .into_iter()
             .zip(resp_txs)
             .filter(|(_, tx)| !tx.is_conflict())
+            .zip(std::iter::repeat(sp_version))
             .for_each(cmd_executor);
     }
 
     /// Speculatively execute a command
     fn build_executor(ce: Arc<CE>, curp: Arc<RawCurp<C, RC>>) -> impl Fn(ExecutorEntry<C>) + Clone {
-        move |(entry, resp_tx): (_, Arc<ResponseSender>)| {
+        move |((entry, resp_tx), sp_version): ExecutorEntry<C>| {
             info!("spec execute entry: {entry:?}");
             let result = execute(&entry, ce.as_ref(), curp.as_ref());
             match result {
                 Ok((er, Some(asr))) => {
-                    resp_tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er), false));
+                    resp_tx.send_propose(ProposeResponse::new_result::<C>(
+                        &Ok(er),
+                        false,
+                        sp_version,
+                    ));
                     resp_tx.send_synced(SyncedResponse::new_result::<C>(&Ok(asr)));
                 }
                 Ok((er, None)) => {
-                    resp_tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er), false));
+                    resp_tx.send_propose(ProposeResponse::new_result::<C>(
+                        &Ok(er),
+                        false,
+                        sp_version,
+                    ));
                 }
                 Err(e) => resp_tx.send_err::<C>(e),
             }
@@ -715,10 +728,11 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .map_err(|e| CurpError::internal(format!("get applied index error, {e}")))?;
         let (as_tx, as_rx) = flume::unbounded();
         let (propose_tx, propose_rx) = flume::bounded(4096);
-        let sp = Arc::new(Mutex::new(SpeculativePool::new(sps)));
-        let ucp = Arc::new(Mutex::new(UncommittedPool::new(ucps)));
         // create curp state machine
-        let (voted_for, entries) = storage.recover()?;
+        let (voted_for, entries, sp_version) = storage.recover()?;
+        let sp = Arc::new(Mutex::new(SpeculativePool::new(sps, sp_version)));
+        let ucp = Arc::new(Mutex::new(UncommittedPool::new(ucps)));
+
         let curp = Arc::new(
             RawCurp::builder()
                 .is_leader(is_leader)

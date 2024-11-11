@@ -97,7 +97,7 @@ fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         .collect();
     let results = ce.after_sync(cmds, Some(highest_index));
 
-    send_results(results.into_iter(), resp_txs);
+    send_as_results(results.into_iter(), resp_txs);
 
     for (entry, _) in cmd_entries {
         curp.trigger(&entry.propose_id);
@@ -107,7 +107,7 @@ fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
 }
 
 /// Send cmd results to clients
-fn send_results<'a, C, R, S>(results: R, txs: S)
+fn send_as_results<'a, C, R, S>(results: R, txs: S)
 where
     C: Command,
     R: Iterator<Item = Result<AfterSyncOk<C>, C::Error>>,
@@ -118,7 +118,9 @@ where
             Ok(r) => {
                 let (asr, er_opt) = r.into_parts();
                 let _ignore_er = tx_opt.as_ref().zip(er_opt.as_ref()).map(|(tx, er)| {
-                    tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er.clone()), true));
+                    // In after sync result, `sp_version` could be safely ignored (set to 0) as the
+                    // command has successfully replicated to the majority of nodes
+                    tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er.clone()), true, 0));
                 });
                 let _ignore_asr = tx_opt
                     .as_ref()
@@ -155,6 +157,11 @@ fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             // The no-op command has been applied to state machine
             (EntryData::Empty, _) => curp.set_no_op_applied(),
             (EntryData::Member(_), _) => {}
+            (EntryData::SpecPoolReplication(r), _) => {
+                let mut sp_l = curp.spec_pool().lock();
+                sp_l.update_version(r.version());
+                sp_l.gc(r.ids());
+            }
 
             _ => unreachable!(),
         }
