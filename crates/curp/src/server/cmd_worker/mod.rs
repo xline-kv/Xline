@@ -159,8 +159,7 @@ fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             (EntryData::Member(_), _) => {}
             (EntryData::SpecPoolReplication(r), _) => {
                 let mut sp_l = curp.spec_pool().lock();
-                sp_l.update_version(r.version());
-                sp_l.gc(r.ids());
+                sp_l.gc(r.ids(), r.version());
             }
 
             _ => unreachable!(),

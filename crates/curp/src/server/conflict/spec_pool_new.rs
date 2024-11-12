@@ -86,7 +86,9 @@ impl<C> SpeculativePool<C> {
     /// Performs garbage collection on the spec pool with given entries from the leader
     ///
     /// Removes entries from the pool that are not present in the provided `leader_entries`
-    pub(crate) fn gc(&mut self, leader_entry_ids: &HashSet<ProposeId>) {
+    pub(crate) fn gc(&mut self, leader_entry_ids: &HashSet<ProposeId>, version: u64) {
+        debug_assert!(version > self.version, "invalid version: {version}");
+        self.version = version;
         let to_remove: Vec<_> = self
             .entries
             .keys()
@@ -101,12 +103,6 @@ impl<C> SpeculativePool<C> {
     /// Returns the current version
     pub(crate) fn version(&self) -> u64 {
         self.version
-    }
-
-    /// Updates the current version
-    pub(crate) fn update_version(&mut self, version: u64) {
-        debug_assert!(version > self.version, "invalid version: {version}");
-        self.version = version;
     }
 }
 
