@@ -11,9 +11,9 @@ pub(crate) use self::proto::{
     commandpb::CurpError as CurpErrorWrapper,
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, SyncSpecPoolRequest, SyncSpecPoolResponse,
-        TriggerShutdownRequest, TriggerShutdownResponse, TryBecomeLeaderNowRequest,
-        TryBecomeLeaderNowResponse, VoteRequest, VoteResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, TriggerShutdownRequest,
+        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
+        VoteRequest, VoteResponse,
     },
 };
 pub use self::proto::{

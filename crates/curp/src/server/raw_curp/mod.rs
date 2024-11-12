@@ -15,7 +15,6 @@ use std::cmp::min;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::fmt::Debug;
 use std::iter;
 use std::sync::atomic::AtomicU8;
@@ -1351,11 +1350,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Get all node states
     pub(super) fn all_node_states(&self) -> BTreeMap<u64, NodeState> {
         self.ctx.node_states.all_states()
-    }
-
-    /// Performs garbage collection on the spec pool with given entries from the leader
-    pub(super) fn gc_spec_pool(&self, leader_entry_ids: &HashSet<ProposeId>) {
-        self.ctx.spec_pool.lock().gc(leader_entry_ids);
     }
 
     #[cfg(test)]

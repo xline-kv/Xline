@@ -48,9 +48,8 @@ use crate::{
         InstallSnapshotRequest, InstallSnapshotResponse, MembershipResponse, MoveLeaderRequest,
         MoveLeaderResponse, PoolEntry, ProposeId, ProposeRequest, ProposeResponse,
         ReadIndexResponse, RecordRequest, RecordResponse, ShutdownRequest, ShutdownResponse,
-        SyncSpecPoolRequest, SyncSpecPoolResponse, SyncedResponse, TriggerShutdownRequest,
-        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
-        VoteRequest, VoteResponse,
+        SyncedResponse, TriggerShutdownRequest, TriggerShutdownResponse, TryBecomeLeaderNowRequest,
+        TryBecomeLeaderNowResponse, VoteRequest, VoteResponse,
     },
     server::{
         cmd_worker::{after_sync, worker_reset, worker_snapshot},
@@ -595,24 +594,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             }
         }
         Ok(TryBecomeLeaderNowResponse::default())
-    }
-
-    /// Handle `SyncSpecPool` request
-    pub(super) fn sync_spec_pool(
-        &self,
-        req: &SyncSpecPoolRequest,
-    ) -> Result<SyncSpecPoolResponse, CurpError> {
-        let current_term = self.curp.term();
-        if req.term < current_term {
-            return Err(CurpError::internal(format!(
-                "invalid leader term, current: {current_term}"
-            )));
-        }
-        let entries: Vec<ProposeId> = bincode::deserialize(&req.ids)
-            .unwrap_or_else(|_| unreachable!("failed to deserialize spec pool data"));
-        self.curp.gc_spec_pool(&entries.into_iter().collect());
-
-        Ok(SyncSpecPoolResponse::default())
     }
 }
 
