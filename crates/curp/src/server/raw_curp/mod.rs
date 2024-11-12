@@ -15,6 +15,7 @@ use std::cmp::min;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::iter;
 use std::sync::atomic::AtomicU8;
@@ -1689,5 +1690,19 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         if to_remove {
             let _ignore = self.ctx.monitoring.write().remove(&id);
         }
+    }
+
+    /// Garbage collect the spec pool
+    pub(crate) fn gc_spec_pool(
+        &self,
+        ids: &HashSet<ProposeId>,
+        version: u64,
+    ) -> Result<(), CurpError> {
+        let mut sp_l = self.ctx.spec_pool.lock();
+        sp_l.gc(ids, version);
+        self.ctx
+            .curp_storage
+            .put_sp_version(version)
+            .map_err(Into::into)
     }
 }

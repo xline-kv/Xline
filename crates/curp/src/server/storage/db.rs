@@ -104,6 +104,13 @@ impl<C: Command> StorageApi for DB<C> {
             .transpose()
             .map_err(Into::into)
     }
+
+    #[inline]
+    fn put_sp_version(&self, version: u64) -> Result<(), StorageError> {
+        let data = version.to_le_bytes();
+        let op = WriteOperation::new_put(CF, SP_VER.to_vec(), data.to_vec());
+        self.db.write_multi(vec![op], true).map_err(Into::into)
+    }
 }
 
 impl<C> DB<C> {

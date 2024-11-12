@@ -158,8 +158,9 @@ fn after_sync_others<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             (EntryData::Empty, _) => curp.set_no_op_applied(),
             (EntryData::Member(_), _) => {}
             (EntryData::SpecPoolReplication(r), _) => {
-                let mut sp_l = curp.spec_pool().lock();
-                sp_l.gc(r.ids(), r.version());
+                if let Err(err) = curp.gc_spec_pool(r.ids(), r.version()) {
+                    error!("failed to gc spec pool: {err:?}");
+                }
             }
 
             _ => unreachable!(),

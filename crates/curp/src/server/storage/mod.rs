@@ -80,6 +80,12 @@ pub trait StorageApi: Send + Sync {
     /// # Errors
     /// Return `StorageError` when it failed to recover the membership from underlying database.
     fn recover_membership(&self) -> Result<Option<(u64, MembershipState)>, StorageError>;
+
+    /// Put speculative pool version into the storage
+    ///
+    /// # Errors
+    /// Return `StorageError` when it failed to put to the underlying database
+    fn put_sp_version(&self, version: u64) -> Result<(), StorageError>;
 }
 
 /// CURP `DB` storage implementation
