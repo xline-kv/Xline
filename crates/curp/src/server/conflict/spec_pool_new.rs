@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use curp_external_api::conflict::SpeculativePoolOp;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::rpc::{PoolEntry, ProposeId};
 
@@ -87,7 +88,11 @@ impl<C> SpeculativePool<C> {
     ///
     /// Removes entries from the pool that are not present in the provided `leader_entries`
     pub(crate) fn gc(&mut self, leader_entry_ids: &HashSet<ProposeId>, version: u64) {
-        debug_assert!(version > self.version, "invalid version: {version}");
+        debug_assert!(version >= self.version, "invalid version: {version}");
+        if version == self.version {
+            warn!("gc receives current version, the cluster might gc too frequently, ignoring");
+            return;
+        }
         self.version = version;
         let to_remove: Vec<_> = self
             .entries
