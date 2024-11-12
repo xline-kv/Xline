@@ -74,6 +74,15 @@ fn build_propose_response(conflict: bool) -> OpResponse {
     OpResponse { op: Some(resp) }
 }
 
+fn build_propose_response_with_sp_ver(conflict: bool, sp_version: u64) -> OpResponse {
+    let resp = ResponseOp::Propose(ProposeResponse::new_result::<TestCommand>(
+        &Ok(TestCommandResult::default()),
+        conflict,
+        sp_version,
+    ));
+    OpResponse { op: Some(resp) }
+}
+
 fn build_synced_response() -> OpResponse {
     let resp = ResponseOp::Synced(SyncedResponse::new_result::<TestCommand>(&Ok(1.into())));
     OpResponse { op: Some(resp) }
@@ -548,4 +557,91 @@ async fn test_read_index_fail() {
         .propose(&TestCommand::default(), None, true, ctx)
         .await;
     assert!(res.is_err());
+}
+
+async fn assert_slow_path(connects: HashMap<u64, Arc<dyn ConnectApi>>) {
+    let unary = init_unary_client(None, None);
+    let cluster_state = ClusterStateFull::new(0, 1, connects, build_default_membership());
+    let ctx = Context::new(ProposeId::default(), cluster_state);
+    let start_at = Instant::now();
+    let res = unary
+        .propose(&TestCommand::new_put(vec![1], 1), None, true, ctx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        start_at.elapsed() > Duration::from_millis(100),
+        "slow round takes at least 100ms"
+    );
+    // indicate that we actually run out of fast round
+    assert_eq!(
+        res,
+        (TestCommandResult::default(), Some(LogIndexResult::from(1)))
+    );
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_unary_propose_sp_version_mismatch_fallback_case1() {
+    let connects = init_mocked_connects(5, |id, conn| {
+        conn.expect_propose_stream()
+            .return_once(move |_req, _token, _timeout| {
+                assert_eq!(id, 0, "followers should not receive propose");
+                let resp = async_stream::stream! {
+                    yield Ok(build_propose_response_with_sp_ver(false, 1));
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    yield Ok(build_synced_response());
+                };
+                Ok(tonic::Response::new(Box::new(resp)))
+            });
+        conn.expect_record().return_once(move |_req, _timeout| {
+            let resp = match id {
+                0 => unreachable!("leader should not receive record request"),
+                1 | 2 => RecordResponse {
+                    conflict: false,
+                    sp_version: 1,
+                },
+                // outdated
+                3 | 4 => RecordResponse {
+                    conflict: false,
+                    sp_version: 0,
+                },
+                _ => unreachable!("there are only 5 nodes"),
+            };
+            Ok(tonic::Response::new(resp))
+        });
+    });
+
+    assert_slow_path(connects).await;
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_unary_propose_sp_version_mismatch_fallback_case2() {
+    let connects = init_mocked_connects(5, |id, conn| {
+        conn.expect_propose_stream()
+            .return_once(move |_req, _token, _timeout| {
+                assert_eq!(id, 0, "followers should not receive propose");
+                let resp = async_stream::stream! {
+                    yield Ok(build_propose_response_with_sp_ver(false, 1));
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    yield Ok(build_synced_response());
+                };
+                Ok(tonic::Response::new(Box::new(resp)))
+            });
+        conn.expect_record().return_once(move |_req, _timeout| {
+            let resp = match id {
+                0 => unreachable!("leader should not receive record request"),
+                // all outdated
+                1 | 2 | 3 | 4 => RecordResponse {
+                    conflict: false,
+                    sp_version: 0,
+                },
+                _ => unreachable!("there are only 5 nodes"),
+            };
+            Ok(tonic::Response::new(resp))
+        });
+    });
+
+    assert_slow_path(connects).await;
 }
