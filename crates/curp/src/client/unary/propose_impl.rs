@@ -181,12 +181,15 @@ impl<C: Command> Unary<C> {
             move |conn: Arc<dyn ConnectApi>| async move { conn.read_index(timeout).await };
 
         ctx.cluster_state()
-            .for_each_follower_with_quorum(
+            .for_each_follower_until(
                 read_index,
-                move |res| res.is_ok_and(|resp| resp.get_ref().term == term),
+                move |res| res.ok().filter(|resp| resp.get_ref().term == term),
+                (),
+                |(ids, ()), (id, _)| ids.push(id),
                 |qs, ids| QuorumSet::is_quorum(qs, ids),
             )
             .await
+            .is_some()
     }
 
     /// Send record requests to the cluster
@@ -206,9 +209,10 @@ impl<C: Command> Unary<C> {
 
         let stream = ctx
             .cluster_state()
-            .for_each_follower_with_expect(
+            .for_each_follower_until(
                 record,
                 |res| res.ok().filter(|r| !r.conflict).map(|r| r.sp_version),
+                0,
                 |(ids, latest), (id, sp_version)| {
                     if sp_version > latest {
                         ids.clear();
@@ -218,7 +222,6 @@ impl<C: Command> Unary<C> {
                         latest
                     }
                 },
-                0,
                 |qs, ids| qs.is_super_quorum(ids),
             )
             .map(move |ok| ProposeEvent::Record { sp_version: ok })

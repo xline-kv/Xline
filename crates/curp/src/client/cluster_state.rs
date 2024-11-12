@@ -181,49 +181,7 @@ impl ClusterStateFull {
     }
 
     /// Execute an operation on each follower, until a quorum is reached.
-    ///
-    /// Parameters:
-    /// - f: Operation to execute on each follower's connection
-    /// - filter: Function to filter on each response
-    /// - quorum: Function to determine if a quorum is reached, use functions in `QuorumSet` trait
-    ///
-    /// Returns `true` if then given quorum is reached.
-    pub(crate) async fn for_each_follower_with_quorum<R, Fut: Future<Output = R>, F, Q>(
-        self,
-        mut f: impl FnMut(Arc<dyn ConnectApi>) -> Fut,
-        mut filter: F,
-        mut expect_quorum: Q,
-    ) -> bool
-    where
-        F: FnMut(R) -> bool,
-        Q: FnMut(&dyn QuorumSet<Vec<u64>>, Vec<u64>) -> bool,
-    {
-        let qs = self.membership.as_joint();
-        let leader_id = self.leader_id();
-
-        #[allow(clippy::pattern_type_mismatch)]
-        let stream: FuturesUnordered<_> = self
-            .member_connects()
-            .filter(|(id, _)| *id != leader_id)
-            .map(|(id, conn)| f(Arc::clone(conn)).map(move |r| (id, r)))
-            .collect();
-
-        let mut filtered =
-            stream.filter_map(|(id, r)| futures::future::ready(filter(r).then_some(id)));
-
-        let mut ids = vec![leader_id];
-        while let Some(id) = filtered.next().await {
-            ids.push(id);
-            if expect_quorum(&qs, ids.clone()) {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Execute an operation on each follower, until a quorum is reached.
-    pub(crate) async fn for_each_follower_with_expect<
+    pub(crate) async fn for_each_follower_until<
         Fut: Future<Output = R>,
         R,
         B,
@@ -235,8 +193,8 @@ impl ClusterStateFull {
         self,
         mut f: impl FnMut(Arc<dyn ConnectApi>) -> Fut,
         mut filter: FilterMap,
-        mut folder: Folder,
         mut b: B,
+        mut folder: Folder,
         mut expect: Expect,
     ) -> Option<B>
     where
@@ -475,12 +433,15 @@ mod test {
         };
 
         let ok = state
-            .for_each_follower_with_quorum(
+            .for_each_follower_until(
                 record,
-                |res| res.is_ok_and(|resp| resp.get_ref().conflict),
+                |res| res.ok().filter(|resp| resp.get_ref().conflict),
+                (),
+                |(ids, ()), (id, _)| ids.push(id),
                 |qs, ids| QuorumSet::is_quorum(qs, ids),
             )
-            .await;
+            .await
+            .is_some();
 
         assert!(ok);
     }

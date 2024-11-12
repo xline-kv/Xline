@@ -119,14 +119,20 @@ impl Fetch {
         let timeout = self.timeout;
         let term = state.term();
         let fetch_membership = move |c: Arc<dyn ConnectApi>| async move {
-            c.fetch_membership(FetchMembershipRequest {}, timeout).await
+            c.fetch_membership(FetchMembershipRequest {}, timeout)
+                .await
+                .map(Response::into_inner)
         };
 
-        state.for_each_follower_with_quorum(
-            fetch_membership,
-            move |r| r.is_ok_and(|ok| ok.get_ref().term == term),
-            |qs, ids| QuorumSet::is_quorum(qs, ids),
-        )
+        state
+            .for_each_follower_until(
+                fetch_membership,
+                move |r| r.ok().filter(|ok| ok.term == term),
+                (),
+                |(ids, ()), (id, _)| ids.push(id),
+                |qs, ids| QuorumSet::is_quorum(qs, ids),
+            )
+            .map(|x| x.is_some())
     }
 
     /// Fetch cluster state from leader
