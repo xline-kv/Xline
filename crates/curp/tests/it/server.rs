@@ -886,6 +886,22 @@ async fn record_to_node(
         .conflict
 }
 
+async fn record_to_node_get_version(
+    connect: &mut ProtocolClient<Channel>,
+    propose_id: ProposeId,
+    command: Vec<u8>,
+) -> u64 {
+    connect
+        .record(tonic::Request::new(RecordRequest {
+            propose_id: Some(propose_id),
+            command,
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+        .sp_version
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn curp_server_spec_pool_gc_ok() {
     init_logger();
@@ -999,4 +1015,56 @@ async fn curp_server_spec_pool_gc_should_not_remove_leader_entry() {
     )
     .await;
     assert!(conflict);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn curp_server_spec_pool_gc_should_update_version() {
+    init_logger();
+    // sets the initail sync interval to a relatively long duration
+    let group = CurpGroup::new_with_custom_sp_sync_interval(5, Duration::from_secs(1)).await;
+    let client = group.new_client().await;
+
+    let leader = client.fetch_leader_id(true).await.unwrap();
+    let follower_id = group.nodes.keys().find(|&id| &leader != id).unwrap();
+    let mut follower_connect = group.get_connect(follower_id).await;
+    let cmd0 = bincode::serialize(&TestCommand::new_put(vec![0], 0)).unwrap();
+    let mut ticker = tokio::time::interval(Duration::from_millis(1100));
+    ticker.tick().await;
+
+    let version0 = record_to_node_get_version(
+        &mut follower_connect,
+        ProposeId {
+            client_id: 0,
+            seq_num: 0,
+        },
+        cmd0.clone(),
+    )
+    .await;
+    assert_eq!(version0, 0);
+
+    ticker.tick().await;
+
+    let version1 = record_to_node_get_version(
+        &mut follower_connect,
+        ProposeId {
+            client_id: 1,
+            seq_num: 0,
+        },
+        cmd0.clone(),
+    )
+    .await;
+    assert_eq!(version1, 1);
+
+    ticker.tick().await;
+
+    let version2 = record_to_node_get_version(
+        &mut follower_connect,
+        ProposeId {
+            client_id: 2,
+            seq_num: 0,
+        },
+        cmd0.clone(),
+    )
+    .await;
+    assert_eq!(version2, 2);
 }
