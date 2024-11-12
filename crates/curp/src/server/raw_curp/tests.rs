@@ -829,3 +829,15 @@ fn leader_will_reset_transferee_after_it_become_follower() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
     assert!(curp.get_transferee().is_none());
 }
+
+#[traced_test]
+#[test]
+fn gc_spec_pool_should_update_version_and_persistent() {
+    let task_manager = Arc::new(TaskManager::new());
+    let curp = { Arc::new(RawCurp::new_test(5, mock_role_change(), task_manager)) };
+    assert_eq!(curp.ctx.spec_pool.lock().version(), 0);
+    curp.gc_spec_pool(&HashSet::new(), 2).unwrap();
+    assert_eq!(curp.ctx.spec_pool.lock().version(), 2);
+    let (_, _, version) = curp.ctx.curp_storage.recover().unwrap();
+    assert_eq!(version, 2);
+}
