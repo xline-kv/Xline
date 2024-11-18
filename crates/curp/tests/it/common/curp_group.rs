@@ -39,7 +39,7 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, ServerTl
 use tracing::debug;
 use utils::{
     build_endpoint,
-    config::{
+    config::prelude::{
         default_quota, ClientConfig, CurpConfig, CurpConfigBuilder, EngineConfig, StorageConfig,
     },
     task_manager::{tasks::TaskName, Listener, TaskManager},

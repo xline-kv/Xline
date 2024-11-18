@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::debug;
-use utils::config::EngineConfig;
+use utils::config::prelude::EngineConfig;
 
 use crate::{META_TABLE, REVISION_TABLE, TEST_TABLE};
 

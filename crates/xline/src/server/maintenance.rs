@@ -278,7 +278,7 @@ mod test {
     use tempfile::TempDir;
     use test_macros::abort_on_panic;
     use tokio_stream::StreamExt;
-    use utils::config::EngineConfig;
+    use utils::config::prelude::EngineConfig;
 
     use super::*;
     use crate::storage::db::DB;
