@@ -39,7 +39,7 @@ use tracing::{
 use utils::ClientTlsConfig;
 use utils::{
     barrier::IdBarrier,
-    config::CurpConfig,
+    config::prelude::CurpConfig,
     parking_lot_lock::{MutexMap, RwLockMap},
     task_manager::TaskManager,
 };

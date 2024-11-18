@@ -20,7 +20,7 @@ use tokio::{
     time::{Duration, Instant},
 };
 use tracing::debug;
-use utils::config::ClientConfig;
+use utils::config::prelude::ClientConfig;
 use xline_client::ClientOptions;
 
 use crate::{args::Commands, bench_client::BenchClient, Benchmark};

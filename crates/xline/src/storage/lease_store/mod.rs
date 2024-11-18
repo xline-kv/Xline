@@ -385,7 +385,7 @@ mod test {
     use std::{error::Error, time::Duration};
 
     use test_macros::abort_on_panic;
-    use utils::config::EngineConfig;
+    use utils::config::prelude::EngineConfig;
 
     use super::*;
     use crate::{
