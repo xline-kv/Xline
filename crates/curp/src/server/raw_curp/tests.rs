@@ -2,7 +2,7 @@ use curp_test_utils::{mock_role_change, test_cmd::TestCommand, TestRoleChange, T
 use test_macros::abort_on_panic;
 use tokio::time::{sleep, Instant};
 use tracing_test::traced_test;
-use utils::config::{
+use utils::config::prelude::{
     default_candidate_timeout_ticks, default_follower_timeout_ticks, default_heartbeat_interval,
     CurpConfigBuilder,
 };

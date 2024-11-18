@@ -1253,7 +1253,7 @@ mod test {
     use test_macros::abort_on_panic;
     use tokio::{runtime::Handle, task::block_in_place};
     use utils::{
-        config::EngineConfig,
+        config::prelude::EngineConfig,
         task_manager::{tasks::TaskName, TaskManager},
     };
 

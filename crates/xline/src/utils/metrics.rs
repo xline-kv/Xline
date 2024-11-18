@@ -4,7 +4,7 @@ use opentelemetry::global;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{metrics::SdkMeterProvider, runtime::Tokio};
 use tracing::info;
-use utils::config::{MetricsConfig, MetricsPushProtocol};
+use utils::config::prelude::{MetricsConfig, PushProtocol};
 
 /// Start metrics server
 ///
@@ -24,7 +24,7 @@ pub fn init_metrics(config: &MetricsConfig) -> anyhow::Result<()> {
 
         // push mode
         let _ig = match *config.push_protocol() {
-            MetricsPushProtocol::HTTP => opentelemetry_otlp::new_pipeline()
+            PushProtocol::HTTP => opentelemetry_otlp::new_pipeline()
                 .metrics(Tokio)
                 .with_exporter(
                     opentelemetry_otlp::new_exporter()
@@ -32,7 +32,7 @@ pub fn init_metrics(config: &MetricsConfig) -> anyhow::Result<()> {
                         .with_endpoint(config.push_endpoint()),
                 )
                 .build(),
-            MetricsPushProtocol::GRPC => opentelemetry_otlp::new_pipeline()
+            PushProtocol::GRPC => opentelemetry_otlp::new_pipeline()
                 .metrics(Tokio)
                 .with_exporter(
                     opentelemetry_otlp::new_exporter()

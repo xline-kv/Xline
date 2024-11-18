@@ -17,7 +17,7 @@ use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
 use tokio::net::TcpListener;
 use tokio_stream::StreamExt;
-use utils::{config::ClientConfig, timestamp};
+use utils::{config::prelude::ClientConfig, timestamp};
 
 use crate::common::curp_group::{CurpGroup, FetchClusterRequest, DEFAULT_SHUTDOWN_TIMEOUT};
 

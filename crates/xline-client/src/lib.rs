@@ -174,7 +174,7 @@ use tonic::transport::ClientTlsConfig;
 use tower::Service;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
-use utils::{build_endpoint, config::ClientConfig};
+use utils::{build_endpoint, config::prelude::ClientConfig};
 use xlineapi::command::{Command, CurpClient};
 
 use crate::{

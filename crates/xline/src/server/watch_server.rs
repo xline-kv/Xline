@@ -424,7 +424,7 @@ mod test {
         sync::mpsc,
         time::{sleep, timeout},
     };
-    use utils::config::{default_watch_progress_notify_interval, EngineConfig};
+    use utils::config::prelude::{default_watch_progress_notify_interval, EngineConfig};
     use xlineapi::RequestWrapper;
 
     use super::*;

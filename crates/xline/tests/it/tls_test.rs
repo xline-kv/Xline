@@ -3,7 +3,7 @@ use std::{fs, iter, path::PathBuf};
 use etcd_client::ConnectOptions;
 use test_macros::abort_on_panic;
 use tonic::transport::{Certificate, ClientTlsConfig, Identity};
-use utils::config::{
+use utils::config::prelude::{
     AuthConfig, ClusterConfig, CompactConfig, LogConfig, MetricsConfig, StorageConfig, TlsConfig,
     TraceConfig, XlineServerConfig,
 };

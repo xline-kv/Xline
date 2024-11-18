@@ -9,7 +9,7 @@ use tokio::{
     time::{self, Duration},
 };
 use tonic::transport::ClientTlsConfig;
-use utils::config::{
+use utils::config::prelude::{
     default_quota, AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState,
     LogConfig, MetricsConfig, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
 };
@@ -319,7 +319,7 @@ impl Drop for Cluster {
                     {
                         let _ignore = tokio::fs::remove_dir_all(path).await;
                     }
-                    if let EngineConfig::RocksDB(ref path) = cfg.storage().engine {
+                    if let EngineConfig::RocksDB(ref path) = cfg.storage().engine() {
                         let _ignore = tokio::fs::remove_dir_all(path).await;
                     }
                 }
