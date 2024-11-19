@@ -6,7 +6,7 @@ use tonic::transport::Channel;
 use tracing::debug;
 use utils::config::prelude::{
     AuthConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfig, InitialClusterState,
-    XlineServerTimeout, StorageConfig, TlsConfig,
+    StorageConfig, TlsConfig, XlineServerTimeout,
 };
 use xline::server::XlineServer;
 use xline_client::{
