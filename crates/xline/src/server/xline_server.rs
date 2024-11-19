@@ -350,7 +350,7 @@ impl XlineServer {
             .get_shutdown_listener(TaskName::TonicServer)
             .unwrap_or_else(|| unreachable!("cluster should never shutdown before start"));
         let n2 = n1.clone();
-        let db = DB::open(&self.storage_config.engine)?;
+        let db = DB::open(&self.storage_config.engine())?;
         let key_pair = Self::read_key_pair(&self.auth_config).await?;
         let (xline_router, curp_router, curp_client) = self.init_router(db, key_pair).await?;
         let handle = tokio::spawn(async move {
