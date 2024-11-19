@@ -57,7 +57,7 @@ impl XlineGroup {
                     i == 0,
                     CurpConfig::default(),
                     ClientConfig::default(),
-                    ServerTimeout::default(),
+                    XlineServerTimeout::default(),
                     InitialClusterState::New,
                 );
 
