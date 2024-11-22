@@ -252,16 +252,12 @@ Existing distributed KV stores mostly adopt the `Raft` consensus protocol, which
 - basic `Xline` client (use `Curp` directly)
 - benchmark tool
 
-### Usage
-[Usage doc](./USAGE.md)
-
 ### Note
 
 In this release, we only provide binary files for X86_64 linux. Other platforms need to be compiled by yourself. we will add more support in the future.
 
-
 ### Links
-- GitHub: https://github.com/datenlord/Xline
+- GitHub: https://github.com/xline-kv/Xline
 - Crate: https://crates.io/crates/xline
 - Docs: https://docs.rs/xline
 - Paper of Curp: https://www.usenix.org/system/files/nsdi19-park.pdf
