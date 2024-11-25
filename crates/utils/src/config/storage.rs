@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 use super::prelude::EngineConfig;
 
-/// /// Storage Configuration
+/// Storage Configuration
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Getters)]
 #[allow(clippy::module_name_repetitions)]
 #[non_exhaustive]
