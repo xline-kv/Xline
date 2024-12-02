@@ -29,7 +29,7 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 madsim-tokio = { git = "https://github.com/LucienY01/madsim.git", branch = "bz/tonic-0-12", default-features = false, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 madsim-tonic = { git = "https://github.com/LucienY01/madsim.git", branch = "bz/tonic-0-12", default-features = false, features = ["tls"] }
 memchr = { version = "2" }
-opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
 predicates = { version = "3", default-features = false, features = ["diff"] }
 rand = { version = "0.8", features = ["small_rng"] }
 serde = { version = "1", features = ["derive", "rc"] }
