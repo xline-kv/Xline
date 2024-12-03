@@ -17,6 +17,18 @@ mod retry;
 /// State for clients
 mod state;
 
+#[allow(unused)]
+/// State of the cluster
+mod cluster_state;
+
+#[allow(unused)]
+/// Client cluster fetch implementation
+mod fetch;
+
+#[allow(unused)]
+/// Config of the client
+mod config;
+
 /// Tests for client
 #[cfg(test)]
 mod tests;
