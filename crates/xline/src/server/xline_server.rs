@@ -24,7 +24,7 @@ use tonic::transport::{server::Router, Server};
 use tracing::{info, warn};
 use utils::{
     barrier::IdBarrier,
-    config::{
+    config::prelude::{
         AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState, StorageConfig,
         TlsConfig,
     },
@@ -350,7 +350,7 @@ impl XlineServer {
             .get_shutdown_listener(TaskName::TonicServer)
             .unwrap_or_else(|| unreachable!("cluster should never shutdown before start"));
         let n2 = n1.clone();
-        let db = DB::open(&self.storage_config.engine)?;
+        let db = DB::open(self.storage_config.engine())?;
         let key_pair = Self::read_key_pair(&self.auth_config).await?;
         let (xline_router, curp_router, curp_client) = self.init_router(db, key_pair).await?;
         let handle = tokio::spawn(async move {
@@ -376,7 +376,7 @@ impl XlineServer {
         IO::ConnectInfo: Clone + Send + Sync + 'static,
         IE: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
     {
-        let db = DB::open(&self.storage_config.engine)?;
+        let db = DB::open(self.storage_config.engine())?;
         let key_pair = Self::read_key_pair(&self.auth_config).await?;
         let (xline_router, curp_router, curp_client) = self.init_router(db, key_pair).await?;
         self.task_manager
@@ -476,9 +476,9 @@ impl XlineServer {
             Arc::clone(&db),
             Arc::clone(&id_barrier),
             Arc::clone(&compact_events),
-            self.storage_config.quota,
+            *self.storage_config.quota(),
         ));
-        let snapshot_allocator: Box<dyn SnapshotAllocator> = match self.storage_config.engine {
+        let snapshot_allocator: Box<dyn SnapshotAllocator> = match *self.storage_config.engine() {
             EngineConfig::Memory => Box::<MemorySnapshotAllocator>::default(),
             EngineConfig::RocksDB(_) => Box::<RocksSnapshotAllocator>::default(),
             #[allow(clippy::unimplemented)]

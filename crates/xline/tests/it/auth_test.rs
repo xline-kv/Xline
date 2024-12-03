@@ -1,7 +1,7 @@
 use std::{error::Error, iter, path::PathBuf};
 
 use test_macros::abort_on_panic;
-use utils::config::{
+use utils::config::prelude::{
     AuthConfig, ClusterConfig, CompactConfig, LogConfig, MetricsConfig, StorageConfig, TlsConfig,
     TraceConfig, XlineServerConfig,
 };

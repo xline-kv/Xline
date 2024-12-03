@@ -596,7 +596,7 @@ mod tests {
     use std::{iter::repeat, ops::Index, sync::Arc};
 
     use curp_test_utils::test_cmd::TestCommand;
-    use utils::config::{default_batch_max_size, default_log_entries_cap};
+    use utils::config::prelude::{default_batch_max_size, default_log_entries_cap};
 
     use super::*;
 

@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Parser;
 use tokio::fs;
 use utils::{
-    config::{
+    config::prelude::{
         default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
         default_client_id_keep_alive_interval, default_client_wait_synced_timeout,
         default_cmd_workers, default_compact_batch_size, default_compact_sleep_interval,
@@ -16,9 +16,9 @@ use utils::{
         default_rotation, default_rpc_timeout, default_server_wait_synced_timeout,
         default_sync_victims_interval, default_watch_progress_notify_interval, AuthConfig,
         AutoCompactConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder,
-        EngineConfig, InitialClusterState, LevelConfig, LogConfig, MetricsConfig,
-        MetricsPushProtocol, RotationConfig, ServerTimeout, StorageConfig, TlsConfig, TraceConfig,
-        XlineServerConfig,
+        EngineConfig, InitialClusterState, LevelConfig, LogConfig, MetricsConfig, PushProtocol,
+        RotationConfig, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
+        XlineServerTimeout,
     },
     parse_batch_bytes, parse_duration, parse_log_file, parse_log_level, parse_members,
     parse_metrics_push_protocol, parse_rotation, parse_state, ConfigFileError,
@@ -90,7 +90,7 @@ pub struct ServerArgs {
     metrics_push_endpoint: String,
     /// Collector protocol to collect metrics
     #[clap(long, value_parser = parse_metrics_push_protocol, default_value_t = default_metrics_push_protocol())]
-    metrics_push_protocol: MetricsPushProtocol,
+    metrics_push_protocol: PushProtocol,
     /// Log file path
     #[clap(long, value_parser = parse_log_file, default_value = None)]
     log_file: Option<PathBuf>,
@@ -269,7 +269,7 @@ impl From<ServerArgs> for XlineServerConfig {
             args.client_keep_alive_interval
                 .unwrap_or_else(default_client_id_keep_alive_interval),
         );
-        let server_timeout = ServerTimeout::new(
+        let server_timeout = XlineServerTimeout::new(
             args.range_retry_timeout
                 .unwrap_or_else(default_range_retry_timeout),
             args.compact_timeout.unwrap_or_else(default_compact_timeout),

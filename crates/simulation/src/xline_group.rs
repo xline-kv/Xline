@@ -4,9 +4,9 @@ use itertools::Itertools;
 use madsim::runtime::NodeHandle;
 use tonic::transport::Channel;
 use tracing::debug;
-use utils::config::{
+use utils::config::prelude::{
     AuthConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfig, InitialClusterState,
-    ServerTimeout, StorageConfig, TlsConfig,
+    StorageConfig, TlsConfig, XlineServerTimeout,
 };
 use xline::server::XlineServer;
 use xline_client::{
@@ -57,7 +57,7 @@ impl XlineGroup {
                     i == 0,
                     CurpConfig::default(),
                     ClientConfig::default(),
-                    ServerTimeout::default(),
+                    XlineServerTimeout::default(),
                     InitialClusterState::New,
                 );
 
