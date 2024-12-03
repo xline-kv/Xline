@@ -37,7 +37,7 @@ impl MemoryEngine {
     /// New `MemoryEngine`
     #[inline]
     pub(crate) fn new(tables: &[&'static str]) -> Self {
-        let mut inner: HashMap<String, HashMap<Vec<u8>, Vec<u8>>> = HashMap::new();
+        let mut inner: HashMap<String, MemoryTable> = HashMap::new();
         for table in tables {
             let _ignore = inner.entry((*table).to_owned()).or_default();
         }
@@ -49,7 +49,7 @@ impl MemoryEngine {
     /// New `MemoryEngine`
     #[cfg(madsim)]
     #[inline]
-    pub(crate) fn new_from_db(db: HashMap<String, HashMap<Vec<u8>, Vec<u8>>>) -> Self {
+    pub(crate) fn new_from_db(db: HashMap<String, MemoryTable>) -> Self {
         Self {
             inner: Arc::new(RwLock::new(db)),
         }
