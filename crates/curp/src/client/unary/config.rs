@@ -1,6 +1,9 @@
 use std::time::Duration;
 
+#[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
+#[cfg(madsim)]
+use utils::ClientTlsConfig;
 
 use crate::members::ServerId;
 
