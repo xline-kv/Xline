@@ -195,10 +195,8 @@ impl CurpGroup {
                 ClientBuilder::new(config, true)
                     .all_members(all_members)
                     .build_with_client_id()
-                    .await
             })
             .await
-            .unwrap()
             .unwrap();
         SimClient {
             inner: Arc::new(client),

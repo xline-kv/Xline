@@ -690,19 +690,11 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             };
             match change.change_type() {
                 ConfChangeType::Add | ConfChangeType::AddLearner => {
-                    let connect = match InnerConnectApiWrapper::connect(
+                    let connect = InnerConnectApiWrapper::connect(
                         change.node_id,
                         change.address,
                         curp.client_tls_config().cloned(),
-                    )
-                    .await
-                    {
-                        Ok(connect) => connect,
-                        Err(e) => {
-                            error!("connect to {} failed, {}", change.node_id, e);
-                            continue;
-                        }
-                    };
+                    );
                     curp.insert_connect(connect.clone());
                     let sync_event = curp.sync_event(change.node_id);
                     let remove_event = Arc::new(Event::new());
@@ -842,7 +834,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Create a new server instance
     #[inline]
     #[allow(clippy::too_many_arguments)] // TODO: refactor this use builder pattern
-    pub(super) async fn new(
+    #[allow(clippy::needless_pass_by_value)] // The value should be consumed
+    pub(super) fn new(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         cmd_executor: Arc<CE>,
@@ -860,10 +853,8 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
             .into_iter()
             .map(|server_id| (server_id, Arc::new(Event::new())))
             .collect();
-        let connects = rpc::inner_connects(cluster_info.peers_addrs(), client_tls_config.as_ref())
-            .await
-            .map_err(|e| CurpError::internal(format!("parse peers addresses failed, err {e:?}")))?
-            .collect();
+        let connects =
+            rpc::inner_connects(cluster_info.peers_addrs(), client_tls_config.as_ref()).collect();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
         let last_applied = cmd_executor
