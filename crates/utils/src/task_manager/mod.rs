@@ -174,10 +174,14 @@ impl TaskManager {
 
     /// Get root tasks queue
     fn root_tasks_queue(tasks: &DashMap<TaskName, Task>) -> VecDeque<TaskName> {
-        tasks
+        let root_tasks: VecDeque<_> = tasks
             .iter()
             .filter_map(|task| (task.depend_cnt == 0).then_some(task.name))
-            .collect()
+            .collect();
+        if !tasks.is_empty() {
+            assert!(!root_tasks.is_empty(), "root tasks should not be empty");
+        }
+        root_tasks
     }
 
     /// Inner shutdown task
@@ -187,8 +191,9 @@ impl TaskManager {
             let Some((_name, mut task)) = tasks.remove(&v) else {
                 continue;
             };
+            let handles = task.handle.drain(..);
             task.notifier.notify_waiters();
-            for handle in task.handle.drain(..) {
+            for handle in handles {
                 // Directly abort the task if it's cancel safe
                 if task.name.cancel_safe() {
                     handle.abort();
@@ -267,6 +272,13 @@ impl TaskManager {
             }
         }
         true
+    }
+
+    /// is the task empty
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
     }
 }
 
