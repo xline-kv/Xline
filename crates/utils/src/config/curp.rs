@@ -83,6 +83,15 @@ pub struct CurpConfig {
     pub log_entries_cap: usize,
 }
 
+impl CurpConfig {
+    /// Create a new `CurpConfig` with a builder
+    #[must_use]
+    #[inline]
+    pub fn builder() -> CurpConfigBuilder {
+        CurpConfigBuilder::default()
+    }
+}
+
 /// default heartbeat interval
 #[must_use]
 #[inline]

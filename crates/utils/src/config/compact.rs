@@ -33,18 +33,58 @@ impl Default for CompactConfig {
 }
 
 impl CompactConfig {
-    /// Create a new compact config
-    #[must_use]
+    /// Create a builder for `CompactConfig`
     #[inline]
-    pub fn new(
-        compact_batch_size: usize,
-        compact_sleep_interval: Duration,
-        auto_compact_config: Option<AutoCompactConfig>,
-    ) -> Self {
-        Self {
-            compact_batch_size,
-            compact_sleep_interval,
-            auto_compact_config,
+    #[must_use]
+    pub fn builder() -> Builder {
+        Builder::default()
+    }
+}
+
+/// Builder for `CompactConfig`
+#[derive(Default, Debug, Clone, Copy)]
+pub struct Builder {
+    /// The max number of historical versions processed in a single compact operation
+    compact_batch_size: Option<usize>,
+    /// The interval between two compaction batches
+    compact_sleep_interval: Option<Duration>,
+    /// The auto compactor config
+    auto_compact_config: Option<AutoCompactConfig>,
+}
+
+impl Builder {
+    /// Set the compact batch size
+    #[inline]
+    #[must_use]
+    pub fn compact_batch_size(mut self, size: usize) -> Self {
+        self.compact_batch_size = Some(size);
+        self
+    }
+
+    /// Set the compact sleep interval
+    #[inline]
+    #[must_use]
+    pub fn compact_sleep_interval(mut self, interval: Duration) -> Self {
+        self.compact_sleep_interval = Some(interval);
+        self
+    }
+
+    /// Set the auto compactor config
+    #[inline]
+    #[must_use]
+    pub fn auto_compact_config(mut self, config: Option<AutoCompactConfig>) -> Self {
+        self.auto_compact_config = config;
+        self
+    }
+
+    /// Build the `CompactConfig`
+    #[inline]
+    #[must_use]
+    pub fn build(self) -> CompactConfig {
+        CompactConfig {
+            compact_batch_size: self.compact_batch_size.unwrap_or_default(),
+            compact_sleep_interval: self.compact_sleep_interval.unwrap_or_default(),
+            auto_compact_config: self.auto_compact_config,
         }
     }
 }

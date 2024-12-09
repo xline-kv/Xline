@@ -15,13 +15,47 @@ pub struct AuthConfig {
 }
 
 impl AuthConfig {
-    /// Generate a new `AuthConfig` object
-    #[must_use]
+    /// Create a builder for `AuthConfig`
     #[inline]
-    pub fn new(auth_public_key: Option<PathBuf>, auth_private_key: Option<PathBuf>) -> Self {
-        Self {
-            auth_public_key,
-            auth_private_key,
+    #[must_use]
+    pub fn builder() -> Builder {
+        Builder::default()
+    }
+}
+
+/// Builder for `AuthConfig`
+#[derive(Default, Debug)]
+pub struct Builder {
+    /// The public key file
+    auth_public_key: Option<PathBuf>,
+    /// The private key file
+    auth_private_key: Option<PathBuf>,
+}
+
+impl Builder {
+    /// Set the public key file
+    #[inline]
+    #[must_use]
+    pub fn auth_public_key(mut self, path: Option<PathBuf>) -> Self {
+        self.auth_public_key = path;
+        self
+    }
+
+    /// Set the private key file
+    #[inline]
+    #[must_use]
+    pub fn auth_private_key(mut self, path: Option<PathBuf>) -> Self {
+        self.auth_private_key = path;
+        self
+    }
+
+    /// Build the `AuthConfig`
+    #[inline]
+    #[must_use]
+    pub fn build(self) -> AuthConfig {
+        AuthConfig {
+            auth_public_key: self.auth_public_key,
+            auth_private_key: self.auth_private_key,
         }
     }
 }

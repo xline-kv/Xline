@@ -46,26 +46,110 @@ impl XlineServerConfig {
     /// Generates a new `XlineServerConfig` object
     #[must_use]
     #[inline]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        cluster: ClusterConfig,
-        storage: StorageConfig,
-        log: LogConfig,
-        trace: TraceConfig,
-        auth: AuthConfig,
-        compact: CompactConfig,
-        tls: TlsConfig,
-        metrics: MetricsConfig,
-    ) -> Self {
-        Self {
-            cluster,
-            storage,
-            log,
-            trace,
-            auth,
-            compact,
-            tls,
-            metrics,
+    pub fn builder() -> Builder {
+        Builder::default()
+    }
+}
+
+/// Builder for `XlineServerConfig`
+#[derive(Debug, Default)]
+pub struct Builder {
+    /// cluster configuration object
+    cluster: Option<ClusterConfig>,
+    /// xline storage configuration object
+    storage: Option<StorageConfig>,
+    /// log configuration object
+    log: Option<LogConfig>,
+    /// trace configuration object
+    trace: Option<TraceConfig>,
+    /// auth configuration object
+    auth: Option<AuthConfig>,
+    /// compactor configuration object
+    compact: Option<CompactConfig>,
+    /// tls configuration object
+    tls: Option<TlsConfig>,
+    /// Metrics config
+    metrics: Option<MetricsConfig>,
+}
+
+impl Builder {
+    /// set the cluster object
+    #[must_use]
+    #[inline]
+    pub fn cluster(mut self, cluster: ClusterConfig) -> Self {
+        self.cluster = Some(cluster);
+        self
+    }
+
+    /// set the storage object
+    #[must_use]
+    #[inline]
+    pub fn storage(mut self, storage: StorageConfig) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+
+    /// set the log object
+    #[must_use]
+    #[inline]
+    pub fn log(mut self, log: LogConfig) -> Self {
+        self.log = Some(log);
+        self
+    }
+
+    /// set the trace object
+    #[must_use]
+    #[inline]
+    pub fn trace(mut self, trace: TraceConfig) -> Self {
+        self.trace = Some(trace);
+        self
+    }
+
+    /// set the trace object
+    #[must_use]
+    #[inline]
+    pub fn auth(mut self, auth: AuthConfig) -> Self {
+        self.auth = Some(auth);
+        self
+    }
+
+    /// set the compact object
+    #[must_use]
+    #[inline]
+    pub fn compact(mut self, compact: CompactConfig) -> Self {
+        self.compact = Some(compact);
+        self
+    }
+
+    /// set the compact object
+    #[must_use]
+    #[inline]
+    pub fn tls(mut self, tls: TlsConfig) -> Self {
+        self.tls = Some(tls);
+        self
+    }
+
+    /// set the compact object
+    #[must_use]
+    #[inline]
+    pub fn metrics(mut self, metrics: MetricsConfig) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    /// Build the `XlineServerConfig`
+    #[must_use]
+    #[inline]
+    pub fn build(self) -> XlineServerConfig {
+        XlineServerConfig {
+            cluster: self.cluster.unwrap_or_default(),
+            storage: self.storage.unwrap_or_default(),
+            log: self.log.unwrap_or_default(),
+            trace: self.trace.unwrap_or_default(),
+            auth: self.auth.unwrap_or_default(),
+            compact: self.compact.unwrap_or_default(),
+            tls: self.tls.unwrap_or_default(),
+            metrics: self.metrics.unwrap_or_default(),
         }
     }
 }
@@ -95,21 +179,11 @@ pub struct XlineServerTimeout {
 }
 
 impl XlineServerTimeout {
-    /// Create a new server timeout
+    /// Create a builder for `XlineServerTimeout`
     #[must_use]
     #[inline]
-    pub fn new(
-        range_retry_timeout: Duration,
-        compact_timeout: Duration,
-        sync_victims_interval: Duration,
-        watch_progress_notify_interval: Duration,
-    ) -> Self {
-        Self {
-            range_retry_timeout,
-            compact_timeout,
-            sync_victims_interval,
-            watch_progress_notify_interval,
-        }
+    pub fn builder() -> XlineServerTimeoutBuilder {
+        XlineServerTimeoutBuilder::default()
     }
 }
 
@@ -121,6 +195,65 @@ impl Default for XlineServerTimeout {
             compact_timeout: default_compact_timeout(),
             sync_victims_interval: default_sync_victims_interval(),
             watch_progress_notify_interval: default_watch_progress_notify_interval(),
+        }
+    }
+}
+
+/// Builder for `XlineServerTimeout`
+#[derive(Debug, Default, Clone, Copy)]
+pub struct XlineServerTimeoutBuilder {
+    /// Range request retry timeout settings
+    range_retry_timeout: Option<Duration>,
+    /// Range request retry timeout settings
+    compact_timeout: Option<Duration>,
+    /// Sync victims interval
+    sync_victims_interval: Option<Duration>,
+    /// Watch progress notify interval settings
+    watch_progress_notify_interval: Option<Duration>,
+}
+
+impl XlineServerTimeoutBuilder {
+    /// Set the range retry timeout
+    #[must_use]
+    #[inline]
+    pub fn range_retry_timeout(mut self, timeout: Duration) -> Self {
+        self.range_retry_timeout = Some(timeout);
+        self
+    }
+
+    /// Set the compact timeout
+    #[must_use]
+    #[inline]
+    pub fn compact_timeout(mut self, timeout: Duration) -> Self {
+        self.compact_timeout = Some(timeout);
+        self
+    }
+
+    /// Set the sync victims interval
+    #[must_use]
+    #[inline]
+    pub fn sync_victims_interval(mut self, interval: Duration) -> Self {
+        self.sync_victims_interval = Some(interval);
+        self
+    }
+
+    /// Set the watch progress notify interval
+    #[must_use]
+    #[inline]
+    pub fn watch_progress_notify_interval(mut self, interval: Duration) -> Self {
+        self.watch_progress_notify_interval = Some(interval);
+        self
+    }
+
+    /// Build the `XlineServerTimeout` instance
+    #[must_use]
+    #[inline]
+    pub fn build(self) -> XlineServerTimeout {
+        XlineServerTimeout {
+            range_retry_timeout: self.range_retry_timeout.unwrap_or_default(),
+            compact_timeout: self.compact_timeout.unwrap_or_default(),
+            sync_victims_interval: self.sync_victims_interval.unwrap_or_default(),
+            watch_progress_notify_interval: self.watch_progress_notify_interval.unwrap_or_default(),
         }
     }
 }
@@ -214,22 +347,22 @@ mod tests {
             .build()
             .unwrap();
 
-        let client_config = ClientConfig::new(
-            default_client_wait_synced_timeout(),
-            default_propose_timeout(),
-            Duration::from_secs(5),
-            Duration::from_secs(50),
-            default_retry_count(),
-            default_fixed_backoff(),
-            default_client_id_keep_alive_interval(),
-        );
+        let client_config = ClientConfig::builder()
+            .wait_synced_timeout(default_client_wait_synced_timeout())
+            .propose_timeout(default_propose_timeout())
+            .initial_retry_timeout(Duration::from_secs(5))
+            .max_retry_timeout(Duration::from_secs(50))
+            .retry_count(default_retry_count())
+            .fixed_backoff(default_fixed_backoff())
+            .keep_alive_interval(default_client_id_keep_alive_interval())
+            .build();
 
-        let server_timeout = XlineServerTimeout::new(
-            Duration::from_secs(3),
-            Duration::from_secs(5),
-            Duration::from_millis(20),
-            Duration::from_secs(1),
-        );
+        let server_timeout = XlineServerTimeout::builder()
+            .range_retry_timeout(Duration::from_secs(3))
+            .compact_timeout(Duration::from_secs(5))
+            .sync_victims_interval(Duration::from_millis(20))
+            .watch_progress_notify_interval(Duration::from_secs(1))
+            .build();
 
         assert_eq!(
             *config.cluster(),
@@ -257,44 +390,47 @@ mod tests {
 
         assert_eq!(
             *config.storage(),
-            StorageConfig::new(EngineConfig::Memory, default_quota())
+            StorageConfig::builder()
+                .engine(EngineConfig::Memory)
+                .quota(default_quota())
+                .build()
         );
 
         assert_eq!(
             *config.log(),
-            LogConfig::new(
-                Some(PathBuf::from("/var/log/xline")),
-                RotationConfig::Daily,
-                LevelConfig::INFO
-            )
+            LogConfig::builder()
+                .path(Some(PathBuf::from("/var/log/xline")))
+                .rotation(RotationConfig::Daily)
+                .level(LevelConfig::INFO)
+                .build()
         );
         assert_eq!(
             *config.trace(),
-            TraceConfig::new(
-                false,
-                false,
-                PathBuf::from("./jaeger_jsons"),
-                LevelConfig::INFO
-            )
+            TraceConfig::builder()
+                .jaeger_online(false)
+                .jaeger_offline(false)
+                .jaeger_output_dir(PathBuf::from("./jaeger_jsons"))
+                .jaeger_level(LevelConfig::INFO)
+                .build()
         );
 
         assert_eq!(
             *config.compact(),
-            CompactConfig::new(
-                123,
-                Duration::from_millis(5),
-                Some(AutoCompactConfig::Periodic(Duration::from_secs(
+            CompactConfig::builder()
+                .compact_batch_size(123)
+                .compact_sleep_interval(Duration::from_millis(5))
+                .auto_compact_config(Some(AutoCompactConfig::Periodic(Duration::from_secs(
                     10 * 60 * 60
-                )))
-            )
+                ))))
+                .build()
         );
 
         assert_eq!(
             *config.auth(),
-            AuthConfig::new(
-                Some(PathBuf::from("./public_key.pem")),
-                Some(PathBuf::from("./private_key.pem"))
-            )
+            AuthConfig::builder()
+                .auth_public_key(Some(PathBuf::from("./public_key.pem")))
+                .auth_private_key(Some(PathBuf::from("./private_key.pem")))
+                .build()
         );
 
         assert_eq!(
@@ -309,14 +445,14 @@ mod tests {
 
         assert_eq!(
             *config.metrics(),
-            MetricsConfig::new(
-                true,
-                9100,
-                "/metrics".to_owned(),
-                true,
-                "http://some-endpoint.com:4396".to_owned(),
-                PushProtocol::HTTP
-            ),
+            MetricsConfig::builder()
+                .enable(true)
+                .port(9100)
+                .path("/metrics".to_owned())
+                .push(true)
+                .push_endpoint("http://some-endpoint.com:4396".to_owned())
+                .push_protocol(PushProtocol::HTTP)
+                .build(),
         );
     }
 
@@ -388,20 +524,20 @@ mod tests {
 
         assert_eq!(
             *config.log(),
-            LogConfig::new(
-                Some(PathBuf::from("/var/log/xline")),
-                RotationConfig::Never,
-                LevelConfig::INFO
-            )
+            LogConfig::builder()
+                .path(Some(PathBuf::from("/var/log/xline")))
+                .rotation(RotationConfig::Never)
+                .level(LevelConfig::INFO)
+                .build()
         );
         assert_eq!(
             *config.trace(),
-            TraceConfig::new(
-                false,
-                false,
-                PathBuf::from("./jaeger_jsons"),
-                LevelConfig::INFO
-            )
+            TraceConfig::builder()
+                .jaeger_online(false)
+                .jaeger_offline(false)
+                .jaeger_output_dir(PathBuf::from("./jaeger_jsons"))
+                .jaeger_level(LevelConfig::INFO)
+                .build()
         );
         assert_eq!(*config.compact(), CompactConfig::default());
         assert_eq!(*config.auth(), AuthConfig::default());
@@ -454,11 +590,11 @@ mod tests {
 
         assert_eq!(
             *config.compact(),
-            CompactConfig::new(
-                default_compact_batch_size(),
-                default_compact_sleep_interval(),
-                Some(AutoCompactConfig::Revision(10000))
-            )
+            CompactConfig::builder()
+                .compact_batch_size(default_compact_batch_size())
+                .compact_sleep_interval(default_compact_sleep_interval())
+                .auto_compact_config(Some(AutoCompactConfig::Revision(10000)))
+                .build()
         );
     }
 }

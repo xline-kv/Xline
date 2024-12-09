@@ -241,14 +241,26 @@ impl Cluster {
         quota: u64,
     ) -> XlineServerConfig {
         let cluster = ClusterConfig::default();
-        let storage = StorageConfig::new(EngineConfig::RocksDB(path), quota);
+        let storage = StorageConfig::builder()
+            .engine(EngineConfig::RocksDB(path))
+            .quota(quota)
+            .build();
         let log = LogConfig::default();
         let trace = TraceConfig::default();
         let auth = AuthConfig::default();
         let compact = CompactConfig::default();
         let tls = TlsConfig::default();
         let metrics = MetricsConfig::default();
-        XlineServerConfig::new(cluster, storage, log, trace, auth, compact, tls, metrics)
+        XlineServerConfig::builder()
+            .cluster(cluster)
+            .storage(storage)
+            .log(log)
+            .trace(trace)
+            .auth(auth)
+            .compact(compact)
+            .tls(tls)
+            .metrics(metrics)
+            .build()
     }
 
     pub fn default_rocks_config_with_path(path: PathBuf) -> XlineServerConfig {
@@ -288,16 +300,16 @@ impl Cluster {
             *old_cluster.server_timeout(),
             initial_cluster_state,
         );
-        XlineServerConfig::new(
-            new_cluster,
-            base_config.storage().clone(),
-            base_config.log().clone(),
-            base_config.trace().clone(),
-            base_config.auth().clone(),
-            *base_config.compact(),
-            base_config.tls().clone(),
-            base_config.metrics().clone(),
-        )
+        XlineServerConfig::builder()
+            .cluster(new_cluster)
+            .storage(base_config.storage().clone())
+            .log(base_config.log().clone())
+            .trace(base_config.trace().clone())
+            .auth(base_config.auth().clone())
+            .compact(*base_config.compact())
+            .tls(base_config.tls().clone())
+            .metrics(base_config.metrics().clone())
+            .build()
     }
 }
 
