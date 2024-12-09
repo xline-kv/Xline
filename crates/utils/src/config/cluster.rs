@@ -1,3 +1,4 @@
+use derive_builder::Builder;
 use getset::Getters;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -6,7 +7,8 @@ use super::prelude::{ClientConfig, CurpConfig, XlineServerTimeout};
 
 /// Cluster configuration object, including cluster relevant configuration fields
 #[allow(clippy::module_name_repetitions)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters, Builder)]
+#[builder(pattern = "owned", default)]
 pub struct ClusterConfig {
     /// Get xline server name
     #[getset(get = "pub")]

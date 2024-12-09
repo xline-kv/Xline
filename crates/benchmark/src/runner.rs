@@ -159,15 +159,17 @@ impl CommandRunner {
 
     /// Create clients
     async fn create_clients(&self) -> Result<Vec<BenchClient>> {
-        let client_options = ClientOptions::default().with_client_config(ClientConfig::new(
-            Duration::from_secs(10),
-            Duration::from_secs(5),
-            Duration::from_millis(250),
-            Duration::from_millis(10_000),
-            3,
-            true,
-            Duration::from_secs(1),
-        ));
+        let client_options = ClientOptions::default().with_client_config(
+            ClientConfig::builder()
+                .wait_synced_timeout(Duration::from_secs(10))
+                .propose_timeout(Duration::from_secs(5))
+                .initial_retry_timeout(Duration::from_millis(250))
+                .max_retry_timeout(Duration::from_millis(10_000))
+                .retry_count(3)
+                .fixed_backoff(true)
+                .keep_alive_interval(Duration::from_secs(1))
+                .build(),
+        );
         let addrs = self
             .args
             .endpoints

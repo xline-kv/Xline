@@ -50,25 +50,11 @@ pub struct MetricsConfig {
 }
 
 impl MetricsConfig {
-    /// Create a new `MetricsConfig`
+    /// Create a new `MetricsConfig` builder
     #[must_use]
     #[inline]
-    pub fn new(
-        enable: bool,
-        port: u16,
-        path: String,
-        push: bool,
-        push_endpoint: String,
-        push_protocol: PushProtocol,
-    ) -> Self {
-        Self {
-            enable,
-            port,
-            path,
-            push,
-            push_endpoint,
-            push_protocol,
-        }
+    pub fn builder() -> Builder {
+        Builder::default()
     }
 }
 
@@ -82,6 +68,91 @@ impl Default for MetricsConfig {
             push: default_metrics_push(),
             push_endpoint: default_metrics_push_endpoint(),
             push_protocol: default_metrics_push_protocol(),
+        }
+    }
+}
+
+/// Builder for `MetricsConfig`
+#[derive(Debug, Default)]
+pub struct Builder {
+    /// Enable or not
+    enable: Option<bool>,
+    /// The http port to expose
+    port: Option<u16>,
+    /// The http path to expose
+    path: Option<String>,
+    /// Enable push or not
+    push: Option<bool>,
+    /// Push endpoint
+    push_endpoint: Option<String>,
+    /// Push protocol
+    push_protocol: Option<PushProtocol>,
+}
+
+impl Builder {
+    /// Set the `enable` flag
+    #[must_use]
+    #[inline]
+    pub fn enable(mut self, enable: bool) -> Self {
+        self.enable = Some(enable);
+        self
+    }
+
+    /// Set the `port`
+    #[must_use]
+    #[inline]
+    pub fn port(mut self, port: u16) -> Self {
+        self.port = Some(port);
+        self
+    }
+
+    /// Set the `path`
+    #[must_use]
+    #[inline]
+    pub fn path<S: Into<String>>(mut self, path: S) -> Self {
+        self.path = Some(path.into());
+        self
+    }
+
+    /// Set the `push` flag
+    #[must_use]
+    #[inline]
+    pub fn push(mut self, push: bool) -> Self {
+        self.push = Some(push);
+        self
+    }
+
+    /// Set the `push_endpoint`
+    #[must_use]
+    #[inline]
+    pub fn push_endpoint<S: Into<String>>(mut self, push_endpoint: S) -> Self {
+        self.push_endpoint = Some(push_endpoint.into());
+        self
+    }
+
+    /// Set the `push_protocol`
+    #[must_use]
+    #[inline]
+    pub fn push_protocol(mut self, push_protocol: PushProtocol) -> Self {
+        self.push_protocol = Some(push_protocol);
+        self
+    }
+
+    /// Build the `MetricsConfig`
+    #[must_use]
+    #[inline]
+    pub fn build(self) -> MetricsConfig {
+        MetricsConfig {
+            enable: self.enable.unwrap_or_else(default_metrics_enable),
+            port: self.port.unwrap_or_else(default_metrics_port),
+            path: self.path.unwrap_or_else(default_metrics_path),
+            push: self.push.unwrap_or_else(default_metrics_push),
+            push_endpoint: self
+                .push_endpoint
+                .unwrap_or_else(default_metrics_push_endpoint),
+            push_protocol: self
+                .push_protocol
+                .unwrap_or_else(default_metrics_push_protocol),
         }
     }
 }

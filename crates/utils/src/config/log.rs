@@ -64,14 +64,58 @@ pub const fn default_log_level() -> LevelConfig {
 }
 
 impl LogConfig {
-    /// Generate a new `LogConfig` object
+    /// Create a builder for `LogConfig`
     #[must_use]
     #[inline]
-    pub fn new(path: Option<PathBuf>, rotation: RotationConfig, level: LevelConfig) -> Self {
-        Self {
-            path,
-            rotation,
-            level,
+    pub fn builder() -> Builder {
+        Builder::default()
+    }
+}
+
+/// Builder for `LogConfig`
+#[derive(Default, Debug)]
+pub struct Builder {
+    /// Log file path
+    path: Option<PathBuf>,
+    /// Log rotation strategy
+    rotation: Option<RotationConfig>,
+    /// Log verbosity level
+    level: Option<LevelConfig>,
+}
+
+impl Builder {
+    /// Set the log file path
+    #[inline]
+    #[must_use]
+    pub fn path(mut self, path: Option<PathBuf>) -> Self {
+        self.path = path;
+        self
+    }
+
+    /// Set the log rotation strategy
+    #[inline]
+    #[must_use]
+    pub fn rotation(mut self, rotation: RotationConfig) -> Self {
+        self.rotation = Some(rotation);
+        self
+    }
+
+    /// Set the log verbosity level
+    #[inline]
+    #[must_use]
+    pub fn level(mut self, level: LevelConfig) -> Self {
+        self.level = Some(level);
+        self
+    }
+
+    /// Build the `LogConfig` and apply defaults where needed
+    #[inline]
+    #[must_use]
+    pub fn build(self) -> LogConfig {
+        LogConfig {
+            path: self.path,
+            rotation: self.rotation.unwrap_or_else(default_rotation),
+            level: self.level.unwrap_or_else(default_log_level),
         }
     }
 }
