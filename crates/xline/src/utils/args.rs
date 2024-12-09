@@ -233,7 +233,10 @@ impl From<ServerArgs> for XlineServerConfig {
             &_ => unreachable!("xline only supports memory and rocksdb engine"),
         };
 
-        let storage = StorageConfig::new(engine, args.quota.unwrap_or_else(default_quota));
+        let storage = StorageConfig::builder()
+            .engine(engine)
+            .quota(args.quota.unwrap_or_else(default_quota))
+            .build();
         let Ok(curp_config) = CurpConfigBuilder::default()
             .heartbeat_interval(
                 args.heartbeat_interval
@@ -255,29 +258,48 @@ impl From<ServerArgs> for XlineServerConfig {
         else {
             panic!("failed to create curp config")
         };
-        let client_config = ClientConfig::new(
-            args.client_wait_synced_timeout
-                .unwrap_or_else(default_client_wait_synced_timeout),
-            args.client_propose_timeout
-                .unwrap_or_else(default_propose_timeout),
-            args.client_initial_retry_timeout
-                .unwrap_or_else(default_initial_retry_timeout),
-            args.client_max_retry_timeout
-                .unwrap_or_else(default_max_retry_timeout),
-            args.retry_count.unwrap_or_else(default_retry_count),
-            args.client_fixed_backoff,
-            args.client_keep_alive_interval
-                .unwrap_or_else(default_client_id_keep_alive_interval),
-        );
-        let server_timeout = XlineServerTimeout::new(
-            args.range_retry_timeout
-                .unwrap_or_else(default_range_retry_timeout),
-            args.compact_timeout.unwrap_or_else(default_compact_timeout),
-            args.sync_victims_interval
-                .unwrap_or_else(default_sync_victims_interval),
-            args.watch_progress_notify_interval
-                .unwrap_or_else(default_watch_progress_notify_interval),
-        );
+
+        let client_config = ClientConfig::builder()
+            .wait_synced_timeout(
+                args.client_wait_synced_timeout
+                    .unwrap_or_else(default_client_wait_synced_timeout),
+            )
+            .propose_timeout(
+                args.client_propose_timeout
+                    .unwrap_or_else(default_propose_timeout),
+            )
+            .initial_retry_timeout(
+                args.client_initial_retry_timeout
+                    .unwrap_or_else(default_initial_retry_timeout),
+            )
+            .max_retry_timeout(
+                args.client_max_retry_timeout
+                    .unwrap_or_else(default_max_retry_timeout),
+            )
+            .retry_count(args.retry_count.unwrap_or_else(default_retry_count))
+            .fixed_backoff(args.client_fixed_backoff)
+            .keep_alive_interval(
+                args.client_keep_alive_interval
+                    .unwrap_or_else(default_client_id_keep_alive_interval),
+            )
+            .build();
+
+        let server_timeout = XlineServerTimeout::builder()
+            .range_retry_timeout(
+                args.range_retry_timeout
+                    .unwrap_or_else(default_range_retry_timeout),
+            )
+            .compact_timeout(args.compact_timeout.unwrap_or_else(default_compact_timeout))
+            .sync_victims_interval(
+                args.sync_victims_interval
+                    .unwrap_or_else(default_sync_victims_interval),
+            )
+            .watch_progress_notify_interval(
+                args.watch_progress_notify_interval
+                    .unwrap_or_else(default_watch_progress_notify_interval),
+            )
+            .build();
+
         let initial_cluster_state = args.initial_cluster_state.unwrap_or_default();
         let cluster = ClusterConfig::new(
             args.name,
@@ -292,14 +314,22 @@ impl From<ServerArgs> for XlineServerConfig {
             server_timeout,
             initial_cluster_state,
         );
-        let log = LogConfig::new(args.log_file, args.log_rotate, args.log_level);
-        let trace = TraceConfig::new(
-            args.jaeger_online,
-            args.jaeger_offline,
-            args.jaeger_output_dir,
-            args.jaeger_level,
-        );
-        let auth = AuthConfig::new(args.auth_public_key, args.auth_private_key);
+        let log = LogConfig::builder()
+            .path(args.log_file)
+            .rotation(args.log_rotate)
+            .level(args.log_level)
+            .build();
+
+        let trace = TraceConfig::builder()
+            .jaeger_online(args.jaeger_online)
+            .jaeger_offline(args.jaeger_offline)
+            .jaeger_output_dir(args.jaeger_output_dir)
+            .jaeger_level(args.jaeger_level)
+            .build();
+        let auth = AuthConfig::builder()
+            .auth_public_key(args.auth_public_key)
+            .auth_private_key(args.auth_private_key)
+            .build();
         let auto_compactor_cfg = if let Some(mode) = args.auto_compact_mode {
             match mode.as_str() {
                 "periodic" => {
@@ -321,29 +351,42 @@ impl From<ServerArgs> for XlineServerConfig {
         } else {
             None
         };
-        let compact = CompactConfig::new(
-            args.compact_batch_size,
-            args.compact_sleep_interval
-                .unwrap_or_else(default_compact_sleep_interval),
-            auto_compactor_cfg,
-        );
-        let tls = TlsConfig::new(
-            args.peer_ca_cert_path,
-            args.peer_cert_path,
-            args.peer_key_path,
-            args.client_ca_cert_path,
-            args.client_cert_path,
-            args.client_key_path,
-        );
-        let metrics = MetricsConfig::new(
-            args.metrics_enable,
-            args.metrics_port,
-            args.metrics_path,
-            args.metrics_push,
-            args.metrics_push_endpoint,
-            args.metrics_push_protocol,
-        );
-        XlineServerConfig::new(cluster, storage, log, trace, auth, compact, tls, metrics)
+        let compact = CompactConfig::builder()
+            .compact_batch_size(args.compact_batch_size)
+            .compact_sleep_interval(
+                args.compact_sleep_interval
+                    .unwrap_or_else(default_compact_sleep_interval),
+            )
+            .auto_compact_config(auto_compactor_cfg)
+            .build();
+        let tls = TlsConfig::builder()
+            .peer_ca_cert_path(args.peer_ca_cert_path)
+            .peer_cert_path(args.peer_cert_path)
+            .peer_key_path(args.peer_key_path)
+            .client_ca_cert_path(args.client_ca_cert_path)
+            .client_cert_path(args.client_cert_path)
+            .client_key_path(args.client_key_path)
+            .build();
+
+        let metrics = MetricsConfig::builder()
+            .enable(args.metrics_enable)
+            .port(args.metrics_port)
+            .path(args.metrics_path)
+            .push(args.metrics_push)
+            .push_endpoint(args.metrics_push_endpoint)
+            .push_protocol(args.metrics_push_protocol)
+            .build();
+
+        XlineServerConfig::builder()
+            .cluster(cluster)
+            .storage(storage)
+            .log(log)
+            .trace(trace)
+            .auth(auth)
+            .compact(compact)
+            .tls(tls)
+            .metrics(metrics)
+            .build()
     }
 }
 

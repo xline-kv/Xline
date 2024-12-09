@@ -217,16 +217,21 @@ fn configs_with_auth(size: usize) -> Vec<XlineServerConfig> {
         )
     })
     .map(|(auth_public_key, auth_private_key)| {
-        XlineServerConfig::new(
-            ClusterConfig::default(),
-            StorageConfig::default(),
-            LogConfig::default(),
-            TraceConfig::default(),
-            AuthConfig::new(auth_public_key, auth_private_key),
-            CompactConfig::default(),
-            TlsConfig::default(),
-            MetricsConfig::default(),
-        )
+        XlineServerConfig::builder()
+            .cluster(ClusterConfig::default())
+            .storage(StorageConfig::default())
+            .log(LogConfig::default())
+            .trace(TraceConfig::default())
+            .auth(
+                AuthConfig::builder()
+                    .auth_public_key(auth_public_key)
+                    .auth_private_key(auth_private_key)
+                    .build(),
+            )
+            .compact(CompactConfig::default())
+            .tls(TlsConfig::default())
+            .metrics(MetricsConfig::default())
+            .build()
     })
     .take(size)
     .collect()

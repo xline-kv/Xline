@@ -37,20 +37,69 @@ impl Default for TraceConfig {
 }
 
 impl TraceConfig {
-    /// Generate a new `TraceConfig` object
-    #[must_use]
+    /// Create a builder for `TraceConfig`
     #[inline]
-    pub fn new(
-        jaeger_online: bool,
-        jaeger_offline: bool,
-        jaeger_output_dir: PathBuf,
-        jaeger_level: LevelConfig,
-    ) -> Self {
-        Self {
-            jaeger_online,
-            jaeger_offline,
-            jaeger_output_dir,
-            jaeger_level,
+    #[must_use]
+    pub fn builder() -> Builder {
+        Builder::default()
+    }
+}
+
+/// Builder for `TraceConfig`
+#[derive(Default, Debug)]
+pub struct Builder {
+    /// Open jaeger online, sending data to jaeger agent directly
+    jaeger_online: Option<bool>,
+    /// Open jaeger offline, saving data to the `jaeger_output_dir`
+    jaeger_offline: Option<bool>,
+    /// The dir path to save the data when `jaeger_offline` is on
+    jaeger_output_dir: Option<PathBuf>,
+    /// The verbosity level of tracing
+    jaeger_level: Option<LevelConfig>,
+}
+
+impl Builder {
+    /// Set `jaeger_online`
+    #[inline]
+    #[must_use]
+    pub fn jaeger_online(mut self, value: bool) -> Self {
+        self.jaeger_online = Some(value);
+        self
+    }
+
+    /// Set `jaeger_offline`
+    #[inline]
+    #[must_use]
+    pub fn jaeger_offline(mut self, value: bool) -> Self {
+        self.jaeger_offline = Some(value);
+        self
+    }
+
+    /// Set `jaeger_output_dir`
+    #[inline]
+    #[must_use]
+    pub fn jaeger_output_dir(mut self, value: PathBuf) -> Self {
+        self.jaeger_output_dir = Some(value);
+        self
+    }
+
+    /// Set `jaeger_level`
+    #[inline]
+    #[must_use]
+    pub fn jaeger_level(mut self, value: LevelConfig) -> Self {
+        self.jaeger_level = Some(value);
+        self
+    }
+
+    /// Build the `TraceConfig` object
+    #[inline]
+    #[must_use]
+    pub fn build(self) -> TraceConfig {
+        TraceConfig {
+            jaeger_online: self.jaeger_online.unwrap_or(false),
+            jaeger_offline: self.jaeger_offline.unwrap_or(false),
+            jaeger_output_dir: self.jaeger_output_dir.unwrap_or_else(|| "".into()),
+            jaeger_level: self.jaeger_level.unwrap_or_else(default_log_level),
         }
     }
 }
