@@ -7,7 +7,7 @@ use engine::{
 };
 use prost::Message;
 use utils::{
-    config::EngineConfig,
+    config::prelude::EngineConfig,
     table_names::{
         ALARM_TABLE, AUTH_TABLE, KV_TABLE, LEASE_TABLE, META_TABLE, ROLE_TABLE, USER_TABLE,
         XLINE_TABLES,

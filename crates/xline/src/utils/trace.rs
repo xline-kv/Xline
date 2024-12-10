@@ -9,7 +9,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{fmt::format, Layer};
-use utils::config::{file_appender, LogConfig, RotationConfig, TraceConfig};
+use utils::config::prelude::{file_appender, LogConfig, RotationConfig, TraceConfig};
 
 /// Return a Box trait from the config
 fn generate_writer(name: &str, log_config: &LogConfig) -> Box<dyn std::io::Write + Send> {

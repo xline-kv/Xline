@@ -162,7 +162,7 @@ use std::{path::PathBuf, time::Duration};
 use anyhow::Result;
 use clap::{arg, value_parser, Command};
 use command::compaction;
-use ext_utils::config::ClientConfig;
+use ext_utils::config::prelude::ClientConfig;
 use tokio::fs;
 use tonic::transport::{Certificate, ClientTlsConfig};
 use xline_client::{Client, ClientOptions};
@@ -268,15 +268,27 @@ async fn main() -> Result<()> {
     let matches = cli().get_matches();
     let user_opt = parse_user(&matches)?;
     let endpoints = matches.get_many::<String>("endpoints").expect("Required");
-    let client_config = ClientConfig::new(
-        Duration::from_secs(*matches.get_one("wait_synced_timeout").expect("Required")),
-        Duration::from_secs(*matches.get_one("propose_timeout").expect("Required")),
-        Duration::from_millis(*matches.get_one("initial_retry_timeout").expect("Required")),
-        Duration::from_millis(*matches.get_one("max_retry_timeout").expect("Required")),
-        *matches.get_one("retry_count").expect("Required"),
-        true,
-        Duration::from_millis(*matches.get_one("keep_alive_interval").expect("Required")),
-    );
+
+    let client_config = ClientConfig::builder()
+        .wait_synced_timeout(Duration::from_secs(
+            *matches.get_one("wait_synced_timeout").expect("Required"),
+        ))
+        .propose_timeout(Duration::from_secs(
+            *matches.get_one("propose_timeout").expect("Required"),
+        ))
+        .initial_retry_timeout(Duration::from_millis(
+            *matches.get_one("initial_retry_timeout").expect("Required"),
+        ))
+        .max_retry_timeout(Duration::from_millis(
+            *matches.get_one("max_retry_timeout").expect("Required"),
+        ))
+        .retry_count(*matches.get_one("retry_count").expect("Required"))
+        .fixed_backoff(true)
+        .keep_alive_interval(Duration::from_millis(
+            *matches.get_one("keep_alive_interval").expect("Required"),
+        ))
+        .build();
+
     let ca_path: Option<PathBuf> = matches.get_one("ca_cert_pem_path").cloned();
     let tls_config = match ca_path {
         Some(path) => {

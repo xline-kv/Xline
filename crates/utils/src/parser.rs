@@ -4,8 +4,8 @@ use clippy_utilities::OverflowArithmetic;
 use regex::Regex;
 use thiserror::Error;
 
-use crate::config::{
-    ClusterRange, InitialClusterState, LevelConfig, MetricsPushProtocol, RotationConfig,
+use crate::config::prelude::{
+    InitialClusterState, LevelConfig, PushProtocol, RangeBound, RotationConfig,
 };
 
 /// seconds per minute
@@ -76,9 +76,9 @@ pub fn parse_members(s: &str) -> Result<HashMap<String, Vec<String>>, ConfigPars
 ///
 /// Return error when parsing the given string to `ClusterRange` failed
 #[inline]
-pub fn parse_range(s: &str) -> Result<ClusterRange, ConfigParseError> {
+pub fn parse_range(s: &str) -> Result<RangeBound, ConfigParseError> {
     if let Some((start, end)) = s.split_once("..") {
-        Ok(ClusterRange {
+        Ok(RangeBound {
             start: start.parse::<u64>()?,
             end: end.parse::<u64>()?,
         })
@@ -286,10 +286,10 @@ pub fn parse_batch_bytes(s: &str) -> Result<u64, ConfigParseError> {
 ///
 /// Return error when parsing the given string to `MetricsPushProtocol` failed
 #[inline]
-pub fn parse_metrics_push_protocol(s: &str) -> Result<MetricsPushProtocol, ConfigParseError> {
+pub fn parse_metrics_push_protocol(s: &str) -> Result<PushProtocol, ConfigParseError> {
     match s {
-        "http" => Ok(MetricsPushProtocol::HTTP),
-        "grpc" => Ok(MetricsPushProtocol::GRPC),
+        "http" => Ok(PushProtocol::HTTP),
+        "grpc" => Ok(PushProtocol::GRPC),
         _ => Err(ConfigParseError::InvalidValue(format!(
             "the metrics push protocol should be one of 'http' or 'grpc' ({s})"
         ))),
@@ -409,11 +409,11 @@ mod test {
     fn test_parse_metrics_push_protocol() {
         assert_eq!(
             parse_metrics_push_protocol("http").unwrap(),
-            MetricsPushProtocol::HTTP
+            PushProtocol::HTTP
         );
         assert_eq!(
             parse_metrics_push_protocol("grpc").unwrap(),
-            MetricsPushProtocol::GRPC
+            PushProtocol::GRPC
         );
         assert!(parse_metrics_push_protocol("thrift").is_err());
     }
