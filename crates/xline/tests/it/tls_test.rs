@@ -105,7 +105,7 @@ fn basic_tls_configs(size: usize) -> Vec<XlineServerConfig> {
             .peer_ca_cert_path(None)
             .peer_cert_path(Some(PathBuf::from("../../fixtures/server.crt")))
             .peer_key_path(Some(PathBuf::from("../../fixtures/server.key")))
-            .peer_ca_cert_path(Some(PathBuf::from("../../fixtures/ca.crt")))
+            .client_ca_cert_path(Some(PathBuf::from("../../fixtures/ca.crt")))
             .client_cert_path(None)
             .client_key_path(None)
             .build(),
