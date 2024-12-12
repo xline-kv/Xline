@@ -595,7 +595,7 @@ mod test {
     use engine::TransactionApi;
     use test_macros::abort_on_panic;
     use tokio::time::{sleep, timeout};
-    use utils::config::EngineConfig;
+    use utils::config::prelude::EngineConfig;
     use xlineapi::RequestWrapper;
 
     use super::*;

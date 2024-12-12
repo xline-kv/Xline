@@ -36,7 +36,7 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::debug;
 use utils::{
-    config::{ClientConfig, CurpConfigBuilder, EngineConfig},
+    config::prelude::{ClientConfig, CurpConfigBuilder, EngineConfig},
     task_manager::TaskManager,
 };
 

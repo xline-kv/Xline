@@ -3,7 +3,7 @@ use std::{fs, iter, path::PathBuf};
 use etcd_client::ConnectOptions;
 use test_macros::abort_on_panic;
 use tonic::transport::{Certificate, ClientTlsConfig, Identity};
-use utils::config::{
+use utils::config::prelude::{
     AuthConfig, ClusterConfig, CompactConfig, LogConfig, MetricsConfig, StorageConfig, TlsConfig,
     TraceConfig, XlineServerConfig,
 };
@@ -77,16 +77,16 @@ async fn test_certificate_authenticate() {
 fn configs_with_tls_config(size: usize, tls_config: TlsConfig) -> Vec<XlineServerConfig> {
     iter::repeat(tls_config)
         .map(|tls_config| {
-            XlineServerConfig::new(
-                ClusterConfig::default(),
-                StorageConfig::default(),
-                LogConfig::default(),
-                TraceConfig::default(),
-                AuthConfig::default(),
-                CompactConfig::default(),
-                tls_config,
-                MetricsConfig::default(),
-            )
+            XlineServerConfig::builder()
+                .cluster(ClusterConfig::default())
+                .storage(StorageConfig::default())
+                .log(LogConfig::default())
+                .trace(TraceConfig::default())
+                .auth(AuthConfig::default())
+                .compact(CompactConfig::default())
+                .tls(tls_config)
+                .metrics(MetricsConfig::default())
+                .build()
         })
         .take(size)
         .collect()
@@ -101,14 +101,14 @@ fn basic_tls_client_config() -> ClientTlsConfig {
 fn basic_tls_configs(size: usize) -> Vec<XlineServerConfig> {
     configs_with_tls_config(
         size,
-        TlsConfig::new(
-            None,
-            Some(PathBuf::from("../../fixtures/server.crt")),
-            Some(PathBuf::from("../../fixtures/server.key")),
-            Some(PathBuf::from("../../fixtures/ca.crt")),
-            None,
-            None,
-        ),
+        TlsConfig::builder()
+            .peer_ca_cert_path(None)
+            .peer_cert_path(Some(PathBuf::from("../../fixtures/server.crt")))
+            .peer_key_path(Some(PathBuf::from("../../fixtures/server.key")))
+            .client_ca_cert_path(Some(PathBuf::from("../../fixtures/ca.crt")))
+            .client_cert_path(None)
+            .client_key_path(None)
+            .build(),
     )
 }
 
@@ -126,13 +126,13 @@ fn mtls_client_config(name: &str) -> ClientTlsConfig {
 fn mtls_configs(size: usize) -> Vec<XlineServerConfig> {
     configs_with_tls_config(
         size,
-        TlsConfig::new(
-            Some(PathBuf::from("../../fixtures/ca.crt")),
-            Some(PathBuf::from("../../fixtures/server.crt")),
-            Some(PathBuf::from("../../fixtures/server.key")),
-            Some(PathBuf::from("../../fixtures/ca.crt")),
-            Some(PathBuf::from("../../fixtures/root_client.crt")),
-            Some(PathBuf::from("../../fixtures/root_client.key")),
-        ),
+        TlsConfig::builder()
+            .peer_ca_cert_path(Some(PathBuf::from("../../fixtures/ca.crt")))
+            .peer_cert_path(Some(PathBuf::from("../../fixtures/server.crt")))
+            .peer_key_path(Some(PathBuf::from("../../fixtures/server.key")))
+            .client_ca_cert_path(Some(PathBuf::from("../../fixtures/ca.crt")))
+            .client_cert_path(Some(PathBuf::from("../../fixtures/root_client.crt")))
+            .client_key_path(Some(PathBuf::from("../../fixtures/root_client.key")))
+            .build(),
     )
 }

@@ -3,7 +3,7 @@ use std::ops::Deref;
 use engine::{Engine, EngineType, StorageEngine, StorageOps, WriteOperation};
 use parking_lot::Mutex;
 use prost::Message;
-use utils::config::EngineConfig;
+use utils::config::prelude::EngineConfig;
 
 use super::{
     wal::{codec::DataFrame, config::WALConfig, WALStorage, WALStorageOps},

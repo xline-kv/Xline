@@ -23,7 +23,7 @@ use tracing::{debug, error, info, trace, warn};
 use utils::ClientTlsConfig;
 use utils::{
     barrier::IdBarrier,
-    config::CurpConfig,
+    config::prelude::CurpConfig,
     task_manager::{tasks::TaskName, Listener, State, TaskManager},
 };
 
