@@ -40,7 +40,7 @@ jobs:
           submodules: recursive
 
       - name: Setup sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Prepare release binaries
         id: prepare_binaries
