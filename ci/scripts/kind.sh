@@ -11,7 +11,9 @@ wget -q https://github.com/kubernetes-sigs/kind/releases/download/v$KIND_VERSION
 chmod +x kind-linux-amd64 && mv kind-linux-amd64 /usr/local/bin/kind
 
 # print the config file
-WORKSPACE=$PWD envsubst
+echo "=== kind.yaml vvv ==="
+WORKSPACE=$PWD envsubst < ci/artifacts/kind.yaml
+echo "=== kind.yaml ^^^ ==="
 
 WORKSPACE=$PWD envsubst < ci/artifacts/kind.yaml | kind create cluster -v7 --retain --wait 4m --config -
 kubectl wait node --all --for condition=ready
