@@ -159,7 +159,7 @@ dependencies = [
  "async-trait",
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
  "tokio",
 ]
 
@@ -206,7 +206,7 @@ checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -223,7 +223,7 @@ checksum = "721cae7de5c34fbb2acd27e21e6d2cf7b886dce0c27388d46c4e6c47ea4318dd"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -347,7 +347,7 @@ dependencies = [
  "futures",
  "indicatif",
  "rand",
- "thiserror",
+ "thiserror 1.0.64",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -384,7 +384,7 @@ dependencies = [
  "regex",
  "rustc-hash",
  "shlex",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -528,7 +528,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -675,7 +675,7 @@ dependencies = [
  "madsim-tonic-build",
  "mockall",
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "parking_lot",
  "priority-queue",
  "prost",
@@ -685,7 +685,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "test-macros",
- "thiserror",
+ "thiserror 1.0.64",
  "tokio-stream 0.1.12",
  "tokio-util",
  "tower 0.4.13",
@@ -705,7 +705,7 @@ dependencies = [
  "mockall",
  "prost",
  "serde",
- "thiserror",
+ "thiserror 1.0.64",
  "workspace-hack",
 ]
 
@@ -721,7 +721,7 @@ dependencies = [
  "madsim-tokio",
  "prost",
  "serde",
- "thiserror",
+ "thiserror 1.0.64",
  "tracing",
  "tracing-subscriber",
  "utils",
@@ -773,7 +773,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "strsim 0.11.1",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -795,7 +795,7 @@ checksum = "d336a2a514f6ccccaa3e09b02d41d35330c07ddf03a62165fcec10bb561c7806"
 dependencies = [
  "darling_core 0.20.10",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -849,7 +849,7 @@ dependencies = [
  "darling 0.20.10",
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -859,7 +859,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab63b0e2bf4d5928aff72e83a7dace85d7bba5fe12dcc3c5a572d78caffd3f3c"
 dependencies = [
  "derive_builder_core",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -918,13 +918,13 @@ dependencies = [
  "bytes",
  "clippy-utilities",
  "madsim-tokio",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "parking_lot",
  "rocksdb",
  "serde",
  "tempfile",
  "test-macros",
- "thiserror",
+ "thiserror 1.0.64",
  "tokio-util",
  "tracing",
  "utils",
@@ -1096,7 +1096,7 @@ checksum = "162ee34ebcb7c64a8abebc059ce0fee27c2262618d7b60ed8faf72fef13c3650"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -1161,7 +1161,7 @@ dependencies = [
  "proc-macro-error2",
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -1651,7 +1651,7 @@ dependencies = [
  "proc-macro2",
  "prost-build",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
  "tonic-build",
 ]
 
@@ -1742,7 +1742,7 @@ dependencies = [
  "cfg-if",
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -1870,7 +1870,21 @@ dependencies = [
  "js-sys",
  "once_cell",
  "pin-project-lite",
- "thiserror",
+ "thiserror 1.0.64",
+]
+
+[[package]]
+name = "opentelemetry"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "236e667b670a5cdf90c258f5a55794ec5ac5027e960c224bff8367a59e1e6426"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "js-sys",
+ "pin-project-lite",
+ "thiserror 2.0.11",
+ "tracing",
 ]
 
 [[package]]
@@ -1883,7 +1897,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
  "serde_json",
@@ -1899,7 +1913,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "http",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "reqwest",
 ]
 
@@ -1909,7 +1923,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0a68a13b92fc708d875ad659b08b35d08b8ef2403e01944b39ca21e5b08b17"
 dependencies = [
- "opentelemetry",
+ "opentelemetry 0.24.0",
 ]
 
 [[package]]
@@ -1921,13 +1935,13 @@ dependencies = [
  "async-trait",
  "futures-core",
  "http",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "opentelemetry-http",
  "opentelemetry-proto",
  "opentelemetry_sdk",
  "prost",
  "reqwest",
- "thiserror",
+ "thiserror 1.0.64",
  "tokio",
  "tonic",
 ]
@@ -1939,7 +1953,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc4191ce34aa274621861a7a9d68dbcf618d5b6c66b10081631b61fd81fbc015"
 dependencies = [
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "opentelemetry_sdk",
  "prometheus",
  "protobuf",
@@ -1951,7 +1965,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30ee9f20bff9c984511a02f082dc8ede839e4a9bf15cc2487c8d6fea5ad850d9"
 dependencies = [
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "opentelemetry_sdk",
  "prost",
  "tonic",
@@ -1975,11 +1989,11 @@ dependencies = [
  "futures-util",
  "glob",
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "percent-encoding",
  "rand",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.64",
  "tokio",
  "tokio-stream 0.1.16",
 ]
@@ -2091,7 +2105,7 @@ checksum = "a4502d8515ca9f32f1fb543d987f63d95a14934883db45bdb48060b6b69257f8"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -2167,7 +2181,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479cf940fbbb3426c32c5d5176f62ad57549a0bb84773423ba8be9d089f5faba"
 dependencies = [
  "proc-macro2",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -2200,14 +2214,14 @@ dependencies = [
  "proc-macro-error-attr2",
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.87"
+version = "1.0.93"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3e4daa0dcf6feba26f985457cdf104d4b4256fc5a09547140f3631bb076b19a"
+checksum = "60946a68e5f9d28b0dc1c21bb8a97ee7d018a8b322fa57838ba31cc878e22d99"
 dependencies = [
  "unicode-ident",
 ]
@@ -2224,7 +2238,7 @@ dependencies = [
  "memchr",
  "parking_lot",
  "protobuf",
- "thiserror",
+ "thiserror 1.0.64",
 ]
 
 [[package]]
@@ -2254,7 +2268,7 @@ dependencies = [
  "prost",
  "prost-types",
  "regex",
- "syn 2.0.79",
+ "syn 2.0.98",
  "tempfile",
 ]
 
@@ -2268,7 +2282,7 @@ dependencies = [
  "itertools 0.13.0",
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -2570,7 +2584,7 @@ checksum = "243902eda00fad750862fc144cea25caca5e20d615af0a81bee94ca738f1df1f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -2668,7 +2682,7 @@ checksum = "adc4e5204eb1910f40f9cfa375f6f05b68c3abac4b6fd879c8ff5e7ae8a0a085"
 dependencies = [
  "num-bigint",
  "num-traits",
- "thiserror",
+ "thiserror 1.0.64",
  "time",
 ]
 
@@ -2770,7 +2784,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -2792,9 +2806,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.79"
+version = "2.0.98"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89132cd0bf050864e1d38dc3bbc07a0eb8e7530af26344d3d2bbbef83499f590"
+checksum = "36147f1a48ae0ec2b5b3bc5b537d267457555a10dc06f3dbc8cb11ba3006d3b1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2841,7 +2855,7 @@ version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
  "tokio",
  "workspace-hack",
 ]
@@ -2852,7 +2866,16 @@ version = "1.0.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d50af8abc119fb8bb6dbabcfa89656f46f84aa0ac7688088608076ad2b459a84"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 1.0.64",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d452f284b73e6d76dd36758a0c8684b1d5be31f92b89d07fd5822175732206fc"
+dependencies = [
+ "thiserror-impl 2.0.11",
 ]
 
 [[package]]
@@ -2863,7 +2886,18 @@ checksum = "08904e7672f5eb876eaaf87e0ce17857500934f4981c4a0ab2b4aa98baac7fc3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26afc1baea8a989337eeb52b6e72a039780ce45c3edfcc9c5b9d112feeb173c2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -2947,7 +2981,7 @@ checksum = "693d596312e88961bc67d7f1f97af8a70227d9f90c31bba5806eec004978d752"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -3072,7 +3106,7 @@ dependencies = [
  "prost-build",
  "prost-types",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -3155,7 +3189,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3566e8ce28cc0a3fe42519fc80e6b4c943cc4c8cef275620eb8dac2d3d4e06cf"
 dependencies = [
  "crossbeam-channel",
- "thiserror",
+ "thiserror 1.0.64",
  "time",
  "tracing-subscriber",
 ]
@@ -3168,7 +3202,7 @@ checksum = "34704c8d6ebcbc939824180af020566b01a7c01f80641264eba0999f6c2b6be7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -3200,7 +3234,7 @@ checksum = "a9784ed4da7d921bc8df6963f8c80a0e4ce34ba6ba76668acadd3edbd985ff3b"
 dependencies = [
  "js-sys",
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "opentelemetry_sdk",
  "smallvec",
  "tracing",
@@ -3247,7 +3281,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04659ddb06c87d233c566112c1c9c5b9e98256d9af50ec3bc9c8327f873a7568"
 dependencies = [
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -3325,7 +3359,7 @@ dependencies = [
  "getset",
  "madsim-tokio",
  "madsim-tonic",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "opentelemetry-jaeger-propagator",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -3335,7 +3369,7 @@ dependencies = [
  "regex",
  "serde",
  "test-macros",
- "thiserror",
+ "thiserror 1.0.64",
  "toml",
  "tracing",
  "tracing-appender",
@@ -3417,7 +3451,7 @@ dependencies = [
  "once_cell",
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
  "wasm-bindgen-shared",
 ]
 
@@ -3451,7 +3485,7 @@ checksum = "26c6ab57572f7a24a4985830b120de1594465e5d500f24afe89e16b4e833ef68"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
  "wasm-bindgen-backend",
  "wasm-bindgen-shared",
 ]
@@ -3662,7 +3696,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "smallvec",
- "syn 2.0.79",
+ "syn 2.0.98",
  "sync_wrapper 1.0.1",
  "time",
  "tokio",
@@ -3692,7 +3726,7 @@ dependencies = [
  "ring",
  "signature",
  "spki",
- "thiserror",
+ "thiserror 1.0.64",
  "zeroize",
 ]
 
@@ -3727,7 +3761,7 @@ dependencies = [
  "merged_range",
  "mockall",
  "nix",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "opentelemetry-contrib",
  "opentelemetry-otlp",
  "opentelemetry-prometheus",
@@ -3780,7 +3814,7 @@ dependencies = [
  "prost",
  "rand",
  "test-macros",
- "thiserror",
+ "thiserror 1.0.64",
  "tower 0.4.13",
  "utils",
  "workspace-hack",
@@ -3816,7 +3850,7 @@ dependencies = [
  "serde",
  "strum",
  "strum_macros",
- "thiserror",
+ "thiserror 1.0.64",
  "utils",
  "workspace-hack",
 ]
@@ -3874,7 +3908,7 @@ checksum = "fa4f8080344d4671fb4e831a13ad1e68092748387dfc4f55e356242fae12ce3e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -3894,7 +3928,7 @@ checksum = "ce36e65b0d2999d2aafac989fb249189a141aee1f53c612c1f37d72631959f69"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.79",
+ "syn 2.0.98",
 ]
 
 [[package]]
