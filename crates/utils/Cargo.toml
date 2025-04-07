@@ -26,7 +26,7 @@ event-listener = "5.3.1"
 futures = "0.3.30"
 getset = "0.1"
 interval_map = { version = "0.1", package = "rb-interval-map" }
-opentelemetry = { version = "0.24.0", features = ["trace"] }
+opentelemetry = { version = "0.29.1", features = ["trace"] }
 opentelemetry_sdk = { version = "0.24.1", features = ["trace"] }
 parking_lot = { version = "0.12.3", optional = true }
 pbkdf2 = { version = "0.12.2", features = ["simple"] }
@@ -46,7 +46,7 @@ tracing-opentelemetry = "0.25.0"
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
-opentelemetry = { version = "0.24.0", features = ["trace"] }
+opentelemetry = { version = "0.29.1", features = ["trace"] }
 opentelemetry-jaeger-propagator = "0.3.0"
 opentelemetry-otlp = { version = "0.17.0", features = [
   "metrics",
