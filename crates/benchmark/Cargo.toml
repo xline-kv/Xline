@@ -23,7 +23,7 @@ rand = "0.8.5"
 thiserror = "1.0.61"
 tokio = "1.21.2"
 tracing = "0.1.37"
-tracing-subscriber = "0.3.1"
+tracing-subscriber = "0.3.19"
 utils = { path = "../utils", version = "0.1.0" }
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 xline-client = { path = "../xline-client" }
