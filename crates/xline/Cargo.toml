@@ -63,7 +63,7 @@ tokio = { version = "0.2.25", package = "madsim-tokio", features = [
   "net",
 ] }
 tokio-stream = { git = "https://github.com/madsim-rs/tokio.git", rev = "ab251ad" }
-tokio-util = { version = "0.7.11", features = ["io"] }
+tokio-util = { version = "0.7.16", features = ["io"] }
 toml = "0.8.14"
 tonic = { version = "0.5.0", package = "madsim-tonic" }
 tonic-health = "0.12.0"
