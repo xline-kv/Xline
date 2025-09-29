@@ -18,7 +18,7 @@ engine = { path = "../engine" }
 itertools = "0.13"
 prost = "0.13"
 serde = { version = "1.0.204", features = ["derive", "rc"] }
-thiserror = "1.0.61"
+thiserror = "2.0.17"
 tokio = { version = "0.2.25", package = "madsim-tokio", features = [
   "rt-multi-thread",
 ] }
