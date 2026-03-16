@@ -30,7 +30,7 @@ indexmap = "2.2.6"
 itertools = "0.13"
 madsim = { version = "0.2.27", features = ["rpc", "macros"] }
 opentelemetry = { version = "0.24.0", features = ["metrics"] }
-parking_lot = "0.12.3"
+parking_lot = "0.12.5"
 priority-queue = "2.0.2"
 prost = "0.13"
 rand = "0.8.5"
