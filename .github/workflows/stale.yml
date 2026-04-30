@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/stale@v9
+    - uses: actions/stale@v10
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
         start-date: '2024-04-19T00:00:00Z' # ISO 8601 or RFC 2822
