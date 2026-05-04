@@ -958,7 +958,7 @@ dependencies = [
  "prost",
  "tokio",
  "tokio-stream 0.1.16",
- "tonic",
+ "tonic 0.12.3",
  "tonic-build",
  "tower 0.4.13",
  "tower-service",
@@ -1637,7 +1637,7 @@ dependencies = [
  "futures-util",
  "madsim",
  "tokio",
- "tonic",
+ "tonic 0.12.3",
  "tower 0.4.13",
  "tracing",
 ]
@@ -1929,7 +1929,7 @@ dependencies = [
  "reqwest",
  "thiserror",
  "tokio",
- "tonic",
+ "tonic 0.12.3",
 ]
 
 [[package]]
@@ -1954,7 +1954,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry_sdk",
  "prost",
- "tonic",
+ "tonic 0.12.3",
 ]
 
 [[package]]
@@ -2980,6 +2980,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -3062,6 +3063,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tonic"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e581ba15a835f4d9ea06c55ab1bd4dce26fc53752c69a04aac00703bfb49ba9"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "http",
+ "http-body",
+ "http-body-util",
+ "percent-encoding",
+ "pin-project",
+ "prost",
+ "tokio-stream 0.1.16",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+]
+
+[[package]]
 name = "tonic-build"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3077,15 +3099,14 @@ dependencies = [
 
 [[package]]
 name = "tonic-health"
-version = "0.12.3"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1eaf34ddb812120f5c601162d5429933c9b527d901ab0e7f930d3147e33a09b2"
+checksum = "cb87334d340313fefa513b6e60794d44a86d5f039b523229c99c323e4e19ca4b"
 dependencies = [
- "async-stream",
  "prost",
  "tokio",
  "tokio-stream 0.1.16",
- "tonic",
+ "tonic 0.13.1",
 ]
 
 [[package]]
@@ -3668,7 +3689,7 @@ dependencies = [
  "tokio",
  "tokio-stream 0.1.16",
  "tokio-util",
- "tonic",
+ "tonic 0.12.3",
  "tower 0.4.13",
  "tower 0.5.1",
  "tracing",
