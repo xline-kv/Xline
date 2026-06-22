@@ -668,7 +668,7 @@ dependencies = [
  "fs2",
  "futures",
  "indexmap 2.6.0",
- "itertools 0.13.0",
+ "itertools 0.15.0",
  "madsim",
  "madsim-tokio",
  "madsim-tonic",
@@ -717,7 +717,7 @@ dependencies = [
  "bincode",
  "curp-external-api",
  "engine",
- "itertools 0.13.0",
+ "itertools 0.15.0",
  "madsim-tokio",
  "prost",
  "serde",
@@ -1443,9 +1443,9 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.13.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
 dependencies = [
  "either",
 ]
@@ -2245,7 +2245,7 @@ checksum = "0c1318b19085f08681016926435853bbf7858f9c082d0999b80550ff5d9abe15"
 dependencies = [
  "bytes",
  "heck",
- "itertools 0.13.0",
+ "itertools 0.12.1",
  "log",
  "multimap",
  "once_cell",
@@ -2265,7 +2265,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9552f850d5f0964a4e4d0bf306459ac29323ddfbae05e35a7c0d35cb0803cc5"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.79",
@@ -2682,7 +2682,7 @@ dependencies = [
  "curp-test-utils",
  "engine",
  "futures",
- "itertools 0.13.0",
+ "itertools 0.15.0",
  "madsim",
  "madsim-tokio",
  "madsim-tonic",
@@ -3649,7 +3649,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "getrandom",
- "itertools 0.13.0",
+ "itertools 0.15.0",
  "libc",
  "log",
  "madsim-tokio",
@@ -3718,7 +3718,7 @@ dependencies = [
  "flume",
  "futures",
  "hyper",
- "itertools 0.13.0",
+ "itertools 0.15.0",
  "jsonwebtoken",
  "log",
  "madsim-tokio",
@@ -3809,7 +3809,7 @@ dependencies = [
  "async-trait",
  "curp",
  "curp-external-api",
- "itertools 0.13.0",
+ "itertools 0.15.0",
  "madsim-tonic",
  "madsim-tonic-build",
  "prost",

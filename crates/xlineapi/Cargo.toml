@@ -14,7 +14,7 @@ keywords = ["RPC", "Interfaces"]
 async-trait = "0.1.81"
 curp = { path = "../curp" }
 curp-external-api = { path = "../curp-external-api" }
-itertools = "0.13"
+itertools = "0.15"
 prost = "0.13"
 serde = { version = "1.0.204", features = ["derive"] }
 thiserror = "1.0.61"
