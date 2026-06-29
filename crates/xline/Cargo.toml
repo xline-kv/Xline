@@ -82,7 +82,7 @@ tonic-build = { version = "0.5.0", package = "madsim-tonic-build" }
 
 [dev-dependencies]
 etcd-client = { version = "0.14.0", features = ["tls"] }
-mockall = "0.12.1"
+mockall = "0.15.0"
 rand = "0.8.5"
 strum = "0.26"
 strum_macros = "0.26.4"
